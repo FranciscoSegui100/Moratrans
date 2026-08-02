@@ -1,0 +1,295 @@
+-- =====================================================================
+--  SISTEMA DE GESTIÓN LOGÍSTICA + CHATBOT WHATSAPP
+--  Esquema PostgreSQL — Única fuente de verdad
+--  Convención: snake_case, UTC, soft-references por teléfono en flujos de chat.
+-- =====================================================================
+
+BEGIN;
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto"; -- gen_random_uuid()
+
+-- ---------------------------------------------------------------------
+-- 1. TIPOS / ENUMS (máquinas de estado)
+-- ---------------------------------------------------------------------
+
+-- Estados logísticos del contenedor.
+-- Transiciones válidas se fuerzan por trigger (ver fn_validar_transicion_contenedor).
+CREATE TYPE estado_contenedor AS ENUM (
+  'disponible',      -- en depósito, libre
+  'reservado',       -- pago validado, asignado a un ticket
+  'en_camino',       -- chofer lo tomó y va en ruta (modificable por chofer)
+  'entregado',       -- entregado al cliente        (modificable por chofer)
+  'retirado',        -- retirado/devuelto vacío     (modificable por chofer)
+  'mantenimiento'    -- fuera de servicio
+);
+
+CREATE TYPE estado_pedido AS ENUM (
+  'nuevo', 'cotizado', 'confirmado', 'en_proceso', 'completado', 'cancelado'
+);
+
+CREATE TYPE estado_pago AS ENUM (
+  'pendiente',   -- comprobante recibido, esperando validación manual
+  'validado',    -- operador confirmó -> dispara creación de ticket + reserva
+  'rechazado'
+);
+
+CREATE TYPE estado_alerta AS ENUM ('nueva', 'vista', 'resuelta');
+
+-- Ciclo de vida del ticket (sección 21 del documento maestro).
+CREATE TYPE estado_ticket AS ENUM ('activo', 'cerrado');
+
+-- Viajes programados de entrega/retiro (secciones 13 y 15.2).
+CREATE TYPE tipo_viaje   AS ENUM ('entrega', 'retiro');
+CREATE TYPE estado_viaje AS ENUM ('programado', 'en_curso', 'completado', 'cancelado');
+
+CREATE TYPE tipo_alerta AS ENUM (
+  'contenedor_por_vencer',
+  'pago_vencido',
+  'pago_pendiente_validacion',
+  'chofer_no_reconocido',
+  'stock_bajo'
+);
+
+-- Roles del panel (RBAC). Ver middleware/rbac.ts
+CREATE TYPE rol_usuario AS ENUM ('admin', 'operador', 'finanzas', 'lectura');
+
+-- ---------------------------------------------------------------------
+-- 2. USUARIOS DEL PANEL (RBAC)
+-- ---------------------------------------------------------------------
+CREATE TABLE usuarios (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre        TEXT        NOT NULL,
+  email         TEXT        NOT NULL UNIQUE,
+  password_hash TEXT        NOT NULL,          -- bcrypt/argon2, nunca en claro
+  rol           rol_usuario NOT NULL DEFAULT 'lectura',
+  activo        BOOLEAN     NOT NULL DEFAULT TRUE,
+  creado_en     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------
+-- 3. CLIENTES / CHOFERES
+-- ---------------------------------------------------------------------
+CREATE TABLE clientes (
+  id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre    TEXT NOT NULL,
+  telefono  TEXT NOT NULL UNIQUE,             -- E.164, clave natural en chat
+  direccion TEXT,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE choferes (
+  id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre    TEXT    NOT NULL,
+  -- DNI cifrado en reposo (AES-256-GCM en la app). El texto plano nunca toca la DB.
+  dni_enc   TEXT    NOT NULL,                 -- ciphertext base64 (iv:tag:data)
+  -- Blind index (HMAC determinístico) para poder buscar por DNI sin descifrar.
+  dni_hash  TEXT    NOT NULL UNIQUE,
+  telefono  TEXT    NOT NULL UNIQUE,          -- se usa para autoidentificar en WA
+  activo    BOOLEAN NOT NULL DEFAULT TRUE,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------
+-- 4. TARIFAS (consultadas por el bot, NUNCA hardcodeadas)
+-- ---------------------------------------------------------------------
+CREATE TABLE tarifas_departamento (
+  departamento  TEXT           PRIMARY KEY,   -- ej. 'Montevideo', 'Canelones'
+  precio        NUMERIC(12,2)  NOT NULL CHECK (precio >= 0),
+  moneda        TEXT           NOT NULL DEFAULT 'UYU',
+  activo        BOOLEAN        NOT NULL DEFAULT TRUE,
+  actualizado_en TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------
+-- 5. CONTENEDORES + HISTORIAL
+-- ---------------------------------------------------------------------
+CREATE TABLE contenedores (
+  numero        TEXT PRIMARY KEY,             -- ej. 'MSKU1234567'
+  estado        estado_contenedor NOT NULL DEFAULT 'disponible',
+  cliente_id    UUID REFERENCES clientes(id) ON DELETE SET NULL,
+  vence_en      TIMESTAMPTZ,                  -- usado por el cron de alertas
+  actualizado_por TEXT,                       -- usuario/chofer/sistema
+  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+  creado_en     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_contenedores_estado ON contenedores(estado);
+CREATE INDEX idx_contenedores_vence  ON contenedores(vence_en);
+
+CREATE TABLE historial_contenedores (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  numero_contenedor TEXT NOT NULL REFERENCES contenedores(numero) ON DELETE CASCADE,
+  estado            estado_contenedor NOT NULL,
+  chofer_id         UUID REFERENCES choferes(id) ON DELETE SET NULL,
+  nota              TEXT,
+  creado_en         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_hist_contenedor ON historial_contenedores(numero_contenedor);
+
+-- ---------------------------------------------------------------------
+-- 6. PEDIDOS / PAGOS / TICKETS
+-- ---------------------------------------------------------------------
+CREATE TABLE pedidos (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cliente_telefono TEXT          NOT NULL,
+  zona             TEXT          NOT NULL,     -- departamento cotizado
+  precio           NUMERIC(12,2),             -- congelado al momento de cotizar
+  fecha_aproximada DATE,
+  estado           estado_pedido NOT NULL DEFAULT 'nuevo',
+  creado_en        TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_pedidos_telefono ON pedidos(cliente_telefono);
+CREATE INDEX idx_pedidos_estado   ON pedidos(estado);
+
+CREATE TABLE pagos (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cliente_telefono TEXT        NOT NULL,
+  pedido_id        UUID REFERENCES pedidos(id) ON DELETE SET NULL,
+  monto            NUMERIC(12,2),
+  url_comprobante  TEXT,                        -- ruta/URL del media descargado de Meta
+  media_id         TEXT,                        -- id original del media en Graph API
+  estado           estado_pago NOT NULL DEFAULT 'pendiente',
+  validado_por     UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+  motivo_rechazo   TEXT,
+  creado_en        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actualizado_en   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_pagos_estado   ON pagos(estado);
+CREATE INDEX idx_pagos_telefono ON pagos(cliente_telefono);
+
+-- El ticket + la reserva SÓLO se crean cuando un operador valida el pago.
+CREATE TABLE tickets (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  pedido_id         UUID REFERENCES pedidos(id) ON DELETE SET NULL,
+  pago_id           UUID REFERENCES pagos(id)   ON DELETE SET NULL,
+  contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
+  estado            estado_ticket NOT NULL DEFAULT 'activo', -- activo -> cerrado
+  pdf_url           TEXT,
+  cerrado_en        TIMESTAMPTZ,
+  creado_en         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------
+-- 7. ALERTAS (bandeja en tiempo real, alimentada por cron)
+-- ---------------------------------------------------------------------
+CREATE TABLE alertas (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tipo          tipo_alerta   NOT NULL,
+  referencia_id TEXT          NOT NULL,        -- numero contenedor / id pago / etc.
+  mensaje       TEXT,
+  estado        estado_alerta NOT NULL DEFAULT 'nueva',
+  creado_en     TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_alertas_estado ON alertas(estado);
+-- Evita duplicar alertas abiertas del mismo tipo/referencia:
+CREATE UNIQUE INDEX uq_alerta_abierta
+  ON alertas(tipo, referencia_id)
+  WHERE estado <> 'resuelta';
+
+-- ---------------------------------------------------------------------
+-- 8. SESIONES DE CHAT (estado de flujo del bot, en DB por statelessness)
+-- ---------------------------------------------------------------------
+CREATE TABLE sesiones_chat (
+  telefono      TEXT PRIMARY KEY,
+  flujo         TEXT,                          -- 'cotizacion' | 'pago' | 'chofer' | null
+  paso          TEXT,                          -- estado dentro del flujo
+  contexto      JSONB NOT NULL DEFAULT '{}',   -- datos temporales del flujo
+  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------
+-- 8.b VIAJES PROGRAMADOS (entrega / retiro)
+-- ---------------------------------------------------------------------
+CREATE TABLE viajes (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tipo              tipo_viaje   NOT NULL,
+  fecha             DATE         NOT NULL,
+  chofer_id         UUID REFERENCES choferes(id)   ON DELETE SET NULL,
+  contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
+  cliente_telefono  TEXT,
+  zona              TEXT,
+  estado            estado_viaje NOT NULL DEFAULT 'programado',
+  notas             TEXT,
+  creado_en         TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  actualizado_en    TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_viajes_fecha  ON viajes(fecha);
+CREATE INDEX idx_viajes_estado ON viajes(estado);
+
+-- ---------------------------------------------------------------------
+-- 8.c IDEMPOTENCIA DEL WEBHOOK (dedupe por message_id de Meta)
+-- ---------------------------------------------------------------------
+CREATE TABLE mensajes_procesados (
+  message_id TEXT PRIMARY KEY,
+  creado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Housekeeping sugerido: borrar filas > 30 días con un cron.
+
+-- ---------------------------------------------------------------------
+-- 9. TRIGGERS: auditoría + validación de transiciones de contenedor
+-- ---------------------------------------------------------------------
+
+-- Matriz de transiciones permitidas.
+CREATE OR REPLACE FUNCTION fn_validar_transicion_contenedor()
+RETURNS TRIGGER AS $$
+DECLARE
+  permitido BOOLEAN := FALSE;
+BEGIN
+  IF NEW.estado = OLD.estado THEN
+    RETURN NEW; -- sin cambio de estado
+  END IF;
+
+  permitido := CASE OLD.estado
+    WHEN 'disponible'    THEN NEW.estado IN ('reservado','mantenimiento')
+    WHEN 'reservado'     THEN NEW.estado IN ('en_camino','disponible')      -- se libera si se cancela
+    WHEN 'en_camino'     THEN NEW.estado IN ('entregado')
+    WHEN 'entregado'     THEN NEW.estado IN ('retirado')
+    WHEN 'retirado'      THEN NEW.estado IN ('disponible','mantenimiento')
+    WHEN 'mantenimiento' THEN NEW.estado IN ('disponible')
+    ELSE FALSE
+  END;
+
+  IF NOT permitido THEN
+    RAISE EXCEPTION 'Transición de contenedor inválida: % -> %', OLD.estado, NEW.estado
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  NEW.actualizado_en := now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_validar_transicion_contenedor
+  BEFORE UPDATE OF estado ON contenedores
+  FOR EACH ROW EXECUTE FUNCTION fn_validar_transicion_contenedor();
+
+-- Auditoría automática: cada cambio de estado inserta una fila en historial.
+CREATE OR REPLACE FUNCTION fn_auditar_contenedor()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' OR NEW.estado IS DISTINCT FROM OLD.estado THEN
+    INSERT INTO historial_contenedores (numero_contenedor, estado, nota)
+    VALUES (NEW.numero, NEW.estado, 'auto: ' || COALESCE(NEW.actualizado_por,'sistema'));
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_auditar_contenedor
+  AFTER INSERT OR UPDATE OF estado ON contenedores
+  FOR EACH ROW EXECUTE FUNCTION fn_auditar_contenedor();
+
+-- touch actualizado_en en pagos
+CREATE OR REPLACE FUNCTION fn_touch_actualizado()
+RETURNS TRIGGER AS $$
+BEGIN NEW.actualizado_en := now(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_touch_pagos
+  BEFORE UPDATE ON pagos
+  FOR EACH ROW EXECUTE FUNCTION fn_touch_actualizado();
+
+CREATE TRIGGER trg_touch_viajes
+  BEFORE UPDATE ON viajes
+  FOR EACH ROW EXECUTE FUNCTION fn_touch_actualizado();
+
+COMMIT;
