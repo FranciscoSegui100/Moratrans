@@ -9,34 +9,34 @@
 #  Reset total (borra datos):  docker compose down -v && docker compose up -d --build
 # ============================================================
 services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: logistica
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-      - ./backend/src/db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres -d logistica" ]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+  # db:
+  #   image: postgres:16
+  #   environment:
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: postgres
+  #     POSTGRES_DB: logistica
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+  #     - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+  #     - ./backend/src/db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+  #   healthcheck:
+  #     test: [ "CMD-SHELL", "pg_isready -U postgres -d logistica" ]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 10
 
   backend:
     build: ./backend
-    depends_on:
-      db:
-        condition: service_healthy
+    # depends_on:
+    #   db:
+    #     condition: service_healthy
     environment:
       PORT: 4000
       NODE_ENV: production
       CORS_ORIGIN: http://localhost:5173
-      DATABASE_URL: postgres://postgres:postgres@db:5432/logistica
+      DATABASE_URL: ${DATABASE_URL}
       JWT_SECRET: cambia-esto-por-un-secreto-largo-y-aleatorio-1234567890
       JWT_EXPIRES: 8h
       SYNC_API_KEY: clave-larga-para-el-endpoint-de-replicacion-000
@@ -63,12 +63,13 @@ services:
     ports:
       - "5173:5173"
 
-  adminer:
-    image: adminer:4
-    ports:
-      - "8080:8080"
-    depends_on:
-      - db
+  # adminer:
+  #   image: adminer:4
+  #   ports:
+  #     - "8080:8080"
+  #   depends_on:
+  #     - db
 
-volumes:
-  pgdata:
+# volumes:
+#   pgdata:
+

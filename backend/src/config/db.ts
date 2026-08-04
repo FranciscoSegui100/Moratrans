@@ -6,7 +6,11 @@ export const pool = new Pool({
   connectionString: env.DATABASE_URL,
   max: 10,
   idleTimeoutMillis: 30_000,
+  ssl: env.DATABASE_URL.includes('supabase.co') || env.NODE_ENV === 'production'
+    ? { rejectUnauthorized: false }
+    : false,
 });
+
 
 pool.on('error', (err) => console.error('PG pool error:', err));
 
