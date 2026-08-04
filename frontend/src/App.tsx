@@ -11,6 +11,8 @@ import { Choferes } from './pages/Choferes';
 import { Viajes } from './pages/Viajes';
 import { Reportes } from './pages/Reportes';
 import { Contenedores } from './pages/Contenedores';
+import { Tarifas } from './pages/Tarifas';
+import { Usuarios } from './pages/Usuarios';
 
 export default function App() {
   return (
@@ -31,6 +33,8 @@ export default function App() {
                       <Route path="/alertas"       element={<Alertas />} />
                       <Route path="/choferes"      element={<Choferes />} />
                       <Route path="/contenedores"  element={<Contenedores />} />
+                      <Route path="/tarifas"       element={<Tarifas />} />
+                      <Route path="/usuarios"      element={<Usuarios />} />
                       <Route path="/reportes"      element={<Reportes />} />
                     </Routes>
                   </Layout>

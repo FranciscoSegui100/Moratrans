@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
+import { sendText } from '../whatsapp/graphApi';
 
 export const contenedoresRouter = Router();
 contenedoresRouter.use(requireAuth);
@@ -42,3 +43,61 @@ contenedoresRouter.post('/', requireRol('admin', 'operador'), async (req: Reques
     }
   }
 });
+
+/**
+ * POST /api/contenedores/:numero/confirmar-retiro — el operador confirma
+ * desde el panel que el contenedor que un chofer marcó como "retirado" por
+ * WhatsApp llegó físicamente a la empresa. Recién ahí se aplica el cambio
+ * de estado (antes queda pendiente, ver flows/chofer.flow.ts) y se avisa
+ * al chofer.
+ */
+contenedoresRouter.post(
+  '/:numero/confirmar-retiro',
+  requireRol('admin', 'operador'),
+  async (req: Request, res: Response) => {
+    const numero = req.params.numero;
+
+    const [viaje] = await query<{ id: string; chofer_id: string | null }>(
+      `SELECT id, chofer_id FROM viajes
+        WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado = 'en_curso'
+        ORDER BY creado_en DESC LIMIT 1`,
+      [numero],
+    );
+    if (!viaje) {
+      return res.status(404).json({ error: 'No hay un retiro pendiente de confirmación para ese contenedor' });
+    }
+
+    try {
+      // El trigger fn_validar_transicion_contenedor exige que venga de "entregado".
+      await query(
+        `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
+        [numero, `operador:${req.user!.id}`],
+      );
+    } catch (e: any) {
+      return res.status(409).json({ error: e.message });
+    }
+
+    await query(
+      `INSERT INTO historial_contenedores (numero_contenedor, estado, chofer_id, nota)
+       VALUES ($1, 'retirado', $2, 'confirmado por operador vía panel')`,
+      [numero, viaje.chofer_id],
+    );
+    await query(`UPDATE viajes SET estado = 'completado' WHERE id = $1`, [viaje.id]);
+    await query(
+      `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'confirmar_retiro' AND referencia_id = $1`,
+      [numero],
+    );
+
+    if (viaje.chofer_id) {
+      const [chofer] = await query<{ telefono: string }>('SELECT telefono FROM choferes WHERE id = $1', [viaje.chofer_id]);
+      if (chofer) {
+        sendText(
+          chofer.telefono,
+          `✅ Confirmado: el contenedor *${numero}* ya quedó registrado en la empresa. ¡Gracias por tu trabajo! 🙌`,
+        ).catch((e) => console.error('Error avisando al chofer:', e));
+      }
+    }
+
+    res.json({ ok: true });
+  },
+);

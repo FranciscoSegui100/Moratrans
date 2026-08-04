@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol, puedeVerDni, Rol } from '../../middleware/rbac';
 import { encrypt, decrypt, blindIndex } from '../../services/crypto.service';
+import { normalizarTelefonoAR } from '../../services/telefono.service';
 
 export const choferesRouter = Router();
 choferesRouter.use(requireAuth);
@@ -39,7 +40,7 @@ choferesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, r
     const [row] = await query(
       `INSERT INTO choferes (nombre, dni_enc, dni_hash, telefono)
        VALUES ($1,$2,$3,$4) RETURNING id, nombre, dni_enc, telefono, activo`,
-      [nombre, encrypt(dni), blindIndex(dni), telefono],
+      [nombre, encrypt(dni), blindIndex(dni), normalizarTelefonoAR(telefono)],
     );
     res.status(201).json(presentar(row, req.user!.rol));
   } catch (e: any) {
@@ -50,25 +51,34 @@ choferesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, r
 const patchSchema = z.object({
   nombre: z.string().min(2).optional(),
   telefono: z.string().min(6).optional(),
+  dni: z.string().min(4).optional(),
   activo: z.boolean().optional(),
 });
 
-/** PATCH /api/choferes/:id — modificar un chofer (solo admin/operador). Note: DNI no se puede modificar fácilmente. */
+/** PATCH /api/choferes/:id — modificar un chofer, incluido el DNI (solo admin/operador). */
 choferesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = patchSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  
+
+  const { dni, ...resto } = parsed.data;
   const sets: string[] = [];
   const params: any[] = [];
-  
-  for (const [k, val] of Object.entries(parsed.data)) {
-    params.push(val);
+
+  for (const [k, val] of Object.entries(resto)) {
+    params.push(k === 'telefono' ? normalizarTelefonoAR(val as string) : val);
     sets.push(`${k} = $${params.length}`);
   }
-  
+  // El DNI no es una columna directa: se guarda cifrado + su blind index de búsqueda.
+  if (dni) {
+    params.push(encrypt(dni));
+    sets.push(`dni_enc = $${params.length}`);
+    params.push(blindIndex(dni));
+    sets.push(`dni_hash = $${params.length}`);
+  }
+
   if (sets.length === 0) return res.status(400).json({ error: 'Nada para actualizar' });
   params.push(req.params.id);
-  
+
   try {
     const [row] = await query(
       `UPDATE choferes SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id, nombre, dni_enc, telefono, activo`,
@@ -77,7 +87,7 @@ choferesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Reques
     if (!row) return res.status(404).json({ error: 'Chofer inexistente' });
     res.json(presentar(row, req.user!.rol));
   } catch (e: any) {
-    res.status(409).json({ error: 'Teléfono ya registrado' });
+    res.status(409).json({ error: 'DNI o teléfono ya registrado' });
   }
 });
 

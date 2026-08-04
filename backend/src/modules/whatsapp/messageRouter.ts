@@ -1,9 +1,10 @@
 import { query } from '../../config/db';
-import { sendText } from './graphApi';
+import { sendList } from './graphApi';
 import { getSesion, clearSesion } from './session.store';
 import { handleCotizacion } from './flows/cotizacion.flow';
 import { handlePago } from './flows/pago.flow';
 import { handleChofer } from './flows/chofer.flow';
+import { handleAsesor } from './flows/asesor.flow';
 
 /** Mensaje normalizado, agnóstico del formato crudo de Meta. */
 export interface MensajeEntrante {
@@ -38,13 +39,23 @@ export function normalizar(msg: any): MensajeEntrante {
   }
 }
 
-const COMANDOS_MENU = ['menu', 'menú', 'hola', 'inicio', 'start'];
+const COMANDOS_MENU = ['menu', 'menú', 'hola', 'inicio', 'start', 'volver'];
+
+/** ¿El mensaje pide explícitamente hablar con un asesor? */
+function pideAsesor(m: MensajeEntrante): boolean {
+  if (m.seleccionId === 'opt_asesor') return true;
+  const t = (m.texto ?? '').toLowerCase();
+  return t.includes('asesor') || t.includes('humano') || t.includes('operador');
+}
 
 /**
  * Enrutador principal. Decide el flujo según:
  *  1. Si el teléfono pertenece a un chofer -> flujo chofer.
- *  2. Si hay un flujo en curso en la sesión -> continúa ese flujo.
- *  3. Comandos / selección de menú -> arranca el flujo correspondiente.
+ *  2. Comandos globales (menú / asesor) -> funcionan en cualquier momento,
+ *     incluso en medio de otro flujo.
+ *  3. Un comprobante (imagen/documento) -> siempre al flujo de pago.
+ *  4. Si hay un flujo en curso en la sesión -> continúa ese flujo.
+ *  5. Comandos de arranque -> inicia el flujo correspondiente.
  */
 export async function enrutar(m: MensajeEntrante): Promise<void> {
   // 1) ¿Es un chofer conocido? El flujo del chofer tiene prioridad.
@@ -58,35 +69,52 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
     return handleChofer(m, sesion);
   }
 
-  // 2) Un comprobante (imagen/documento) siempre entra al flujo de pago.
+  // 2) Comandos globales: funcionan siempre, sin importar en qué flujo esté.
+  const t = (m.texto ?? '').toLowerCase();
+  if (m.tipo === 'text' || m.tipo === 'interactive_list' || m.tipo === 'interactive_button') {
+    if (COMANDOS_MENU.includes(t) || m.seleccionId === 'menu_principal') {
+      await clearSesion(m.from);
+      return enviarMenuPrincipal(m.from);
+    }
+    if (pideAsesor(m)) return handleAsesor(m, sesion);
+  }
+
+  // 3) Un comprobante (imagen/documento) siempre entra al flujo de pago.
   if (m.tipo === 'image' || m.tipo === 'document') {
     return handlePago(m, sesion);
   }
 
-  // 3) Flujo en curso
+  // 4) Flujo en curso
   if (sesion.flujo === 'cotizacion') return handleCotizacion(m, sesion);
   if (sesion.flujo === 'pago') return handlePago(m, sesion);
 
-  // 4) Comandos de arranque / menú principal
-  const t = (m.texto ?? '').toLowerCase();
-  if (COMANDOS_MENU.includes(t) || m.seleccionId === 'menu_principal') {
-    await clearSesion(m.from);
-    return enviarMenuPrincipal(m.from);
-  }
+  // 5) Comandos de arranque
   if (m.seleccionId === 'opt_cotizar' || t.includes('cotiz')) return handleCotizacion(m, { ...sesion, flujo: 'cotizacion', paso: null });
-  if (m.seleccionId === 'opt_pagar' || t.includes('pago') || t.includes('pagar')) return handlePago(m, { ...sesion, flujo: 'pago', paso: null });
+  if (
+    m.seleccionId === 'opt_pagar' ||
+    t.includes('pago') ||
+    t.includes('pagar') ||
+    t.includes('pagu') ||
+    t.includes('comprobante')
+  ) {
+    return handlePago(m, { ...sesion, flujo: 'pago', paso: null });
+  }
 
-  // 5) Fallback
+  // 6) Fallback
   return enviarMenuPrincipal(m.from);
 }
 
 async function enviarMenuPrincipal(to: string): Promise<void> {
-  await sendText(
+  await sendList(
     to,
-    '👋 ¡Hola! Soy el asistente logístico.\n\n' +
-      'Escribí una opción:\n' +
-      '• *cotizar* — precio por departamento\n' +
-      '• *pagar* — enviar comprobante de pago\n\n' +
-      'También podés escribir *menú* en cualquier momento.',
+    '👋 ¡Hola!',
+    'Soy el asistente de *MoraTrans* 🚚. ¿En qué te ayudo hoy?\n\n' +
+    '_Escribí *menú* cuando quieras volver acá, y *asesor* si preferís hablar con una persona._',
+    'Ver opciones',
+    [
+      { id: 'opt_cotizar', title: '🧮 Cotizar', description: 'Precio del flete por departamento' },
+      { id: 'opt_pagar', title: '💸 Ya pagué', description: 'Quiero enviar mi comprobante de pago' },
+      { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
+    ],
   );
 }

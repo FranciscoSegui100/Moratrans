@@ -43,7 +43,7 @@ export function pdfResumenPagos(
     pagos.forEach((p) => {
       doc.text(
         `${new Date(p.creado_en).toLocaleDateString('es-AR')}  ·  ${p.cliente_telefono}  ·  ` +
-          `${p.estado}  ·  ${p.monto ? 'UYU ' + p.monto : 's/monto'}`,
+          `${p.estado}  ·  ${p.monto ? '$' + p.monto : 's/monto'}`,
       );
     });
     if (pagos.length === 0) doc.text('Sin pagos en el período.');

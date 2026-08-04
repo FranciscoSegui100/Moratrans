@@ -4,6 +4,12 @@ import { env } from './config/env';
 import { initSocket } from './config/socket';
 import { iniciarCronAlertas } from './jobs/alertas.cron';
 
+// Red de seguridad: nada de lo que pasa fuera del ciclo request/response de
+// Express (ej. una promesa suelta sin .catch en el cron) debe poder tirar
+// abajo el proceso completo.
+process.on('unhandledRejection', (err) => console.error('unhandledRejection:', err));
+process.on('uncaughtException', (err) => console.error('uncaughtException:', err));
+
 const app = crearApp();
 const server = http.createServer(app);
 

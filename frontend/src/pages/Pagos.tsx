@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
+import { ComprobanteViewer } from '../components/ComprobanteViewer';
+import { ValidarPagoForm, ValidarPagoPayload } from '../components/ValidarPagoForm';
 import { useToast } from '../components/Toast';
 
 interface Pago {
@@ -11,24 +13,31 @@ interface Pago {
   estado: string;
   zona: string | null;
   precio: string | null;
+  moneda: string | null;
   creado_en: string;
 }
 
-const API = import.meta.env.VITE_API_URL || '';
+interface Chofer { id: string; nombre: string; activo: boolean; }
 
 export function Pagos() {
   const { show } = useToast();
   const [pagos, setPagos] = useState<Pago[]>([]);
+  const [choferes, setChoferes] = useState<Chofer[]>([]);
   const [procesando, setProcesando] = useState<string | null>(null);
+  const [validandoId, setValidandoId] = useState<string | null>(null);
 
   const cargar = () => api.get<Pago[]>('/api/pagos?estado=pendiente').then((r) => setPagos(r.data)).catch(() => {});
-  useEffect(() => { cargar(); }, []);
+  useEffect(() => {
+    cargar();
+    api.get<Chofer[]>('/api/choferes').then((r) => setChoferes(r.data.filter((c) => c.activo))).catch(() => {});
+  }, []);
 
-  async function validar(id: string) {
+  async function validar(id: string, payload: ValidarPagoPayload) {
     setProcesando(id);
     try {
-      const { data } = await api.post(`/api/pagos/${id}/validar`);
+      const { data } = await api.post(`/api/pagos/${id}/validar`, payload);
       show('success', 'Pago validado', `Ticket ${data.ticket_id} — contenedor ${data.contenedor}`);
+      setValidandoId(null);
       cargar();
     } catch (e: any) {
       show('error', 'Error al validar', e.response?.data?.error || 'Error desconocido');
@@ -46,6 +55,22 @@ export function Pagos() {
       cargar();
     } catch {
       show('error', 'Error al rechazar');
+    } finally {
+      setProcesando(null);
+    }
+  }
+
+  /** No es un rechazo real: le pide al cliente que reenvíe el comprobante (ej. foto no legible). */
+  async function pedirDeNuevo(id: string) {
+    setProcesando(id);
+    try {
+      await api.post(`/api/pagos/${id}/rechazar`, {
+        motivo: 'Comprobante no legible. Por favor, enviá una foto más clara.',
+      });
+      show('info', 'Le pedimos al cliente que reenvíe el comprobante', 'Se le avisó por WhatsApp');
+      cargar();
+    } catch {
+      show('error', 'No se pudo avisar al cliente');
     } finally {
       setProcesando(null);
     }
@@ -69,51 +94,64 @@ export function Pagos() {
       ) : (
         <div className="space-y">
           {pagos.map((p) => (
-            <div key={p.id} className="pago-card">
-              <div className="pago-avatar">💳</div>
+            <div key={p.id} className={`pago-card ${validandoId === p.id ? 'pago-card-expandido' : ''}`}>
+              <div className="pago-card-top">
+                <div className="pago-avatar">💳</div>
 
-              <div className="pago-info">
-                <div className="pago-phone">{p.cliente_telefono}</div>
-                <div className="pago-detail">
-                  {p.zona ?? 'Sin zona'} ·{' '}
-                  {p.precio ? `UYU ${Number(p.precio).toLocaleString('es-UY')}` : 'Sin monto'} ·{' '}
-                  {new Date(p.creado_en).toLocaleString('es-UY')}
+                <div className="pago-info">
+                  <div className="pago-phone">{p.cliente_telefono}</div>
+                  <div className="pago-detail">
+                    {p.zona ?? 'Sin zona'} ·{' '}
+                    {p.precio ? `${p.moneda ?? ''} ${Number(p.precio).toLocaleString('es-AR')}`.trim() : 'Sin monto'} ·{' '}
+                    {new Date(p.creado_en).toLocaleString('es-UY')}
+                  </div>
+                  <RoleGate roles={['admin', 'finanzas']}>
+                    {p.url_comprobante ? (
+                      <ComprobanteViewer pagoId={p.id} />
+                    ) : (
+                      <span className="text-muted">Sin comprobante</span>
+                    )}
+                  </RoleGate>
+                </div>
+
+                <div className="pago-actions">
+                  <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                    {validandoId !== p.id && (
+                      <button
+                        onClick={() => setValidandoId(p.id)}
+                        className="btn btn-success btn-sm"
+                        disabled={procesando === p.id}
+                      >
+                        ✓ Validar
+                      </button>
+                    )}
+                    <button
+                      onClick={() => rechazar(p.id)}
+                      className="btn btn-danger btn-sm"
+                      disabled={procesando === p.id}
+                    >
+                      ✕ Rechazar
+                    </button>
+                    <button
+                      onClick={() => pedirDeNuevo(p.id)}
+                      className="btn btn-ghost btn-sm"
+                      disabled={procesando === p.id}
+                      title="El comprobante no se lee bien: le pedimos al cliente que lo reenvíe"
+                    >
+                      🔄 Pedir de nuevo
+                    </button>
+                  </RoleGate>
                 </div>
               </div>
 
-              <div className="pago-actions">
-                <RoleGate roles={['admin', 'finanzas']}>
-                  {p.url_comprobante ? (
-                    <a
-                      href={`${API}${p.url_comprobante}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="comprobante-link"
-                    >
-                      🖼 Ver comprobante
-                    </a>
-                  ) : (
-                    <span className="text-muted">Sin comprobante</span>
-                  )}
-                </RoleGate>
-
-                <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                  <button
-                    onClick={() => validar(p.id)}
-                    className="btn btn-success btn-sm"
-                    disabled={procesando === p.id}
-                  >
-                    {procesando === p.id ? '...' : '✓ Validar'}
-                  </button>
-                  <button
-                    onClick={() => rechazar(p.id)}
-                    className="btn btn-danger btn-sm"
-                    disabled={procesando === p.id}
-                  >
-                    ✕ Rechazar
-                  </button>
-                </RoleGate>
-              </div>
+              {validandoId === p.id && (
+                <ValidarPagoForm
+                  choferes={choferes}
+                  procesando={procesando === p.id}
+                  onConfirm={(payload) => validar(p.id, payload)}
+                  onCancel={() => setValidandoId(null)}
+                />
+              )}
             </div>
           ))}
         </div>

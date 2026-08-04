@@ -3,6 +3,9 @@ import crypto from 'crypto';
 import fs from 'fs';
 import FormData from 'form-data';
 import { env } from '../../config/env';
+import { normalizarDestinoWhatsApp } from '../../services/telefono.service';
+
+export { normalizarDestinoWhatsApp };
 
 const BASE = `https://graph.facebook.com/${env.WA_GRAPH_VERSION}`;
 const PHONE = env.WA_PHONE_NUMBER_ID;
@@ -28,6 +31,7 @@ export function verifySignature(rawBody: Buffer, signature?: string): boolean {
 
 /** Envío de texto simple. */
 export async function sendText(to: string, body: string): Promise<void> {
+  to = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
     console.log(`[MOCK WA] 📲 Texto a ${to}: "${body}"`);
     return;
@@ -48,6 +52,7 @@ export async function sendList(
   buttonText: string,
   rows: { id: string; title: string; description?: string }[],
 ): Promise<void> {
+  to = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
     console.log(`[MOCK WA] 📋 Lista a ${to}: "${header}" -> Botón: [${buttonText}] con ${rows.length} opciones.`);
     return;
@@ -74,6 +79,7 @@ export async function sendButtons(
   body: string,
   buttons: { id: string; title: string }[],
 ): Promise<void> {
+  to = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
     console.log(`[MOCK WA] 🔘 Botones a ${to}: "${body}" -> Opciones:`, buttons.map((b) => b.title).join(' | '));
     return;
@@ -106,6 +112,7 @@ export async function sendTemplate(
   languageCode: string,
   variables: string[] = [],
 ): Promise<void> {
+  to = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
     console.log(`[MOCK WA] ✉️ Plantilla '${templateName}' a ${to}. Variables: [${variables.join(', ')}]`);
     return;
@@ -158,6 +165,7 @@ export async function sendDocument(
   filename: string,
   caption?: string,
 ): Promise<void> {
+  to = normalizarDestinoWhatsApp(to);
   await http.post(`/${PHONE}/messages`, {
     messaging_product: 'whatsapp',
     to,

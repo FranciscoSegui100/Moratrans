@@ -18,14 +18,14 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       'SELECT departamento FROM tarifas_departamento WHERE activo = TRUE ORDER BY departamento LIMIT 10',
     );
     if (deptos.length === 0) {
-      await sendText(to, 'No hay tarifas cargadas por el momento. Un operador se comunicará contigo.');
+      await sendText(to, '🙁 No tenemos tarifas cargadas por el momento. Escribí *asesor* y te ayudamos igual.');
       await clearSesion(to);
       return;
     }
     await sendList(
       to,
-      'Cotización de flete',
-      'Elegí el *departamento* de destino:',
+      '🧮 Cotización de flete',
+      '¡Genial! Elegí el *departamento* de destino:',
       'Ver departamentos',
       deptos.map((d) => ({ id: `depto:${d.departamento}`, title: d.departamento })),
     );
@@ -42,10 +42,10 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
     const departamento = m.seleccionId.replace('depto:', '');
     await sendButtons(
       to,
-      `Seleccionaste *${departamento}*. ¿Confirmás este destino para cotizar?`,
+      `📍 Elegiste *${departamento}*. ¿Confirmamos este destino para cotizar?`,
       [
-        { id: 'confirmar_depto', title: 'Sí, confirmar' },
-        { id: 'cancelar_depto', title: 'Elegir otro' },
+        { id: 'confirmar_depto', title: '✅ Sí, confirmar' },
+        { id: 'cancelar_depto', title: '↩️ Elegir otro' },
       ],
     );
     await setSesion({ ...sesion, paso: 'confirmar', contexto: { departamento } });
@@ -59,7 +59,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       return handleCotizacion(m, { ...sesion, paso: 'inicio', contexto: {} });
     }
     if (m.seleccionId !== 'confirmar_depto') {
-      await sendText(to, 'Elegí "Sí, confirmar" o "Elegir otro".');
+      await sendText(to, 'Elegí "✅ Sí, confirmar" o "↩️ Elegir otro".');
       return;
     }
 
@@ -69,7 +69,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       [departamento],
     );
     if (tarifa.length === 0) {
-      await sendText(to, 'Esa tarifa ya no está disponible. Escribí *cotizar* para reintentar.');
+      await sendText(to, '🙁 Esa tarifa ya no está disponible. Escribí *Cotizar* para reintentar.');
       await clearSesion(to);
       return;
     }
@@ -86,9 +86,10 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
     await sendText(
       to,
       `📦 *Cotización — ${departamento}*\n` +
-        `Precio del flete: *${moneda} ${Number(precio).toLocaleString('es-UY')}*\n\n` +
-        `Para reservar, realizá el pago y enviános el comprobante por este chat ` +
-        `(escribí *pagar* o adjuntá la imagen).`,
+        `Precio del flete: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n\n` +
+        `Para reservar, hacé el pago y enviános el comprobante por este chat 📎\n` +
+        `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +
+        `_Escribí *menú* para volver al inicio en cualquier momento._`,
     );
     await clearSesion(to);
     return;

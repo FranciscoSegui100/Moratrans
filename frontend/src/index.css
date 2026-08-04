@@ -537,6 +537,47 @@ body {
 .alerta-chofer_no_reconocido .alerta-tipo { color: var(--purple); }
 .alerta-stock_bajo { border-left-color: var(--danger); }
 .alerta-stock_bajo .alerta-tipo { color: var(--danger); }
+.alerta-solicita_asesor { border-left-color: var(--purple); }
+.alerta-solicita_asesor .alerta-tipo { color: var(--purple); }
+.alerta-confirmar_retiro { border-left-color: var(--accent); }
+.alerta-confirmar_retiro .alerta-tipo { color: var(--accent); }
+.alerta-factura_solicitada { border-left-color: var(--warning); }
+.alerta-factura_solicitada .alerta-tipo { color: var(--warning); }
+
+/* Alerta de pago: layout en columna para poder mostrar comprobante + acciones debajo. */
+.alerta-card-pago { flex-direction: column; align-items: stretch; }
+.alerta-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+.alerta-pago-extra {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.alerta-pago-info { display: flex; flex-direction: column; gap: 6px; }
+.alerta-pago-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.comprobante-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+.comprobante-loading,
+.comprobante-error {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
 
 /* ===== PAGO CARDS ===== */
 .pago-card {
@@ -550,6 +591,8 @@ body {
   transition: all var(--transition);
 }
 .pago-card:hover { border-color: var(--border-light); }
+.pago-card-expandido { flex-direction: column; align-items: stretch; }
+.pago-card-top { display: flex; align-items: center; gap: 20px; width: 100%; }
 .pago-avatar {
   width: 46px;
   height: 46px;
@@ -576,6 +619,16 @@ body {
   transition: all var(--transition);
 }
 .comprobante-link:hover { background: var(--accent-glow); }
+
+.validar-form {
+  width: 100%;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 
 /* ===== AVATAR ===== */
 .avatar {

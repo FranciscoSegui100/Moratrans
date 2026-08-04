@@ -1,23 +1,26 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, tieneRol, Rol } from '../context/AuthContext';
 import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
 
-const nav = [
+const nav: { to: string; label: string; icon: string; roles?: Rol[] }[] = [
   { to: '/', label: 'Dashboard', icon: '📊' },
   { to: '/pagos', label: 'Validar pagos', icon: '💳' },
   { to: '/viajes', label: 'Viajes', icon: '🚛' },
   { to: '/alertas', label: 'Alertas', icon: '🔔' },
   { to: '/choferes', label: 'Choferes', icon: '👷' },
   { to: '/contenedores', label: 'Contenedores', icon: '📦' },
+  { to: '/tarifas', label: 'Tarifas', icon: '💵' },
   { to: '/reportes', label: 'Reportes', icon: '📄' },
+  { to: '/usuarios', label: 'Usuarios', icon: '🔐', roles: ['admin'] },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const loc = useLocation();
   const [alertCount, setAlertCount] = useState(0);
+  const navVisible = nav.filter((n) => !n.roles || tieneRol(user, ...n.roles));
 
   // Conectar socket globalmente y escuchar alertas para el badge
   useEffect(() => {
@@ -48,7 +51,7 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
 
         <nav className="sidebar-nav">
-          {nav.map((n) => {
+          {navVisible.map((n) => {
             const isActive = loc.pathname === n.to;
             const isAlertas = n.to === '/alertas';
             return (

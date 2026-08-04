@@ -9,6 +9,12 @@ import type { Sesion } from '../session.store';
 // Únicos estados que un chofer puede aplicar.
 const ESTADOS_CHOFER = ['en_camino', 'entregado', 'retirado'] as const;
 
+const LABEL_ESTADO: Record<(typeof ESTADOS_CHOFER)[number], string> = {
+  en_camino: '🚛 Voy en camino',
+  entregado: '📦 Ya entregué',
+  retirado: '📥 Retiré el contenedor',
+};
+
 export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
 
@@ -30,7 +36,7 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
         // Vincular teléfono al chofer existente
         await query('UPDATE choferes SET telefono = $1 WHERE id = $2', [to, match[0].id]);
         await clearSesion(to);
-        await sendText(to, `✅ ¡Listo, ${match[0].nombre}! Tu número quedó vinculado.`);
+        await sendText(to, `✅ ¡Buenísimo, ${match[0].nombre}! Ya te vinculamos el número. 🚚`);
         return menuChofer(to);
       }
       // No coincide: derivar a operador
@@ -41,12 +47,15 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
       );
       if (alerta) emitAlerta(alerta);
       await clearSesion(to);
-      await sendText(to, 'No pudimos validar tu DNI. Derivamos tu caso a un operador que se comunicará contigo.');
+      await sendText(
+        to,
+        '🙁 Ese DNI no nos cierra. Ya avisamos a un operador para que te contacte y te dé una mano.',
+      );
       return;
     }
     // Primer contacto: pedir DNI
     await setSesion({ telefono: to, flujo: 'chofer', paso: 'esperando_dni', contexto: {} });
-    await sendText(to, '🚚 Hola. No reconozco este número. Enviá tu *DNI* para validarte como chofer.');
+    await sendText(to, '🚚 ¡Hola! No tengo este número registrado. Pasame tu *DNI* para validarte como chofer.');
     return;
   }
 
@@ -55,27 +64,27 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
     return elegirContenedor(to, chofer[0].id, m.seleccionId.replace('estado:', ''), sesion);
   }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('cont:')) {
-    return aplicarEstado(to, chofer[0].id, m.seleccionId.replace('cont:', ''), sesion);
+    return aplicarEstado(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('cont:', ''), sesion);
   }
 
-  return menuChofer(to);
+  return menuChofer(to, chofer[0].nombre);
 }
 
 /** Menú principal del chofer: elegir estado logístico. */
-async function menuChofer(to: string): Promise<void> {
+async function menuChofer(to: string, nombre?: string): Promise<void> {
   await sendList(
     to,
-    'Panel del chofer',
-    'Elegí la acción a registrar:',
+    nombre ? `🚚 ¡Hola, ${nombre}!` : '🚚 Panel del chofer',
+    '¿Qué querés registrar?',
     'Ver acciones',
-    ESTADOS_CHOFER.map((e) => ({ id: `estado:${e}`, title: e.replace('_', ' ') })),
+    ESTADOS_CHOFER.map((e) => ({ id: `estado:${e}`, title: LABEL_ESTADO[e] })),
   );
 }
 
 /** Tras elegir estado, listar contenedores candidatos. */
 async function elegirContenedor(to: string, choferId: string, estado: string, sesion: Sesion): Promise<void> {
   if (!ESTADOS_CHOFER.includes(estado as any)) {
-    await sendText(to, 'Acción no permitida para choferes.');
+    await sendText(to, 'Esa acción no está disponible para choferes.');
     return;
   }
   // Contenedores en un estado desde el que la transición es válida.
@@ -86,14 +95,14 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
     [origen],
   );
   if (conts.length === 0) {
-    await sendText(to, `No hay contenedores en estado "${origen}" para pasar a "${estado.replace('_', ' ')}".`);
+    await sendText(to, `🙁 No tengo contenedores en estado "${origen}" para pasar a "${estado.replace('_', ' ')}".`);
     return menuChofer(to);
   }
   await setSesion({ telefono: to, flujo: 'chofer', paso: 'elegir_contenedor', contexto: { estado } });
   await sendList(
     to,
-    `Marcar como ${estado.replace('_', ' ')}`,
-    'Elegí el contenedor:',
+    LABEL_ESTADO[estado as keyof typeof LABEL_ESTADO],
+    '¿Cuál contenedor?',
     'Ver contenedores',
     conts.map((c) => ({ id: `cont:${c.numero}`, title: c.numero })),
   );
@@ -103,15 +112,46 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
 async function aplicarEstado(
   to: string,
   choferId: string,
+  choferNombre: string,
   numero: string,
   sesion: Sesion,
 ): Promise<void> {
   const estado = sesion.contexto.estado as string;
   if (!ESTADOS_CHOFER.includes(estado as any)) {
-    await sendText(to, 'Acción no permitida.');
+    await sendText(to, 'Esa acción no está disponible.');
     await clearSesion(to);
     return;
   }
+
+  // "Retirado" no se aplica al toque: queda pendiente hasta que un operador
+  // confirme desde el panel que el contenedor llegó físicamente a la empresa.
+  if (estado === 'retirado') {
+    try {
+      await query(
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, estado, notas)
+         VALUES ('retiro', CURRENT_DATE, $1, $2, 'en_curso', 'Retirado del cliente por WhatsApp, pendiente de confirmar llegada a la empresa')`,
+        [choferId, numero],
+      );
+      const [alerta] = await query(
+        `INSERT INTO alertas (tipo, referencia_id, mensaje)
+         VALUES ('confirmar_retiro', $1, $2)
+         ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+         RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+        [numero, `${choferNombre} retiró el contenedor ${numero} del cliente. Confirmá cuando llegue a la empresa.`],
+      );
+      if (alerta) emitAlerta(alerta);
+      await clearSesion(to);
+      await sendText(
+        to,
+        `📥 ¡Anotado! En cuanto el contenedor *${numero}* llegue a la empresa, un operador lo confirma y te avisamos por acá. ¡Gracias por tu trabajo! 🙌`,
+      );
+    } catch (err: any) {
+      await sendText(to, `⚠️ No pudimos registrar el retiro de ${numero}. Probá de nuevo o escribí *menú*.`);
+      console.error('Error registrando retiro pendiente:', err.message);
+    }
+    return;
+  }
+
   try {
     // El trigger fn_validar_transicion_contenedor rechaza transiciones ilegales.
     await query(
@@ -124,13 +164,13 @@ async function aplicarEstado(
       [numero, estado, choferId, 'registrado por chofer vía WhatsApp'],
     );
     await clearSesion(to);
-    await sendText(to, `✅ Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*.`);
+    await sendText(to, `✅ ¡Listo! Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*. 💪`);
   } catch (err: any) {
     // Error de transición inválida u otro
     await sendText(
       to,
-      `⚠️ No se pudo aplicar el cambio en ${numero}. ` +
-        'Puede que el contenedor no esté en el estado correcto. Escribí *menú*.',
+      `⚠️ No pude aplicar el cambio en ${numero}. ` +
+        'Puede que el contenedor no esté en el estado correcto. Escribí *menú* para volver a intentar.',
     );
     console.error('Error aplicarEstado:', err.message);
   }

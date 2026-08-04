@@ -47,7 +47,10 @@ CREATE TYPE tipo_alerta AS ENUM (
   'pago_vencido',
   'pago_pendiente_validacion',
   'chofer_no_reconocido',
-  'stock_bajo'
+  'stock_bajo',
+  'solicita_asesor',
+  'confirmar_retiro',
+  'factura_solicitada'
 );
 
 -- Roles del panel (RBAC). Ver middleware/rbac.ts
@@ -95,7 +98,7 @@ CREATE TABLE choferes (
 CREATE TABLE tarifas_departamento (
   departamento  TEXT           PRIMARY KEY,   -- ej. 'Montevideo', 'Canelones'
   precio        NUMERIC(12,2)  NOT NULL CHECK (precio >= 0),
-  moneda        TEXT           NOT NULL DEFAULT 'UYU',
+  moneda        TEXT           NOT NULL DEFAULT 'ARS',
   activo        BOOLEAN        NOT NULL DEFAULT TRUE,
   actualizado_en TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
@@ -147,6 +150,7 @@ CREATE TABLE pagos (
   monto            NUMERIC(12,2),
   url_comprobante  TEXT,                        -- ruta/URL del media descargado de Meta
   media_id         TEXT,                        -- id original del media en Graph API
+  factura_url      TEXT,                        -- ruta cifrada de la factura cargada por un operador
   estado           estado_pago NOT NULL DEFAULT 'pendiente',
   validado_por     UUID REFERENCES usuarios(id) ON DELETE SET NULL,
   motivo_rechazo   TEXT,

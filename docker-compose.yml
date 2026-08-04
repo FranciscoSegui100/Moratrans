@@ -22,7 +22,7 @@ services:
       - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
       - ./backend/src/db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d logistica"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d logistica" ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -43,12 +43,13 @@ services:
       MEDIA_DIR: ./storage
       # Cifrado en reposo (cambiar en producción)
       ENCRYPTION_KEY: c76d0232d1933d7a830df01c26c33ccc675d2c23dce5cb9e8b9cd08295c051c1
-      # WhatsApp: placeholders para desarrollo local (el bot no enviará mensajes reales)
+      # WhatsApp: credenciales reales, cargadas desde el .env de la raíz (gitignored).
+      # docker compose lee automáticamente ./.env para resolver estas ${VAR}.
       WA_GRAPH_VERSION: v21.0
-      WA_PHONE_NUMBER_ID: "000000000000000"
-      WA_ACCESS_TOKEN: mock
-      WA_VERIFY_TOKEN: dev-verify
-      WA_APP_SECRET: ""
+      WA_PHONE_NUMBER_ID: ${WA_PHONE_NUMBER_ID}
+      WA_ACCESS_TOKEN: ${WA_ACCESS_TOKEN}
+      WA_VERIFY_TOKEN: ${WA_VERIFY_TOKEN}
+      WA_APP_SECRET: ${WA_APP_SECRET}
     ports:
       - "4000:4000"
 

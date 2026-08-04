@@ -9,6 +9,7 @@ export interface DatosTicket {
   contenedor: string;
   zona: string;
   precio?: number | string;
+  moneda?: string;
   clienteTelefono: string;
   fecha: Date;
 }
@@ -33,7 +34,7 @@ export function generarTicketPDF(d: DatosTicket): Promise<string> {
       ['N° de Ticket', d.ticketId],
       ['Contenedor asignado', d.contenedor],
       ['Zona / Departamento', d.zona],
-      ['Precio', d.precio != null ? `UYU ${Number(d.precio).toLocaleString('es-UY')}` : '—'],
+      ['Precio', d.precio != null ? `${d.moneda ?? ''} ${Number(d.precio).toLocaleString('es-AR')}`.trim() : '—'],
       ['Cliente', d.clienteTelefono],
     ];
     doc.fillColor('#000').fontSize(12);
