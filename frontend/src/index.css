@@ -485,7 +485,7 @@ body {
 .form-input, .form-select {
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  color: var(--text-primary);
+  color: #ffffff;
   padding: 9px 12px;
   border-radius: var(--radius);
   font-size: 0.87rem;
