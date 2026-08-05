@@ -1,7 +1,9 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "dockerfilePath": "backend/Dockerfile"
+    "builder": "NIXPACKS",
+    "buildCommand": "npm install && npm run build",
+    "watchPatterns": ["backend/**"]
   },
   "deploy": {
     "startCommand": "node dist/db/seedChoferes.js; node dist/server.js",
