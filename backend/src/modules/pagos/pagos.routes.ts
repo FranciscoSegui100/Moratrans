@@ -7,7 +7,7 @@ import { env } from '../../config/env';
 import { requireAuth, requireRol, puedeVerComprobante } from '../../middleware/rbac';
 import { encrypt, decrypt } from '../../services/crypto.service';
 import { enviarTicketPorWhatsApp } from '../../services/pdf.service';
-import { sendText, uploadMedia, sendDocument } from '../whatsapp/graphApi';
+import { sendText, sendButtons, uploadMedia, sendDocument } from '../whatsapp/graphApi';
 import { emitAlerta } from '../../config/socket';
 
 export const pagosRouter = Router();
@@ -149,10 +149,11 @@ pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), a
   await query(`UPDATE alertas SET estado = 'resuelta'
                WHERE tipo = 'pago_pendiente_validacion' AND referencia_id = $1`, [req.params.id]);
 
-  sendText(
+  sendButtons(
     pago.cliente_telefono,
-    `⚠️ Tu comprobante no pudo validarse. Motivo: ${motivo}\n\n` +
-      'Escribí *Ya pagué* y enviá el comprobante de nuevo (probá con buena luz y que se lea bien el monto y la fecha) 📎',
+    `⚠️ Tu comprobante no pudo validarse. Motivo: ${motivo}\n` +
+      'Si tenés alguna duda, comunicate con un asesor.',
+    [{ id: 'opt_asesor', title: '🙋 Hablar con asesor' }],
   ).catch((e) => console.error(e));
 
   res.json({ ok: true });
