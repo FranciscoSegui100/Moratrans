@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ArrowUpFromLine, ArrowDownToLine } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -93,7 +94,7 @@ export function Viajes() {
               <input className="form-input" placeholder="Ej. MSKU1000001" value={form.contenedor_numero} onChange={(e) => setForm({ ...form, contenedor_numero: e.target.value })} />
             </div>
             <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? 'Guardando...' : '+ Programar'}
+              {loading ? 'Guardando...' : 'Programar viaje'}
             </button>
           </form>
         </div>
@@ -118,7 +119,7 @@ export function Viajes() {
                 <td className="strong">{v.fecha}</td>
                 <td>
                   <span className={`badge ${v.tipo === 'entrega' ? 'reservado' : 'retirado'}`}>
-                    {v.tipo === 'entrega' ? '📤' : '📥'} {v.tipo}
+                    {v.tipo === 'entrega' ? <ArrowUpFromLine size={11} strokeWidth={2} /> : <ArrowDownToLine size={11} strokeWidth={2} />} {v.tipo}
                   </span>
                 </td>
                 <td>{v.zona ?? '—'}</td>

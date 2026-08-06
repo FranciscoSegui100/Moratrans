@@ -26,12 +26,11 @@ export function Login() {
 
   return (
     <div className="login-page">
-      <div className="login-bg" />
       <div className="login-card">
         <div className="login-logo">
-          <span className="login-logo-icon">🚚</span>
-          <h1>LogiPanel</h1>
-          <p>Sistema de gestión logística</p>
+          <div className="login-logo-mark">MT</div>
+          <h1>Moratrans</h1>
+          <p>Panel de gestión logística</p>
         </div>
 
         <form onSubmit={onSubmit} className="login-form">
@@ -64,14 +63,14 @@ export function Login() {
           <button
             type="submit"
             className="btn btn-primary"
-            style={{ justifyContent: 'center', padding: '11px' }}
+            style={{ justifyContent: 'center', padding: '10px' }}
             disabled={loading}
           >
             {loading ? 'Ingresando...' : 'Ingresar al sistema'}
           </button>
         </form>
 
-        <p style={{ textAlign: 'center', marginTop: '20px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+        <p style={{ textAlign: 'center', marginTop: '18px', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
           Admin1234! para iniciar sesión en modo demo
         </p>
       </div>

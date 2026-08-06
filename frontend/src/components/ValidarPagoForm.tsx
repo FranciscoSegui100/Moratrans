@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Check } from 'lucide-react';
 
 export interface ValidarPagoPayload {
   diasDemora?: number;
@@ -59,7 +60,7 @@ export function ValidarPagoForm({ choferes, procesando, onConfirm, onCancel }: P
             })
           }
         >
-          {procesando ? '...' : '✓ Confirmar validación'}
+          {procesando ? '...' : <><Check strokeWidth={2} /> Confirmar validación</>}
         </button>
         <button className="btn btn-ghost btn-sm" onClick={onCancel} disabled={procesando}>
           Cancelar

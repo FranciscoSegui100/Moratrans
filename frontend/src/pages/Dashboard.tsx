@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, FileOutput } from 'lucide-react';
 import { api } from '../api/client';
 
 interface Kpis {
@@ -14,10 +15,10 @@ interface EstadoDist {
 }
 
 const kpiConfig = [
-  { key: 'contenedores_activos',    label: 'Contenedores activos', icon: '📦', color: 'blue' },
-  { key: 'contenedores_disponibles',label: 'Disponibles',          icon: '✅', color: 'green' },
-  { key: 'cobros_pendientes',       label: 'Cobros pendientes',    icon: '💰', color: 'yellow' },
-  { key: 'viajes_hoy',              label: 'Viajes de hoy',        icon: '🚛', color: 'purple' },
+  { key: 'contenedores_activos',    label: 'Contenedores activos', icon: Package },
+  { key: 'contenedores_disponibles',label: 'Disponibles',          icon: CircleCheck },
+  { key: 'cobros_pendientes',       label: 'Cobros pendientes',    icon: CircleDollarSign },
+  { key: 'viajes_hoy',              label: 'Viajes de hoy',        icon: Truck },
 ] as const;
 
 const estadoColors: Record<string, string> = {
@@ -49,15 +50,18 @@ export function Dashboard() {
 
       {/* KPI Cards */}
       <div className="kpi-grid">
-        {kpiConfig.map((c) => (
-          <div key={c.key} className={`kpi-card ${c.color}`}>
-            <div className={`kpi-icon ${c.color}`}>{c.icon}</div>
-            <div className="kpi-value">
-              {kpis ? (kpis as any)[c.key] : '—'}
+        {kpiConfig.map((c) => {
+          const Icon = c.icon;
+          return (
+            <div key={c.key} className="kpi-card">
+              <div className="kpi-icon"><Icon strokeWidth={1.75} /></div>
+              <div className="kpi-value">
+                {kpis ? (kpis as any)[c.key] : '—'}
+              </div>
+              <div className="kpi-label">{c.label}</div>
             </div>
-            <div className="kpi-label">{c.label}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Distribución de contenedores */}
@@ -66,7 +70,7 @@ export function Dashboard() {
           <div className="section-title">Distribución por estado</div>
           {distribucion.length === 0 ? (
             <div className="empty-state">
-              <div className="empty-state-icon">📦</div>
+              <div className="empty-state-icon"><Package strokeWidth={1.5} /></div>
               <div className="empty-state-title">Sin datos</div>
               <div className="empty-state-text">No hay contenedores cargados</div>
             </div>
@@ -95,36 +99,39 @@ export function Dashboard() {
           <div className="section-title">Accesos rápidos</div>
           <div className="space-y">
             {[
-              { href: '/pagos',       icon: '💳', label: 'Validar pagos pendientes' },
-              { href: '/viajes',      icon: '🚛', label: 'Programar viaje' },
-              { href: '/contenedores',icon: '📦', label: 'Gestionar contenedores' },
-              { href: '/choferes',    icon: '👷', label: 'Alta de chofer' },
-              { href: '/reportes',    icon: '📄', label: 'Exportar reportes' },
-            ].map((item) => (
-              <a
-                key={item.href}
-                href={item.href}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  padding: '12px',
-                  background: 'var(--bg-surface)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius)',
-                  color: 'var(--text-secondary)',
-                  textDecoration: 'none',
-                  fontSize: '0.87rem',
-                  fontWeight: 500,
-                  transition: 'all var(--transition)',
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)'; }}
-              >
-                <span style={{ fontSize: '1.1rem' }}>{item.icon}</span>
-                {item.label}
-              </a>
-            ))}
+              { href: '/pagos',       icon: CreditCard, label: 'Validar pagos pendientes' },
+              { href: '/viajes',      icon: Truck,      label: 'Programar viaje' },
+              { href: '/contenedores',icon: Package,    label: 'Gestionar contenedores' },
+              { href: '/choferes',    icon: Users,      label: 'Alta de chofer' },
+              { href: '/reportes',    icon: FileOutput, label: 'Exportar reportes' },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '10px 12px',
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius)',
+                    color: 'var(--text-secondary)',
+                    textDecoration: 'none',
+                    fontSize: '0.83rem',
+                    fontWeight: 500,
+                    transition: 'all var(--transition)',
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)'; }}
+                >
+                  <Icon size={16} strokeWidth={1.75} />
+                  {item.label}
+                </a>
+              );
+            })}
           </div>
         </div>
       </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { FileText } from 'lucide-react';
 import { api } from '../api/client';
 
 /** Descarga el comprobante autenticado (Bearer) y lo muestra como imagen o link a PDF. */
@@ -33,7 +34,7 @@ export function ComprobanteViewer({ pagoId }: { pagoId: string }) {
   if (esPdf) {
     return (
       <a href={url} target="_blank" rel="noreferrer" className="comprobante-link">
-        📄 Ver comprobante (PDF)
+        <FileText strokeWidth={1.75} /> Ver comprobante (PDF)
       </a>
     );
   }

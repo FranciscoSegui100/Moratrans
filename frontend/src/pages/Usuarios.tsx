@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Check, Pencil, KeyRound } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
@@ -116,7 +117,7 @@ export function Usuarios() {
             </select>
           </div>
           <button type="submit" className="btn btn-primary" disabled={loading}>
-            {loading ? 'Guardando...' : '+ Crear usuario'}
+            {loading ? 'Guardando...' : 'Crear usuario'}
           </button>
         </form>
       </div>
@@ -166,7 +167,7 @@ export function Usuarios() {
                     {enEdicion ? (
                       <div style={{ display: 'flex', gap: '6px' }}>
                         <button onClick={() => guardarEdicion(u.id)} className="btn btn-success btn-sm">
-                          ✓ Guardar
+                          <Check strokeWidth={2} /> Guardar
                         </button>
                         <button onClick={() => setEditando(null)} className="btn btn-ghost btn-sm">
                           Cancelar
@@ -175,10 +176,10 @@ export function Usuarios() {
                     ) : (
                       <div style={{ display: 'flex', gap: '6px' }}>
                         <button onClick={() => empezarEdicion(u)} className="btn btn-ghost btn-sm">
-                          ✏️ Editar
+                          <Pencil strokeWidth={1.75} /> Editar
                         </button>
                         <button onClick={() => resetearPassword(u)} className="btn btn-ghost btn-sm">
-                          🔑 Contraseña
+                          <KeyRound strokeWidth={1.75} /> Contraseña
                         </button>
                         <button
                           onClick={() => toggleActivo(u)}

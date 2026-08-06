@@ -1,19 +1,13 @@
 import { useEffect, useState } from 'react';
+import { Check, Pencil, Trash2 } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 
 interface Chofer { id: string; nombre: string; dni: string; telefono: string; activo: boolean; }
 
-const avatarColors = ['#3b82f6','#8b5cf6','#10b981','#f59e0b','#ef4444','#06b6d4'];
-
 function initials(name: string) {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-}
-
-function avatarColor(name: string) {
-  const i = name.charCodeAt(0) % avatarColors.length;
-  return avatarColors[i];
 }
 
 export function Choferes() {
@@ -109,7 +103,7 @@ export function Choferes() {
                 onChange={(e) => setForm({ ...form, telefono: e.target.value })} />
             </div>
             <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? 'Guardando...' : '+ Agregar'}
+              {loading ? 'Guardando...' : 'Agregar chofer'}
             </button>
           </form>
         </div>
@@ -140,7 +134,7 @@ export function Choferes() {
                       />
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <div className="avatar" style={{ background: avatarColor(c.nombre) }}>
+                        <div className="avatar">
                           {initials(c.nombre)}
                         </div>
                         <span className="strong">{c.nombre}</span>
@@ -180,7 +174,7 @@ export function Choferes() {
                       {enEdicion ? (
                         <div style={{ display: 'flex', gap: '6px' }}>
                           <button onClick={() => guardarEdicion(c.id)} className="btn btn-success btn-sm">
-                            ✓ Guardar
+                            <Check strokeWidth={2} /> Guardar
                           </button>
                           <button onClick={() => setEditando(null)} className="btn btn-ghost btn-sm">
                             Cancelar
@@ -189,13 +183,13 @@ export function Choferes() {
                       ) : (
                         <div style={{ display: 'flex', gap: '6px' }}>
                           <button onClick={() => empezarEdicion(c)} className="btn btn-ghost btn-sm">
-                            ✏️ Editar
+                            <Pencil strokeWidth={1.75} /> Editar
                           </button>
                           <button onClick={() => toggleActivo(c)} className="btn btn-ghost btn-sm">
                             {c.activo ? 'Desactivar' : 'Activar'}
                           </button>
                           <button onClick={() => borrar(c.id, c.nombre)} className="btn btn-danger btn-sm">
-                            Eliminar
+                            <Trash2 strokeWidth={1.75} /> Eliminar
                           </button>
                         </div>
                       )}

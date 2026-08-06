@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Check, Pencil, Trash2 } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -103,7 +104,7 @@ export function Tarifas() {
                 onChange={(e) => setForm({ ...form, moneda: e.target.value.toUpperCase() })} />
             </div>
             <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? 'Guardando...' : '+ Agregar'}
+              {loading ? 'Guardando...' : 'Agregar departamento'}
             </button>
           </form>
         </div>
@@ -164,7 +165,7 @@ export function Tarifas() {
                       {enEdicion ? (
                         <div style={{ display: 'flex', gap: '6px' }}>
                           <button onClick={() => guardarEdicion(t.departamento)} className="btn btn-success btn-sm">
-                            ✓ Guardar
+                            <Check strokeWidth={2} /> Guardar
                           </button>
                           <button onClick={() => setEditando(null)} className="btn btn-ghost btn-sm">
                             Cancelar
@@ -173,14 +174,14 @@ export function Tarifas() {
                       ) : (
                         <div style={{ display: 'flex', gap: '6px' }}>
                           <button onClick={() => empezarEdicion(t)} className="btn btn-ghost btn-sm">
-                            ✏️ Editar
+                            <Pencil strokeWidth={1.75} /> Editar
                           </button>
                           <button onClick={() => toggleActivo(t)} className="btn btn-ghost btn-sm">
                             {t.activo ? 'Desactivar' : 'Activar'}
                           </button>
                           {!t.activo && (
                             <button onClick={() => borrar(t.departamento)} className="btn btn-danger btn-sm">
-                              🗑️ Eliminar
+                              <Trash2 strokeWidth={1.75} /> Eliminar
                             </button>
                           )}
                         </div>

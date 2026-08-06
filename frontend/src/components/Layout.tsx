@@ -1,19 +1,31 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import {
+  LayoutGrid,
+  CreditCard,
+  Truck,
+  Bell,
+  HardHat,
+  Package,
+  DollarSign,
+  FileText,
+  ShieldCheck,
+  LogOut,
+} from 'lucide-react';
 import { useAuth, tieneRol, Rol } from '../context/AuthContext';
 import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
 
-const nav: { to: string; label: string; icon: string; roles?: Rol[] }[] = [
-  { to: '/', label: 'Dashboard', icon: '📊' },
-  { to: '/pagos', label: 'Validar pagos', icon: '💳' },
-  { to: '/viajes', label: 'Viajes', icon: '🚛' },
-  { to: '/alertas', label: 'Alertas', icon: '🔔' },
-  { to: '/choferes', label: 'Choferes', icon: '👷' },
-  { to: '/contenedores', label: 'Contenedores', icon: '📦' },
-  { to: '/tarifas', label: 'Tarifas', icon: '💵' },
-  { to: '/reportes', label: 'Reportes', icon: '📄' },
-  { to: '/usuarios', label: 'Usuarios', icon: '🔐', roles: ['admin'] },
+const nav: { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] }[] = [
+  { to: '/', label: 'Dashboard', icon: LayoutGrid },
+  { to: '/pagos', label: 'Validar pagos', icon: CreditCard },
+  { to: '/viajes', label: 'Viajes', icon: Truck },
+  { to: '/alertas', label: 'Alertas', icon: Bell },
+  { to: '/choferes', label: 'Choferes', icon: HardHat },
+  { to: '/contenedores', label: 'Contenedores', icon: Package },
+  { to: '/tarifas', label: 'Tarifas', icon: DollarSign },
+  { to: '/reportes', label: 'Reportes', icon: FileText },
+  { to: '/usuarios', label: 'Usuarios', icon: ShieldCheck, roles: ['admin'] },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -46,21 +58,25 @@ export function Layout({ children }: { children: ReactNode }) {
     <div className="layout">
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <h1>🚚 LogiPanel</h1>
-          <span>Sistema logístico</span>
+          <div className="sidebar-logo-mark">MT</div>
+          <div>
+            <h1>Moratrans</h1>
+            <span>Panel logístico</span>
+          </div>
         </div>
 
         <nav className="sidebar-nav">
           {navVisible.map((n) => {
             const isActive = loc.pathname === n.to;
             const isAlertas = n.to === '/alertas';
+            const Icon = n.icon;
             return (
               <Link
                 key={n.to}
                 to={n.to}
                 className={`nav-item ${isActive ? 'active' : ''}`}
               >
-                <span className="nav-icon">{n.icon}</span>
+                <Icon className="nav-icon" strokeWidth={1.75} />
                 {n.label}
                 {isAlertas && alertCount > 0 && (
                   <span className="nav-badge">{alertCount > 99 ? '99+' : alertCount}</span>
@@ -75,7 +91,10 @@ export function Layout({ children }: { children: ReactNode }) {
             <div className="sidebar-user-email">{user?.email}</div>
             <div className="sidebar-user-role">{user?.rol}</div>
           </div>
-          <button onClick={logout} className="btn-logout">Cerrar sesión</button>
+          <button onClick={logout} className="btn-logout">
+            <LogOut strokeWidth={1.75} />
+            Cerrar sesión
+          </button>
         </div>
       </aside>
 

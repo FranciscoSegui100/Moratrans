@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Check, X, RotateCcw, CircleCheck, FileCheck } from 'lucide-react';
 import { useAlertas } from '../hooks/useAlertas';
 import { RoleGate } from '../components/RoleGate';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
@@ -114,7 +115,7 @@ export function Alertas() {
       {alertas.length === 0 ? (
         <div className="card">
           <div className="empty-state">
-            <div className="empty-state-icon">🟢</div>
+            <div className="empty-state-icon"><CircleCheck strokeWidth={1.5} /></div>
             <div className="empty-state-title">Sin alertas activas</div>
             <div className="empty-state-text">El sistema está funcionando correctamente</div>
           </div>
@@ -139,7 +140,7 @@ export function Alertas() {
                   </div>
                   {!esPago && !esRetiro && !esFactura && (
                     <button onClick={() => resolver(a.id)} className="btn btn-ghost btn-sm">
-                      ✓ Resolver
+                      <Check strokeWidth={2} /> Resolver
                     </button>
                   )}
                   {esRetiro && (
@@ -149,7 +150,7 @@ export function Alertas() {
                         className="btn btn-success btn-sm"
                         disabled={procesando === a.referencia_id}
                       >
-                        {procesando === a.referencia_id ? '...' : '✅ Confirmar llegada'}
+                        {procesando === a.referencia_id ? '...' : <><Check strokeWidth={2} /> Confirmar llegada</>}
                       </button>
                     </RoleGate>
                   )}
@@ -170,7 +171,7 @@ export function Alertas() {
                         className="btn btn-success btn-sm"
                         disabled={procesando === a.referencia_id || !facturaFile[a.referencia_id]}
                       >
-                        {procesando === a.referencia_id ? '...' : '🧾 Enviar factura'}
+                        {procesando === a.referencia_id ? '...' : <><FileCheck strokeWidth={1.75} /> Enviar factura</>}
                       </button>
                     </div>
                   </RoleGate>
@@ -201,14 +202,14 @@ export function Alertas() {
                             className="btn btn-success btn-sm"
                             disabled={procesando === a.referencia_id}
                           >
-                            ✓ Impactó — Validar
+                            <Check strokeWidth={2} /> Impactó — Validar
                           </button>
                           <button
                             onClick={() => onRechazar(a.referencia_id)}
                             className="btn btn-danger btn-sm"
                             disabled={procesando === a.referencia_id}
                           >
-                            ✕ No impactó — Rechazar
+                            <X strokeWidth={2} /> No impactó — Rechazar
                           </button>
                           <button
                             onClick={() => onPedirDeNuevo(a.referencia_id)}
@@ -216,7 +217,7 @@ export function Alertas() {
                             disabled={procesando === a.referencia_id}
                             title="El comprobante no se lee bien: le pedimos al cliente que lo reenvíe"
                           >
-                            🔄 Pedir de nuevo
+                            <RotateCcw strokeWidth={1.75} /> Pedir de nuevo
                           </button>
                         </div>
                       )}

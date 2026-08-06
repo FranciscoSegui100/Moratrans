@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { CreditCard, Check, X, RotateCcw, CircleCheck } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
@@ -86,7 +87,7 @@ export function Pagos() {
       {pagos.length === 0 ? (
         <div className="card">
           <div className="empty-state">
-            <div className="empty-state-icon">✅</div>
+            <div className="empty-state-icon"><CircleCheck strokeWidth={1.5} /></div>
             <div className="empty-state-title">Todo al día</div>
             <div className="empty-state-text">No hay pagos pendientes de validación</div>
           </div>
@@ -96,7 +97,7 @@ export function Pagos() {
           {pagos.map((p) => (
             <div key={p.id} className={`pago-card ${validandoId === p.id ? 'pago-card-expandido' : ''}`}>
               <div className="pago-card-top">
-                <div className="pago-avatar">💳</div>
+                <div className="pago-avatar"><CreditCard strokeWidth={1.75} /></div>
 
                 <div className="pago-info">
                   <div className="pago-phone">{p.cliente_telefono}</div>
@@ -122,7 +123,7 @@ export function Pagos() {
                         className="btn btn-success btn-sm"
                         disabled={procesando === p.id}
                       >
-                        ✓ Validar
+                        <Check strokeWidth={2} /> Validar
                       </button>
                     )}
                     <button
@@ -130,7 +131,7 @@ export function Pagos() {
                       className="btn btn-danger btn-sm"
                       disabled={procesando === p.id}
                     >
-                      ✕ Rechazar
+                      <X strokeWidth={2} /> Rechazar
                     </button>
                     <button
                       onClick={() => pedirDeNuevo(p.id)}
@@ -138,7 +139,7 @@ export function Pagos() {
                       disabled={procesando === p.id}
                       title="El comprobante no se lee bien: le pedimos al cliente que lo reenvíe"
                     >
-                      🔄 Pedir de nuevo
+                      <RotateCcw strokeWidth={1.75} /> Pedir de nuevo
                     </button>
                   </RoleGate>
                 </div>

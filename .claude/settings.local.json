@@ -5,7 +5,13 @@
       "Bash(curl -s \"http://127.0.0.1:4040/api/requests/http?limit=10\")",
       "Bash(curl -s http://127.0.0.1:4040/api/tunnels)",
       "Bash(tasklist /v)",
-      "Bash(curl -s -o /dev/null -w \"status: %{http_code}\\\\n\" \"http://localhost:4000/webhook?hub.mode=subscribe&hub.verify_token=dev-verify&hub.challenge=123\")"
+      "Bash(curl -s -o /dev/null -w \"status: %{http_code}\\\\n\" \"http://localhost:4000/webhook?hub.mode=subscribe&hub.verify_token=dev-verify&hub.challenge=123\")",
+      "Bash(git fetch *)",
+      "Bash(grep -E '\\\\.\\(ts|tsx|js|jsx\\)$')",
+      "Bash(npx tsc *)",
+      "Bash(node _test_ssl.cjs)",
+      "Bash(node _get_ca.cjs)",
+      "Bash(node _test_ssl2.cjs)"
     ]
   }
 }

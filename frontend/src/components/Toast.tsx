@@ -1,4 +1,5 @@
 import { useEffect, useState, createContext, useContext, ReactNode } from 'react';
+import { CheckCircle2, XCircle, Info } from 'lucide-react';
 
 interface Toast {
   id: number;
@@ -17,7 +18,7 @@ export function useToast() {
   return useContext(ToastContext);
 }
 
-const icons = { success: '✅', error: '❌', info: 'ℹ️' };
+const icons = { success: CheckCircle2, error: XCircle, info: Info };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -33,15 +34,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={{ show }}>
       {children}
       <div className="toast-container">
-        {toasts.map((t) => (
-          <div key={t.id} className={`toast ${t.type}`}>
-            <span className="toast-icon">{icons[t.type]}</span>
-            <div className="toast-body">
-              <div className="toast-title">{t.title}</div>
-              {t.desc && <div className="toast-desc">{t.desc}</div>}
+        {toasts.map((t) => {
+          const Icon = icons[t.type];
+          return (
+            <div key={t.id} className={`toast ${t.type}`}>
+              <span className="toast-icon"><Icon strokeWidth={1.75} /></span>
+              <div className="toast-body">
+                <div className="toast-title">{t.title}</div>
+                {t.desc && <div className="toast-desc">{t.desc}</div>}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </ToastContext.Provider>
   );

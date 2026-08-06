@@ -59,7 +59,7 @@ export function Contenedores() {
               />
             </div>
             <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? 'Guardando...' : '+ Registrar'}
+              {loading ? 'Guardando...' : 'Registrar contenedor'}
             </button>
           </form>
         </div>
