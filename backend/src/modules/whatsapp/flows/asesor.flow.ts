@@ -42,7 +42,10 @@ export async function handleAsesor(m: MensajeEntrante, sesion: Sesion): Promise<
   // el bot deja de responder automáticamente hasta que el operador la resuelva
   // desde el panel (o el cliente escriba "menú").
   await setSesion({ ...sesion, contexto: { ...sesion.contexto, asesorCount: 0, modoHumano: true } });
-  const textoAviso = '🙋 ¡Ya avisamos a un asesor! En breve te va a contactar por acá mismo.';
+  const textoAviso =
+    '🙋 ¡Ya avisamos a un asesor! En breve te va a contactar por acá mismo.\n\n' +
+    '_Tenés una ventana de 24hs para seguir esta conversación: si pasa ese tiempo sin que escribas, ' +
+    'WhatsApp la cierra y vas a tener que volver a escribirnos para retomarla._';
   await sendText(to, textoAviso);
   await logMensaje(to, 'bot', textoAviso).catch((e) => console.error('Error logueando mensaje:', e));
 }
