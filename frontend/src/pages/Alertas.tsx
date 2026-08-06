@@ -6,18 +6,7 @@ import { ComprobanteViewer } from '../components/ComprobanteViewer';
 import { ValidarPagoForm, ValidarPagoPayload } from '../components/ValidarPagoForm';
 import { useToast } from '../components/Toast';
 import { api } from '../api/client';
-
-const tipoLabel: Record<string, string> = {
-  contenedor_por_vencer:      'Contenedor por vencer',
-  pago_vencido:               'Pago vencido',
-  pago_pendiente_validacion:  'Pago pendiente',
-  chofer_no_reconocido:       'Chofer no reconocido',
-  chofer_cambio_telefono:     'Cambio de teléfono de chofer',
-  stock_bajo:                 'Stock bajo',
-  solicita_asesor:            'Pide hablar con un asesor',
-  confirmar_retiro:           'Confirmar llegada de contenedor',
-  factura_solicitada:         'Pide factura',
-};
+import { tipoLabel } from '../lib/alertLabels';
 
 interface Chofer { id: string; nombre: string; activo: boolean; }
 

@@ -15,6 +15,10 @@ import {
 import { useAuth, tieneRol, Rol } from '../context/AuthContext';
 import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
+import { useToast } from './Toast';
+import { tipoLabel } from '../lib/alertLabels';
+
+interface AlertaSocket { tipo: string; mensaje: string; cliente_telefono?: string | null }
 
 const nav: { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] }[] = [
   { to: '/', label: 'Dashboard', icon: LayoutGrid },
@@ -31,22 +35,32 @@ const nav: { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] }
 export function Layout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const loc = useLocation();
+  const { show } = useToast();
   const [alertCount, setAlertCount] = useState(0);
   const navVisible = nav.filter((n) => !n.roles || tieneRol(user, ...n.roles));
 
-  // Conectar socket globalmente y escuchar alertas para el badge
+  // Conectar socket globalmente y escuchar alertas para el badge + el toast
   useEffect(() => {
-    // Cargar conteo inicial de alertas abiertas
-    api.get<{ id: string }[]>('/api/alertas?estado=nueva')
-      .then((r) => setAlertCount(r.data.length))
-      .catch(() => {});
+    const cargarConteo = () => {
+      api.get<{ id: string }[]>('/api/alertas?estado=nueva')
+        .then((r) => setAlertCount(r.data.length))
+        .catch(() => {});
+    };
 
-    // Escuchar nuevas alertas en tiempo real
     const socket = conectarSocket();
-    socket.on('nueva_alerta', () => {
+    cargarConteo(); // conteo inicial
+    // Resincroniza al (re)conectar: si hubo un corte de red o la compu se
+    // suspendió, cualquier alerta creada durante ese lapso no llegó por
+    // socket y quedaría afuera del contador hasta un refresh manual.
+    socket.on('connect', cargarConteo);
+    socket.on('nueva_alerta', (a: AlertaSocket) => {
       setAlertCount((c) => c + 1);
+      show('info', tipoLabel[a.tipo] ?? a.tipo, a.cliente_telefono ? `${a.cliente_telefono} · ${a.mensaje}` : a.mensaje);
     });
-    return () => { socket.off('nueva_alerta'); };
+    return () => {
+      socket.off('connect', cargarConteo);
+      socket.off('nueva_alerta');
+    };
   }, []);
 
   // Al entrar a alertas, resetear el badge

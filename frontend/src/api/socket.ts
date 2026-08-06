@@ -3,11 +3,22 @@ import { io, Socket } from 'socket.io-client';
 const API_URL = import.meta.env.VITE_API_URL || '';
 let socket: Socket | null = null;
 
-// Conecta el socket autenticado con el mismo JWT del panel.
+/**
+ * Devuelve el socket compartido de la app (autenticado con el JWT del panel),
+ * conectándolo si hace falta. Varios componentes lo piden (Layout para el
+ * badge, useAlertas para el listado): si se recreara en cada llamada, como
+ * antes, cada nueva conexión mataba la anterior y dejaba "colgados" los
+ * listeners ya registrados en ella (el badge del sidebar dejaba de recibir
+ * alertas apenas se entraba una vez a la página de Alertas).
+ */
 export function conectarSocket(): Socket {
   const token = localStorage.getItem('token') || '';
-  if (socket) socket.disconnect();
-  socket = io(API_URL, { auth: { token } });
+  if (!socket) {
+    socket = io(API_URL, { auth: { token } });
+  } else if (!socket.connected) {
+    socket.auth = { token };
+    socket.connect();
+  }
   return socket;
 }
 

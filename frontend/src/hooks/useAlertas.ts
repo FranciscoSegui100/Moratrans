@@ -25,13 +25,22 @@ export function useAlertas() {
   const [alertas, setAlertas] = useState<Alerta[]>([]);
 
   useEffect(() => {
-    api.get<Alerta[]>('/api/alertas').then((r) => setAlertas(r.data)).catch(() => {});
+    const cargar = () => {
+      api.get<Alerta[]>('/api/alertas').then((r) => setAlertas(r.data)).catch(() => {});
+    };
 
     const socket = conectarSocket();
+    cargar(); // listado inicial
+    // Resincroniza al (re)conectar para no perder alertas creadas durante
+    // un corte de red o mientras la pestaña estaba en segundo plano.
+    socket.on('connect', cargar);
     socket.on('nueva_alerta', (a: Alerta) => {
       setAlertas((prev) => (prev.find((x) => x.id === a.id) ? prev : [a, ...prev]));
     });
-    return () => { socket.off('nueva_alerta'); };
+    return () => {
+      socket.off('connect', cargar);
+      socket.off('nueva_alerta');
+    };
   }, []);
 
   async function resolver(id: string) {
