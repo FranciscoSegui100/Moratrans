@@ -2,7 +2,7 @@ import axios from 'axios';
 import crypto from 'crypto';
 import fs from 'fs';
 import FormData from 'form-data';
-import { env } from '../../config/env';
+import { env, isProd } from '../../config/env';
 import { normalizarDestinoWhatsApp } from '../../services/telefono.service';
 
 export { normalizarDestinoWhatsApp };
@@ -17,7 +17,7 @@ const http = axios.create({
 
 /** Valida la firma X-Hub-Signature-256 del webhook (seguridad contra spoofing). */
 export function verifySignature(rawBody: Buffer, signature?: string): boolean {
-  if (!env.WA_APP_SECRET) return true; // permitido sólo en dev sin secret
+  if (!env.WA_APP_SECRET) return !isProd; // permitido sólo en dev sin secret; en prod falla cerrado
   if (!signature) return false;
   const expected =
     'sha256=' +

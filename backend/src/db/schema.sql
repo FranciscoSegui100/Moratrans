@@ -47,6 +47,7 @@ CREATE TYPE tipo_alerta AS ENUM (
   'pago_vencido',
   'pago_pendiente_validacion',
   'chofer_no_reconocido',
+  'chofer_cambio_telefono',
   'stock_bajo',
   'solicita_asesor',
   'confirmar_retiro',
@@ -66,6 +67,9 @@ CREATE TABLE usuarios (
   password_hash TEXT        NOT NULL,          -- bcrypt/argon2, nunca en claro
   rol           rol_usuario NOT NULL DEFAULT 'lectura',
   activo        BOOLEAN     NOT NULL DEFAULT TRUE,
+  -- Se incrementa al desactivar, cambiar rol o resetear contraseña: invalida
+  -- al instante cualquier JWT ya emitido (ver middleware/rbac.ts).
+  token_version INTEGER     NOT NULL DEFAULT 0,
   creado_en     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

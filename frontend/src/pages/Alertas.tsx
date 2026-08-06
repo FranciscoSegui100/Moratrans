@@ -11,6 +11,7 @@ const tipoLabel: Record<string, string> = {
   pago_vencido:               'Pago vencido',
   pago_pendiente_validacion:  'Pago pendiente',
   chofer_no_reconocido:       'Chofer no reconocido',
+  chofer_cambio_telefono:     'Cambio de teléfono de chofer',
   stock_bajo:                 'Stock bajo',
   solicita_asesor:            'Pide hablar con un asesor',
   confirmar_retiro:           'Confirmar llegada de contenedor',

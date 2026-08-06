@@ -1,14 +1,23 @@
 import { Pool, PoolClient } from 'pg';
 import { env } from './env';
+import { SUPABASE_CA } from './supabaseCa';
+
+const esSupabase = env.DATABASE_URL.includes('supabase.co');
 
 // Pool único compartido por chatbot y panel: la DB es la única fuente de verdad.
+// La conexión valida el certificado del servidor (rejectUnauthorized: true) en
+// vez de aceptar cualquier certificado como antes: contra Supabase se pinea su
+// CA raíz (self-signed, no está en el store de confianza por defecto de Node);
+// contra cualquier otro host de producción se usa el store de confianza estándar.
 export const pool = new Pool({
   connectionString: env.DATABASE_URL,
   max: 10,
   idleTimeoutMillis: 30_000,
-  ssl: env.DATABASE_URL.includes('supabase.co') || env.NODE_ENV === 'production'
-    ? { rejectUnauthorized: false }
-    : false,
+  ssl: esSupabase
+    ? { rejectUnauthorized: true, ca: SUPABASE_CA }
+    : env.NODE_ENV === 'production'
+      ? { rejectUnauthorized: true }
+      : false,
 });
 
 

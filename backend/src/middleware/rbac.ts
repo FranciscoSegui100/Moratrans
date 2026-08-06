@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
+import { query } from '../config/db';
 
 export type Rol = 'admin' | 'operador' | 'finanzas' | 'lectura';
 
@@ -8,6 +9,7 @@ export interface AuthUser {
   id: string;
   rol: Rol;
   email: string;
+  tv: number;
 }
 
 declare global {
@@ -19,17 +21,35 @@ declare global {
   }
 }
 
-/** Verifica el JWT y adjunta req.user. */
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+/**
+ * Verifica el JWT y adjunta req.user. Además revalida contra la base que el
+ * usuario siga activo y que el token no haya sido revocado (token_version),
+ * para que desactivar/degradar a un usuario surta efecto al instante y no
+ * recién cuando expire su token (hasta JWT_EXPIRES, por defecto 8h).
+ */
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const header = req.header('authorization');
   const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
   if (!token) return res.status(401).json({ error: 'No autenticado' });
+
+  let payload: AuthUser;
   try {
-    req.user = jwt.verify(token, env.JWT_SECRET) as AuthUser;
-    next();
+    payload = jwt.verify(token, env.JWT_SECRET) as AuthUser;
   } catch {
     return res.status(401).json({ error: 'Token inválido o expirado' });
   }
+
+  const rows = await query<{ activo: boolean; token_version: number }>(
+    'SELECT activo, token_version FROM usuarios WHERE id = $1',
+    [payload.id],
+  );
+  const usuario = rows[0];
+  if (!usuario || !usuario.activo || usuario.token_version !== payload.tv) {
+    return res.status(401).json({ error: 'Sesión inválida, iniciá sesión de nuevo' });
+  }
+
+  req.user = payload;
+  next();
 }
 
 /** Restringe una ruta a ciertos roles. */

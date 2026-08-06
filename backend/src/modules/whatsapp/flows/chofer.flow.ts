@@ -28,16 +28,39 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   if (chofer.length === 0) {
     if (sesion.paso === 'esperando_dni' && m.tipo === 'text') {
       const dni = (m.texto ?? '').replace(/\D/g, '');
-      const match = await query<{ id: string; nombre: string }>(
-        'SELECT id, nombre FROM choferes WHERE dni_hash = $1 AND activo = TRUE',
+      const match = await query<{ id: string; nombre: string; telefono: string | null }>(
+        'SELECT id, nombre, telefono FROM choferes WHERE dni_hash = $1 AND activo = TRUE',
         [blindIndex(dni)],
       );
       if (match.length > 0) {
-        // Vincular teléfono al chofer existente
-        await query('UPDATE choferes SET telefono = $1 WHERE id = $2', [to, match[0].id]);
+        const chofer = match[0];
+        if (!chofer.telefono) {
+          // Primer vínculo: no hay número previo que pisar, se aplica directo.
+          await query('UPDATE choferes SET telefono = $1 WHERE id = $2', [to, chofer.id]);
+          await clearSesion(to);
+          await sendText(to, `✅ ¡Buenísimo, ${chofer.nombre}! Ya te vinculamos el número. 🚚`);
+          return menuChofer(to);
+        }
+        // Ya tiene otro número vinculado: el DNI solo no alcanza para pisarlo
+        // (evita que alguien con el DNI de un chofer le robe el número). Requiere
+        // que un operador lo revise y lo cambie a mano desde el panel.
+        const [alerta] = await query(
+          `INSERT INTO alertas (tipo, referencia_id, mensaje)
+           VALUES ('chofer_cambio_telefono', $1, $2)
+           ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+           RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+          [
+            chofer.id,
+            `${chofer.nombre} ya tiene el número ${chofer.telefono} vinculado, pero alguien se validó con su DNI desde ${to}. Si es realmente ${chofer.nombre}, cambiá el teléfono desde la ficha del chofer.`,
+          ],
+        );
+        if (alerta) emitAlerta(alerta);
         await clearSesion(to);
-        await sendText(to, `✅ ¡Buenísimo, ${match[0].nombre}! Ya te vinculamos el número. 🚚`);
-        return menuChofer(to);
+        await sendText(
+          to,
+          `🔒 Ese DNI ya tiene otro número de WhatsApp vinculado. Avisamos a un operador para que confirme el cambio antes de aplicarlo.`,
+        );
+        return;
       }
       // No coincide: derivar a operador
       const [alerta] = await query(

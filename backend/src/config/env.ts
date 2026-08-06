@@ -22,6 +22,16 @@ const schema = z.object({
 
   // Clave de cifrado en reposo: 64 caracteres hex (32 bytes) para AES-256-GCM.
   ENCRYPTION_KEY: z.string().regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY debe ser 64 hex (32 bytes)'),
+}).superRefine((val, ctx) => {
+  // En producción el secreto del webhook es obligatorio: sin él, verifySignature
+  // quedaría en modo "permitir todo" y cualquiera podría spoofear mensajes de WhatsApp.
+  if (val.NODE_ENV === 'production' && val.WA_APP_SECRET.length < 16) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['WA_APP_SECRET'],
+      message: 'WA_APP_SECRET es obligatorio (min 16 chars) en producción',
+    });
+  }
 });
 
 const parsed = schema.safeParse(process.env);

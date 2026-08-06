@@ -70,6 +70,12 @@ usuariosRouter.patch('/:id', async (req: Request, res: Response) => {
     params.push(await bcrypt.hash(password, 10));
     sets.push(`password_hash = $${params.length}`);
   }
+  // Revoca cualquier sesión activa si cambia algo que afecta el acceso: el
+  // rol, la desactivación o la contraseña. Los JWT ya emitidos dejan de
+  // pasar requireAuth de inmediato (ver middleware/rbac.ts).
+  if ('rol' in resto || resto.activo === false || password) {
+    sets.push('token_version = token_version + 1');
+  }
   if (sets.length === 0) return res.status(400).json({ error: 'Nada para actualizar' });
   params.push(req.params.id);
 

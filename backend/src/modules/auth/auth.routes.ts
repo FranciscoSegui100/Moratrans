@@ -17,8 +17,10 @@ authRouter.post('/login', async (req: Request, res: Response) => {
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
 
   const { email, password } = parsed.data;
-  const rows = await query<{ id: string; email: string; rol: string; password_hash: string; activo: boolean }>(
-    'SELECT id, email, rol, password_hash, activo FROM usuarios WHERE email = $1',
+  const rows = await query<{
+    id: string; email: string; rol: string; password_hash: string; activo: boolean; token_version: number;
+  }>(
+    'SELECT id, email, rol, password_hash, activo, token_version FROM usuarios WHERE email = $1',
     [email],
   );
   const user = rows[0];
@@ -27,8 +29,10 @@ authRouter.post('/login', async (req: Request, res: Response) => {
   const ok = await bcrypt.compare(password, user.password_hash);
   if (!ok) return res.status(401).json({ error: 'Credenciales inválidas' });
 
-  const token = jwt.sign({ id: user.id, email: user.email, rol: user.rol }, env.JWT_SECRET, {
-    expiresIn: env.JWT_EXPIRES as any,
-  });
+  const token = jwt.sign(
+    { id: user.id, email: user.email, rol: user.rol, tv: user.token_version },
+    env.JWT_SECRET,
+    { expiresIn: env.JWT_EXPIRES as any },
+  );
   return res.json({ token, user: { id: user.id, email: user.email, rol: user.rol } });
 });

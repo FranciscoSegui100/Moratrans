@@ -1,4 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import { query } from '../../config/db';
 import { env } from '../../config/env';
 
@@ -11,7 +12,16 @@ export const syncRouter = Router();
  * siendo la única fuente de verdad; esto es sólo replicación de lectura.
  */
 function requireSyncKey(req: Request, res: Response, next: NextFunction) {
-  if (req.header('x-sync-key') !== env.SYNC_API_KEY) {
+  const recibida = req.header('x-sync-key') ?? '';
+  // Comparación en tiempo constante: evita filtrar la clave byte a byte por
+  // el tiempo de respuesta (a diferencia de `!==`, que corta apenas difieren).
+  let valida = false;
+  try {
+    valida = crypto.timingSafeEqual(Buffer.from(recibida), Buffer.from(env.SYNC_API_KEY));
+  } catch {
+    valida = false; // longitudes distintas
+  }
+  if (!valida) {
     return res.status(401).json({ error: 'Clave de sincronización inválida' });
   }
   next();
