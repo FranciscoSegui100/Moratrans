@@ -1,7 +1,7 @@
 {
   "name": "logistica-whatsapp-backend",
   "version": "0.1.0",
-  "description": "Backend: chatbot WhatsApp (Graph API) + panel log\u00edstico",
+  "description": "Backend: chatbot WhatsApp (Graph API) + panel logístico",
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -12,6 +12,14 @@
     "db:seed-choferes": "tsx src/db/seedChoferes.ts"
   },
   "dependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.7.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/pdfkit": "^0.13.4",
+    "@types/pg": "^8.11.10",
     "axios": "^1.7.7",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -25,18 +33,10 @@
     "pdfkit": "^0.15.0",
     "pg": "^8.13.0",
     "socket.io": "^4.8.0",
+    "typescript": "^5.6.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
-    "@types/jsonwebtoken": "^9.0.7",
-    "@types/node": "^22.7.0",
-    "@types/node-cron": "^3.0.11",
-    "@types/pdfkit": "^0.13.4",
-    "@types/pg": "^8.11.10",
-    "tsx": "^4.19.1",
-    "typescript": "^5.6.0"
+    "tsx": "^4.19.1"
   }
 }
