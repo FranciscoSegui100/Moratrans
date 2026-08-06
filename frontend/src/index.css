@@ -610,8 +610,73 @@ body {
   color: var(--text-muted);
 }
 
+/* ===== PIDE ASESORÍA (estilo WhatsApp: lista + hilo) ===== */
+.asesoria-layout {
+  display: flex;
+  gap: 16px;
+  height: calc(100vh - 200px);
+  min-height: 420px;
+}
+.asesoria-lista {
+  width: 300px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.asesoria-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+.asesoria-item:hover { background: var(--bg-card-hover); }
+.asesoria-item.active { background: var(--accent-tint); border-color: var(--accent-tint-strong); }
+.asesoria-item-phone { font-size: 0.84rem; font-weight: 600; color: var(--text-primary); font-family: var(--font-mono); }
+.asesoria-item-msg {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asesoria-item-time { font-size: 0.68rem; color: var(--text-muted); margin-top: 3px; }
+.asesoria-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  min-width: 0;
+}
+.asesoria-panel .empty-state { margin: auto; }
+.asesoria-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.asesoria-panel-phone { font-size: 1rem; font-weight: 700; font-family: var(--font-mono); }
+.asesoria-panel .chat-asesor { flex: 1; min-height: 0; }
+.asesoria-panel .chat-asesor-hilo { flex: 1; max-height: none; }
+
 /* ===== CHAT ASESOR ===== */
-.alerta-asesor-extra { flex-direction: column; align-items: stretch; }
 .chat-asesor { display: flex; flex-direction: column; gap: 10px; width: 100%; }
 .chat-asesor-hilo {
   display: flex;

@@ -11,6 +11,7 @@ import {
   FileText,
   ShieldCheck,
   LogOut,
+  MessageCircle,
 } from 'lucide-react';
 import { useAuth, tieneRol, Rol } from '../context/AuthContext';
 import { api } from '../api/client';
@@ -25,6 +26,7 @@ const nav: { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] }
   { to: '/pagos', label: 'Validar pagos', icon: CreditCard },
   { to: '/viajes', label: 'Viajes', icon: Truck },
   { to: '/alertas', label: 'Alertas', icon: Bell },
+  { to: '/asesoria', label: 'Pide Asesoría', icon: MessageCircle },
   { to: '/choferes', label: 'Choferes', icon: HardHat },
   { to: '/contenedores', label: 'Contenedores', icon: Package },
   { to: '/tarifas', label: 'Tarifas', icon: DollarSign },
@@ -37,13 +39,18 @@ export function Layout({ children }: { children: ReactNode }) {
   const loc = useLocation();
   const { show } = useToast();
   const [alertCount, setAlertCount] = useState(0);
+  const [asesoriaCount, setAsesoriaCount] = useState(0);
   const navVisible = nav.filter((n) => !n.roles || tieneRol(user, ...n.roles));
 
-  // Conectar socket globalmente y escuchar alertas para el badge + el toast
+  // Conectar socket globalmente y escuchar alertas para el badge + el toast.
+  // "Pide Asesoría" tiene su propio badge, separado del de "Alertas".
   useEffect(() => {
     const cargarConteo = () => {
-      api.get<{ id: string }[]>('/api/alertas?estado=nueva')
-        .then((r) => setAlertCount(r.data.length))
+      api.get<{ id: string; tipo: string }[]>('/api/alertas?estado=nueva')
+        .then((r) => {
+          setAlertCount(r.data.filter((a) => a.tipo !== 'solicita_asesor').length);
+          setAsesoriaCount(r.data.filter((a) => a.tipo === 'solicita_asesor').length);
+        })
         .catch(() => {});
     };
 
@@ -54,7 +61,8 @@ export function Layout({ children }: { children: ReactNode }) {
     // socket y quedaría afuera del contador hasta un refresh manual.
     socket.on('connect', cargarConteo);
     socket.on('nueva_alerta', (a: AlertaSocket) => {
-      setAlertCount((c) => c + 1);
+      if (a.tipo === 'solicita_asesor') setAsesoriaCount((c) => c + 1);
+      else setAlertCount((c) => c + 1);
       show('info', tipoLabel[a.tipo] ?? a.tipo, a.cliente_telefono ? `${a.cliente_telefono} · ${a.mensaje}` : a.mensaje);
     });
     return () => {
@@ -63,9 +71,10 @@ export function Layout({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Al entrar a alertas, resetear el badge
+  // Al entrar a cada sección, resetear su badge
   useEffect(() => {
     if (loc.pathname === '/alertas') setAlertCount(0);
+    if (loc.pathname === '/asesoria') setAsesoriaCount(0);
   }, [loc.pathname]);
 
   return (
@@ -83,7 +92,9 @@ export function Layout({ children }: { children: ReactNode }) {
           {navVisible.map((n) => {
             const isActive = loc.pathname === n.to;
             const isAlertas = n.to === '/alertas';
+            const isAsesoria = n.to === '/asesoria';
             const Icon = n.icon;
+            const badge = isAlertas ? alertCount : isAsesoria ? asesoriaCount : 0;
             return (
               <Link
                 key={n.to}
@@ -92,8 +103,8 @@ export function Layout({ children }: { children: ReactNode }) {
               >
                 <Icon className="nav-icon" strokeWidth={1.75} />
                 {n.label}
-                {isAlertas && alertCount > 0 && (
-                  <span className="nav-badge">{alertCount > 99 ? '99+' : alertCount}</span>
+                {badge > 0 && (
+                  <span className="nav-badge">{badge > 99 ? '99+' : badge}</span>
                 )}
               </Link>
             );

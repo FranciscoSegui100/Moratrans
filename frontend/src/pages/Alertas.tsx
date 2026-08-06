@@ -3,7 +3,6 @@ import { Check, X, RotateCcw, CircleCheck, FileCheck } from 'lucide-react';
 import { useAlertas } from '../hooks/useAlertas';
 import { RoleGate } from '../components/RoleGate';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
-import { ChatAsesor } from '../components/ChatAsesor';
 import { ValidarPagoForm, ValidarPagoPayload } from '../components/ValidarPagoForm';
 import { useToast } from '../components/Toast';
 import { api } from '../api/client';
@@ -12,7 +11,9 @@ import { tipoLabel } from '../lib/alertLabels';
 interface Chofer { id: string; nombre: string; activo: boolean; }
 
 export function Alertas() {
-  const { alertas, resolver, validarPago, rechazarPago, confirmarRetiro, enviarFactura } = useAlertas();
+  const { alertas: todasLasAlertas, resolver, validarPago, rechazarPago, confirmarRetiro, enviarFactura } = useAlertas();
+  // Los pedidos de asesor tienen su propia sección ("Pide Asesoría"), acá no se muestran.
+  const alertas = todasLasAlertas.filter((a) => a.tipo !== 'solicita_asesor');
   const { show } = useToast();
   const [procesando, setProcesando] = useState<string | null>(null);
   const [validandoId, setValidandoId] = useState<string | null>(null);
@@ -116,12 +117,11 @@ export function Alertas() {
             const esPago = a.tipo === 'pago_pendiente_validacion';
             const esRetiro = a.tipo === 'confirmar_retiro';
             const esFactura = a.tipo === 'factura_solicitada';
-            const esAsesor = a.tipo === 'solicita_asesor';
             const expandida = esPago && validandoId === a.referencia_id;
             return (
               <div
                 key={a.id}
-                className={`alerta-card alerta-${a.tipo} ${esPago || esFactura || esAsesor ? 'alerta-card-pago' : ''}`}
+                className={`alerta-card alerta-${a.tipo} ${esPago || esFactura ? 'alerta-card-pago' : ''}`}
               >
                 <div className="alerta-card-top">
                   <div>
@@ -129,7 +129,7 @@ export function Alertas() {
                     <div className="alerta-msg">{a.mensaje}</div>
                     <div className="alerta-time">{new Date(a.creado_en).toLocaleString('es-UY')}</div>
                   </div>
-                  {!esPago && !esRetiro && !esFactura && !esAsesor && (
+                  {!esPago && !esRetiro && !esFactura && (
                     <button onClick={() => resolver(a.id)} className="btn btn-ghost btn-sm">
                       <Check strokeWidth={2} /> Resolver
                     </button>
@@ -163,17 +163,6 @@ export function Alertas() {
                         disabled={procesando === a.referencia_id || !facturaFile[a.referencia_id]}
                       >
                         {procesando === a.referencia_id ? '...' : <><FileCheck strokeWidth={1.75} /> Enviar factura</>}
-                      </button>
-                    </div>
-                  </RoleGate>
-                )}
-
-                {esAsesor && (
-                  <RoleGate roles={['admin', 'operador']}>
-                    <div className="alerta-pago-extra alerta-asesor-extra">
-                      <ChatAsesor telefono={a.referencia_id} />
-                      <button onClick={() => resolver(a.id)} className="btn btn-success btn-sm">
-                        <Check strokeWidth={2} /> Conversación resuelta — el bot vuelve a responder
                       </button>
                     </div>
                   </RoleGate>
