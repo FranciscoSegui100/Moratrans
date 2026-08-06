@@ -31,7 +31,20 @@ chatRouter.post('/:telefono', requireRol('admin', 'operador'), async (req: Reque
   if (!parsed.success) return res.status(400).json({ error: 'Mensaje vacío o demasiado largo' });
   const telefono = req.params.telefono;
 
-  await sendText(telefono, parsed.data.texto);
+  try {
+    await sendText(telefono, parsed.data.texto);
+  } catch (e: any) {
+    const motivoMeta = e.response?.data?.error?.message as string | undefined;
+    console.error('Error enviando mensaje de operador por WhatsApp:', motivoMeta ?? e.message);
+    // Causa más común en WhatsApp Cloud API: pasaron >24hs desde el último
+    // mensaje del cliente y ya no se puede mandar texto libre (solo templates).
+    const ventanaVencida = /24\s*hour|window|re-?engagement/i.test(motivoMeta ?? '');
+    return res.status(502).json({
+      error: ventanaVencida
+        ? 'No se pudo enviar: pasaron más de 24hs desde el último mensaje del cliente. WhatsApp exige que el cliente escriba primero para volver a habilitar el chat.'
+        : 'No se pudo enviar el mensaje por WhatsApp. Probá de nuevo en un momento.',
+    });
+  }
   await logMensaje(telefono, 'operador', parsed.data.texto, req.user!.id);
 
   const sesion = await getSesion(telefono);

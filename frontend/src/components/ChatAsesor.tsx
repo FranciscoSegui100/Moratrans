@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Send } from 'lucide-react';
 import { api } from '../api/client';
+import { conectarSocket } from '../api/socket';
+import { useToast } from './Toast';
 
 interface MensajeChat {
   id: string;
+  telefono?: string;
   origen: 'cliente' | 'bot' | 'operador';
   texto: string;
   creado_en: string;
@@ -20,6 +23,7 @@ export function ChatAsesor({ telefono }: { telefono: string }) {
   const [mensajes, setMensajes] = useState<MensajeChat[]>([]);
   const [texto, setTexto] = useState('');
   const [enviando, setEnviando] = useState(false);
+  const { show } = useToast();
   const finRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -31,8 +35,23 @@ export function ChatAsesor({ telefono }: { telefono: string }) {
         .catch(() => {});
     };
     cargar();
-    const interval = setInterval(cargar, 5000); // no hay socket para el hilo: refresco corto
-    return () => { activo = false; clearInterval(interval); };
+    // Push en vivo: apenas llega un mensaje del cliente (o de otro operador)
+    // se agrega solo, sin esperar el polling.
+    const socket = conectarSocket();
+    const onNuevoMensaje = (m: MensajeChat) => {
+      if (m.telefono !== telefono) return;
+      setMensajes((prev) => (prev.find((x) => x.id === m.id) ? prev : [...prev, m]));
+    };
+    socket.on('nuevo_mensaje_chat', onNuevoMensaje);
+    socket.on('connect', cargar); // resincroniza si hubo un corte de conexión
+    // El polling queda como red de seguridad por si se pierde algún evento.
+    const interval = setInterval(cargar, 5000);
+    return () => {
+      activo = false;
+      clearInterval(interval);
+      socket.off('nuevo_mensaje_chat', onNuevoMensaje);
+      socket.off('connect', cargar);
+    };
   }, [telefono]);
 
   useEffect(() => {
@@ -48,8 +67,9 @@ export function ChatAsesor({ telefono }: { telefono: string }) {
       setTexto('');
       const { data } = await api.get<MensajeChat[]>(`/api/chat/${encodeURIComponent(telefono)}`);
       setMensajes(data);
-    } catch {
+    } catch (e: any) {
       // el texto queda en el cuadro para reintentar
+      show('error', 'No se pudo enviar', e.response?.data?.error || 'Error desconocido al mandar el mensaje');
     } finally {
       setEnviando(false);
     }

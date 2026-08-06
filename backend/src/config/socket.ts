@@ -32,6 +32,13 @@ export function emitAlerta(payload: unknown): void {
   io?.to('alertas').emit('nueva_alerta', payload);
 }
 
+// Empuja un mensaje nuevo del hilo de chat (cliente/bot/operador) a los
+// operadores conectados, para que el chat de "Pide Asesoría" se actualice
+// solo en vez de depender del polling cada 5s.
+export function emitMensajeChat(payload: unknown): void {
+  io?.to('alertas').emit('nuevo_mensaje_chat', payload);
+}
+
 export function getIO(): IOServer {
   if (!io) throw new Error('Socket.io no inicializado');
   return io;
