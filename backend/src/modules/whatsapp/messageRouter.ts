@@ -76,13 +76,24 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
       await clearSesion(m.from);
       return enviarMenuPrincipal(m.from);
     }
-    if (pideAsesor(m)) return handleAsesor(m, sesion);
   }
 
-  // 3) Un comprobante (imagen/documento) siempre entra al flujo de pago.
+  // 2.b) Modo humano: un operador tomó esta conversación a mano desde el panel.
+  // El bot se calla (no reprocesa "asesor" ni sigue flujos) hasta que el cliente
+  // escriba "menú" (arriba) o el operador marque la alerta como resuelta.
+  const enModoHumano = !!sesion.contexto?.modoHumano;
+
+  if (!enModoHumano && m.tipo !== 'image' && m.tipo !== 'document' && pideAsesor(m)) {
+    return handleAsesor(m, sesion);
+  }
+
+  // 3) Un comprobante (imagen/documento) siempre entra al flujo de pago,
+  // incluso en modo humano: la validación de pagos no debe depender de un operador.
   if (m.tipo === 'image' || m.tipo === 'document') {
     return handlePago(m, sesion);
   }
+
+  if (enModoHumano) return; // el mensaje ya quedó logueado en mensajes_chat
 
   // 4) Flujo en curso
   if (sesion.flujo === 'cotizacion') return handleCotizacion(m, sesion);

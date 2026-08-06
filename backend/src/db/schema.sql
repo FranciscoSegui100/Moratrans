@@ -200,9 +200,25 @@ CREATE TABLE sesiones_chat (
   telefono      TEXT PRIMARY KEY,
   flujo         TEXT,                          -- 'cotizacion' | 'pago' | 'chofer' | null
   paso          TEXT,                          -- estado dentro del flujo
-  contexto      JSONB NOT NULL DEFAULT '{}',   -- datos temporales del flujo
+  contexto      JSONB NOT NULL DEFAULT '{}',   -- datos temporales del flujo (incluye modoHumano)
   actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ---------------------------------------------------------------------
+-- 8.a HILO DE CONVERSACIÓN (mensajes de texto entre cliente/bot/operador,
+--     usado por el panel para mostrar el chat cuando un cliente pide asesor)
+-- ---------------------------------------------------------------------
+CREATE TYPE origen_mensaje_chat AS ENUM ('cliente', 'bot', 'operador');
+
+CREATE TABLE mensajes_chat (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  telefono   TEXT NOT NULL,
+  origen     origen_mensaje_chat NOT NULL,
+  texto      TEXT NOT NULL,
+  usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL, -- sólo si origen = 'operador'
+  creado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_mensajes_chat_telefono ON mensajes_chat(telefono, creado_en);
 
 -- ---------------------------------------------------------------------
 -- 8.b VIAJES PROGRAMADOS (entrega / retiro)

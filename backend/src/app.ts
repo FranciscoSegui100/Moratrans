@@ -19,6 +19,7 @@ import { reportesRouter } from './modules/reportes/reportes.routes';
 import { pedidosRouter } from './modules/pedidos/pedidos.routes';
 import { tarifasRouter } from './modules/tarifas/tarifas.routes';
 import { usuariosRouter } from './modules/usuarios/usuarios.routes';
+import { chatRouter } from './modules/chat/chat.routes';
 
 export function crearApp() {
   const app = express();
@@ -52,6 +53,7 @@ export function crearApp() {
   app.use('/api/pedidos', pedidosRouter);
   app.use('/api/tarifas', tarifasRouter);
   app.use('/api/usuarios', usuariosRouter);
+  app.use('/api/chat', chatRouter);
   app.use('/api/reportes', reportesRouter);
   app.use('/api/sync', syncRouter);
 

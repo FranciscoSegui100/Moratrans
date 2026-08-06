@@ -3,6 +3,7 @@ import { env } from '../../config/env';
 import { verifySignature } from './graphApi';
 import { normalizar, enrutar } from './messageRouter';
 import { query } from '../../config/db';
+import { logMensaje } from './chatLog.service';
 
 /**
  * Idempotencia: intenta registrar el message_id. Si ya existía (Meta reintentó
@@ -67,6 +68,10 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
             continue;
           }
           const normalizado = normalizar(msg);
+          const textoLog =
+            normalizado.texto ??
+            (normalizado.tipo === 'image' ? '📎 Imagen' : normalizado.tipo === 'document' ? '📎 Documento' : '(mensaje)');
+          await logMensaje(normalizado.from, 'cliente', textoLog).catch((e) => console.error('Error logueando mensaje:', e));
           await enrutar(normalizado).catch((e) => console.error('Error enrutando:', e));
         }
       }

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { query } from '../../config/db';
 import { requireAuth } from '../../middleware/rbac';
+import { clearSesion } from '../whatsapp/session.store';
 
 export const alertasRouter = Router();
 alertasRouter.use(requireAuth);
@@ -39,5 +40,12 @@ alertasRouter.patch('/:id', async (req: Request, res: Response) => {
   if (!['nueva', 'vista', 'resuelta'].includes(estado))
     return res.status(400).json({ error: 'Estado inválido' });
   const [row] = await query('UPDATE alertas SET estado = $1 WHERE id = $2 RETURNING *', [estado, req.params.id]);
+
+  // Al resolver un pedido de asesor, le devolvemos el control al bot
+  // (borra la sesión: modoHumano, flujo/paso quedan limpios de nuevo).
+  if (row && row.tipo === 'solicita_asesor' && estado === 'resuelta') {
+    await clearSesion(row.referencia_id).catch((e) => console.error('Error liberando sesión:', e));
+  }
+
   res.json(row);
 });

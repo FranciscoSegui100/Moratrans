@@ -610,6 +610,43 @@ body {
   color: var(--text-muted);
 }
 
+/* ===== CHAT ASESOR ===== */
+.alerta-asesor-extra { flex-direction: column; align-items: stretch; }
+.chat-asesor { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.chat-asesor-hilo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.chat-burbuja {
+  max-width: 78%;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+.chat-burbuja-cliente { align-self: flex-start; }
+.chat-burbuja-bot { align-self: flex-start; background: var(--neutral-bg); border-color: transparent; }
+.chat-burbuja-operador { align-self: flex-end; background: var(--accent-tint); border-color: transparent; }
+.chat-burbuja-autor {
+  font-size: 0.63rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.chat-burbuja-texto { font-size: 0.84rem; color: var(--text-primary); white-space: pre-wrap; }
+.chat-burbuja-hora { font-size: 0.66rem; color: var(--text-muted); margin-top: 2px; font-family: var(--font-mono); }
+.chat-asesor-input { display: flex; gap: 8px; }
+.chat-asesor-input .form-input { flex: 1; }
+
 /* ===== PAGO CARDS ===== */
 .pago-card {
   background: var(--bg-card);

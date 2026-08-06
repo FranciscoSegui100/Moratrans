@@ -2,6 +2,7 @@ import { query } from '../../../config/db';
 import { sendText } from '../graphApi';
 import { setSesion } from '../session.store';
 import { emitAlerta } from '../../../config/socket';
+import { logMensaje } from '../chatLog.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -37,7 +38,11 @@ export async function handleAsesor(m: MensajeEntrante, sesion: Sesion): Promise<
   );
   if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
 
-  // Resetea el contador para no reabrir la alerta en cada mensaje siguiente.
-  await setSesion({ ...sesion, contexto: { ...sesion.contexto, asesorCount: 0 } });
-  await sendText(to, '🙋 ¡Ya avisamos a un asesor! En breve te va a contactar por acá mismo.');
+  // Resetea el contador y marca la conversación como tomada por un humano:
+  // el bot deja de responder automáticamente hasta que el operador la resuelva
+  // desde el panel (o el cliente escriba "menú").
+  await setSesion({ ...sesion, contexto: { ...sesion.contexto, asesorCount: 0, modoHumano: true } });
+  const textoAviso = '🙋 ¡Ya avisamos a un asesor! En breve te va a contactar por acá mismo.';
+  await sendText(to, textoAviso);
+  await logMensaje(to, 'bot', textoAviso).catch((e) => console.error('Error logueando mensaje:', e));
 }
