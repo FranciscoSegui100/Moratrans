@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(command -v chromium-cli)",
+      "Bash(netstat -ano)",
+      "Read(//tmp/**)",
+      "Bash(sed -n '7478,7492p' /tmp/backend_dev.log)"
+    ]
+  }
+}

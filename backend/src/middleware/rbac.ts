@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
 import { query } from '../config/db';
+import { ACCESS_COOKIE } from '../services/session.service';
 
 export type Rol = 'admin' | 'operador' | 'finanzas' | 'lectura';
 
@@ -22,14 +23,15 @@ declare global {
 }
 
 /**
- * Verifica el JWT y adjunta req.user. Además revalida contra la base que el
- * usuario siga activo y que el token no haya sido revocado (token_version),
- * para que desactivar/degradar a un usuario surta efecto al instante y no
- * recién cuando expire su token (hasta JWT_EXPIRES, por defecto 8h).
+ * Verifica el JWT (de la cookie httpOnly mt_at, nunca de un header: así un
+ * XSS no puede leerlo con JS) y adjunta req.user. Además revalida contra la
+ * base que el usuario siga activo y que el token no haya sido revocado
+ * (token_version), para que desactivar/degradar a un usuario surta efecto al
+ * instante y no recién cuando expire su access token (JWT_ACCESS_EXPIRES,
+ * por defecto 15 min — el frontend lo renueva solo vía /api/auth/refresh).
  */
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const header = req.header('authorization');
-  const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
+  const token = req.cookies?.[ACCESS_COOKIE];
   if (!token) return res.status(401).json({ error: 'No autenticado' });
 
   let payload: AuthUser;

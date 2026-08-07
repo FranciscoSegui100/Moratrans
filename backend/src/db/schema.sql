@@ -70,7 +70,17 @@ CREATE TABLE usuarios (
   -- Se incrementa al desactivar, cambiar rol o resetear contraseña: invalida
   -- al instante cualquier JWT ya emitido (ver middleware/rbac.ts).
   token_version INTEGER     NOT NULL DEFAULT 0,
-  creado_en     TIMESTAMPTZ NOT NULL DEFAULT now()
+  creado_en     TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  -- --- Autenticación reforzada (MFA, SMS, Google, fuerza bruta) ---
+  mfa_secret_enc   TEXT,                       -- secreto TOTP cifrado (AES-256-GCM, ver crypto.service.ts)
+  mfa_enabled      BOOLEAN     NOT NULL DEFAULT FALSE,
+  mfa_backup_codes TEXT[]      NOT NULL DEFAULT '{}', -- códigos de un solo uso, hasheados (bcrypt)
+  telefono         TEXT,                       -- E.164, para 2FA por SMS
+  google_sub       TEXT UNIQUE,                -- id estable de Google, vincula la cuenta al loguear con Google
+  failed_attempts  INTEGER     NOT NULL DEFAULT 0,
+  locked_until     TIMESTAMPTZ,
+  ultima_conexion  TIMESTAMPTZ
 );
 
 -- ---------------------------------------------------------------------
@@ -315,5 +325,72 @@ CREATE TRIGGER trg_touch_pagos
 CREATE TRIGGER trg_touch_viajes
   BEFORE UPDATE ON viajes
   FOR EACH ROW EXECUTE FUNCTION fn_touch_actualizado();
+
+-- ---------------------------------------------------------------------
+-- 10. AUTENTICACIÓN REFORZADA (MFA, sesiones, auditoría, dispositivos)
+-- ---------------------------------------------------------------------
+
+-- Refresh tokens: uno por sesión activa, encadenados por rotación. El valor
+-- real nunca se guarda, sólo su hash (sha256) — igual que una contraseña.
+CREATE TABLE sesiones (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  usuario_id         UUID NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  refresh_token_hash TEXT NOT NULL UNIQUE,
+  device_hash        TEXT,
+  user_agent         TEXT,
+  ip                 TEXT,
+  recordar           BOOLEAN NOT NULL DEFAULT FALSE,   -- "recordarme": refresh de vida más larga
+  reemplaza_a        UUID REFERENCES sesiones(id) ON DELETE SET NULL, -- cadena de rotación
+  revocada_en        TIMESTAMPTZ,
+  creado_en          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expira_en          TIMESTAMPTZ NOT NULL,
+  ultimo_uso_en      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_sesiones_usuario ON sesiones(usuario_id) WHERE revocada_en IS NULL;
+
+-- Dispositivos ya vistos por usuario, para detectar logins desde uno nuevo.
+CREATE TABLE dispositivos_conocidos (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  usuario_id     UUID NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  device_hash    TEXT NOT NULL,
+  user_agent     TEXT,
+  ip_primera_vez TEXT,
+  primera_vez    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ultima_vez     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (usuario_id, device_hash)
+);
+
+-- Auditoría de todo evento relevante de autenticación.
+CREATE TYPE tipo_evento_auth AS ENUM (
+  'login_exitoso', 'login_fallido', 'mfa_fallido', 'bloqueo_temporal',
+  'logout', 'password_reset_solicitado', 'password_reset_exitoso',
+  'dispositivo_nuevo', 'sesion_revocada', 'refresh_reutilizado',
+  'mfa_activado', 'mfa_desactivado'
+);
+CREATE TABLE auth_eventos (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+  email      TEXT,                     -- se guarda aunque el usuario no exista (login fallido a email inexistente)
+  tipo       tipo_evento_auth NOT NULL,
+  ip         TEXT,
+  user_agent TEXT,
+  detalle    JSONB,
+  creado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_auth_eventos_usuario ON auth_eventos(usuario_id, creado_en DESC);
+CREATE INDEX idx_auth_eventos_creado  ON auth_eventos(creado_en DESC);
+
+-- Tokens de un solo uso: invitación de alta y reset de contraseña.
+CREATE TYPE tipo_token_accion AS ENUM ('invitacion', 'reset_password');
+CREATE TABLE tokens_accion (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  usuario_id UUID NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  tipo       tipo_token_accion NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,     -- sha256 del token real (el real sólo viaja por email)
+  expira_en  TIMESTAMPTZ NOT NULL,
+  usado_en   TIMESTAMPTZ,
+  creado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_tokens_accion_usuario ON tokens_accion(usuario_id);
 
 COMMIT;

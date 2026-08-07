@@ -4,19 +4,19 @@ const API_URL = import.meta.env.VITE_API_URL || '';
 let socket: Socket | null = null;
 
 /**
- * Devuelve el socket compartido de la app (autenticado con el JWT del panel),
- * conectándolo si hace falta. Varios componentes lo piden (Layout para el
- * badge, useAlertas para el listado): si se recreara en cada llamada, como
- * antes, cada nueva conexión mataba la anterior y dejaba "colgados" los
- * listeners ya registrados en ella (el badge del sidebar dejaba de recibir
- * alertas apenas se entraba una vez a la página de Alertas).
+ * Devuelve el socket compartido de la app (autenticado con la cookie httpOnly
+ * mt_at del panel — withCredentials hace que el browser la mande sola en el
+ * handshake, ver backend/src/config/socket.ts), conectándolo si hace falta.
+ * Varios componentes lo piden (Layout para el badge, useAlertas para el
+ * listado): si se recreara en cada llamada, como antes, cada nueva conexión
+ * mataba la anterior y dejaba "colgados" los listeners ya registrados en ella
+ * (el badge del sidebar dejaba de recibir alertas apenas se entraba una vez a
+ * la página de Alertas).
  */
 export function conectarSocket(): Socket {
-  const token = localStorage.getItem('token') || '';
   if (!socket) {
-    socket = io(API_URL, { auth: { token } });
+    socket = io(API_URL, { withCredentials: true });
   } else if (!socket.connected) {
-    socket.auth = { token };
     socket.connect();
   }
   return socket;

@@ -4,7 +4,9 @@
 import 'express-async-errors';
 import express, { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import { env, isProd } from './config/env';
+import { requireCsrf } from './middleware/csrf';
 import { webhookRouter } from './modules/whatsapp/webhook.controller';
 import { authRouter } from './modules/auth/auth.routes';
 import { dashboardRouter } from './modules/dashboard/dashboard.routes';
@@ -19,12 +21,28 @@ import { reportesRouter } from './modules/reportes/reportes.routes';
 import { pedidosRouter } from './modules/pedidos/pedidos.routes';
 import { tarifasRouter } from './modules/tarifas/tarifas.routes';
 import { usuariosRouter } from './modules/usuarios/usuarios.routes';
+import { auditoriaRouter } from './modules/auditoria/auditoria.routes';
 import { chatRouter } from './modules/chat/chat.routes';
 
 export function crearApp() {
   const app = express();
 
-  app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+  // Railway/Vercel están detrás de un proxy: sin esto, req.ip y req.secure
+  // reflejan al proxy en vez del cliente real (rompe rate-limit por IP y la
+  // cookie Secure en producción).
+  app.set('trust proxy', 1);
+
+  // origin como función: permite una lista (CORS_ORIGIN admite varios,
+  // separados por coma) y es obligatorio para que las cookies con
+  // credentials:true funcionen (con wildcard "*" el browser las descarta).
+  app.use(cors({
+    origin: (origin, cb) => {
+      if (!origin || env.CORS_ORIGIN.includes(origin)) return cb(null, true);
+      cb(new Error('Origen no permitido por CORS'));
+    },
+    credentials: true,
+  }));
+  app.use(cookieParser());
 
   // Webhook de Meta: necesita el cuerpo CRUDO para validar la firma HMAC.
   app.use(
@@ -42,7 +60,16 @@ export function crearApp() {
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
+  // authRouter maneja su propia protección CSRF ruta por ruta (login/mfa no
+  // la necesitan porque todavía no hay sesión de cookies que un atacante
+  // pueda aprovechar; refresh/logout sí la exigen, ver auth.routes.ts).
   app.use('/api/auth', authRouter);
+
+  // Todo lo demás bajo /api ya requiere sesión y exige CSRF en cualquier
+  // método mutante (POST/PATCH/PUT/DELETE), porque se autentica con la
+  // cookie httpOnly mt_at enviada automáticamente por el browser.
+  app.use('/api', requireCsrf);
+
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/pagos', pagosRouter);
   app.use('/api/alertas', alertasRouter);
@@ -53,6 +80,7 @@ export function crearApp() {
   app.use('/api/pedidos', pedidosRouter);
   app.use('/api/tarifas', tarifasRouter);
   app.use('/api/usuarios', usuariosRouter);
+  app.use('/api/auditoria', auditoriaRouter);
   app.use('/api/chat', chatRouter);
   app.use('/api/reportes', reportesRouter);
   app.use('/api/sync', syncRouter);

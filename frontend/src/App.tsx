@@ -4,6 +4,8 @@ import { ToastProvider } from './components/Toast';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
+import { ForgotPassword } from './pages/ForgotPassword';
+import { SetPassword } from './pages/SetPassword';
 import { Dashboard } from './pages/Dashboard';
 import { Pagos } from './pages/Pagos';
 import { Alertas } from './pages/Alertas';
@@ -14,6 +16,10 @@ import { Reportes } from './pages/Reportes';
 import { Contenedores } from './pages/Contenedores';
 import { Tarifas } from './pages/Tarifas';
 import { Usuarios } from './pages/Usuarios';
+import { Seguridad } from './pages/Seguridad';
+import { MfaSetup } from './pages/MfaSetup';
+import { MfaSetupEmail } from './pages/MfaSetupEmail';
+import { Auditoria } from './pages/Auditoria';
 
 export default function App() {
   return (
@@ -22,6 +28,17 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<SetPassword titulo="Elegí tu nueva contraseña" />} />
+            <Route path="/aceptar-invitacion" element={<SetPassword titulo="Activá tu cuenta" />} />
+            <Route
+              path="/seguridad/activar-verificacion"
+              element={<ProtectedRoute><MfaSetup /></ProtectedRoute>}
+            />
+            <Route
+              path="/seguridad/activar-verificacion-email"
+              element={<ProtectedRoute><MfaSetupEmail /></ProtectedRoute>}
+            />
             <Route
               path="/*"
               element={
@@ -37,6 +54,8 @@ export default function App() {
                       <Route path="/contenedores"  element={<Contenedores />} />
                       <Route path="/tarifas"       element={<Tarifas />} />
                       <Route path="/usuarios"      element={<Usuarios />} />
+                      <Route path="/seguridad"     element={<Seguridad />} />
+                      <Route path="/auditoria"     element={<Auditoria />} />
                       <Route path="/reportes"      element={<Reportes />} />
                     </Routes>
                   </Layout>

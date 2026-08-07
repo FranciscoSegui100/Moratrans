@@ -1,8 +1,13 @@
+import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
+import { revocarTodasLasSesiones } from '../../services/session.service';
+import { crearTokenAccion } from '../../services/token-accion.service';
+import { enviarInvitacion } from '../../services/email.service';
+import { validarPassword } from '../../services/password-policy.service';
 
 export const usuariosRouter = Router();
 usuariosRouter.use(requireAuth, requireRol('admin'));
@@ -18,23 +23,30 @@ usuariosRouter.get('/', async (_req: Request, res: Response) => {
 const nuevoSchema = z.object({
   nombre: z.string().min(2),
   email: z.string().email(),
-  password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres'),
   rol: z.enum(['admin', 'operador', 'finanzas', 'lectura']),
 });
 
-/** POST /api/usuarios — crear un usuario del panel (solo admin). */
+/**
+ * POST /api/usuarios — crear un usuario del panel (solo admin).
+ * Ya no recibe una contraseña puesta a mano por el admin (evita compartirla
+ * por WhatsApp/Slack/etc.): se crea con un hash aleatorio inutilizable y se
+ * manda una invitación por email para que el usuario elija su propia
+ * contraseña con un link de un solo uso (ver /api/auth/set-password).
+ */
 usuariosRouter.post('/', async (req: Request, res: Response) => {
   const parsed = nuevoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Datos inválidos' });
-  const { nombre, email, password, rol } = parsed.data;
+  const { nombre, email, rol } = parsed.data;
 
-  const hash = await bcrypt.hash(password, 10);
+  const hashInutilizable = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
   try {
     const [row] = await query(
       `INSERT INTO usuarios (nombre, email, password_hash, rol)
        VALUES ($1,$2,$3,$4) RETURNING id, nombre, email, rol, activo, creado_en`,
-      [nombre, email, hash, rol],
+      [nombre, email, hashInutilizable, rol],
     );
+    const token = await crearTokenAccion(row.id, 'invitacion');
+    await enviarInvitacion(email, nombre, token);
     res.status(201).json(row);
   } catch (e: any) {
     if (e.code === '23505') return res.status(409).json({ error: 'Ese email ya está registrado' });
@@ -47,7 +59,7 @@ const patchSchema = z.object({
   nombre: z.string().min(2).optional(),
   rol: z.enum(['admin', 'operador', 'finanzas', 'lectura']).optional(),
   activo: z.boolean().optional(),
-  password: z.string().min(8).optional(),
+  password: z.string().min(1).optional(),
 });
 
 /** PATCH /api/usuarios/:id — editar rol/estado/nombre o resetear contraseña (solo admin). */
@@ -58,6 +70,10 @@ usuariosRouter.patch('/:id', async (req: Request, res: Response) => {
   const { password, ...resto } = parsed.data;
   if (req.params.id === req.user!.id && resto.activo === false) {
     return res.status(400).json({ error: 'No podés desactivar tu propia cuenta' });
+  }
+  if (password) {
+    const errorPassword = await validarPassword(password);
+    if (errorPassword) return res.status(400).json({ error: errorPassword });
   }
 
   const sets: string[] = [];
@@ -71,9 +87,12 @@ usuariosRouter.patch('/:id', async (req: Request, res: Response) => {
     sets.push(`password_hash = $${params.length}`);
   }
   // Revoca cualquier sesión activa si cambia algo que afecta el acceso: el
-  // rol, la desactivación o la contraseña. Los JWT ya emitidos dejan de
-  // pasar requireAuth de inmediato (ver middleware/rbac.ts).
-  if ('rol' in resto || resto.activo === false || password) {
+  // rol, la desactivación o la contraseña. Los access tokens ya emitidos
+  // dejan de pasar requireAuth de inmediato (ver middleware/rbac.ts); además
+  // hay que tumbar las filas de `sesiones` (refresh tokens), si no un refresh
+  // token ya emitido seguiría pudiendo canjearse por accesos nuevos.
+  const revocaSesiones = 'rol' in resto || resto.activo === false || !!password;
+  if (revocaSesiones) {
     sets.push('token_version = token_version + 1');
   }
   if (sets.length === 0) return res.status(400).json({ error: 'Nada para actualizar' });
@@ -85,5 +104,6 @@ usuariosRouter.patch('/:id', async (req: Request, res: Response) => {
     params,
   );
   if (!row) return res.status(404).json({ error: 'Usuario inexistente' });
+  if (revocaSesiones) await revocarTodasLasSesiones(row.id);
   res.json(row);
 });

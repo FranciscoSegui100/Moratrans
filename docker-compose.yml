@@ -38,9 +38,15 @@ services:
       CORS_ORIGIN: http://localhost:5173
       DATABASE_URL: ${DATABASE_URL}
       JWT_SECRET: cambia-esto-por-un-secreto-largo-y-aleatorio-1234567890
-      JWT_EXPIRES: 8h
+      JWT_ACCESS_EXPIRES: 15m
+      REFRESH_TTL_DIAS: 30
+      REFRESH_TTL_RECORDAR_DIAS: 90
       SYNC_API_KEY: clave-larga-para-el-endpoint-de-replicacion-000
       MEDIA_DIR: ./storage
+      # Email transaccional (Resend): cargado desde el .env de la raíz (gitignored).
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      EMAIL_FROM: Moratrans <onboarding@resend.dev>
+      APP_URL: http://localhost:5173
       # Cifrado en reposo (cambiar en producción)
       ENCRYPTION_KEY: c76d0232d1933d7a830df01c26c33ccc675d2c23dce5cb9e8b9cd08295c051c1
       # WhatsApp: credenciales reales, cargadas desde el .env de la raíz (gitignored).

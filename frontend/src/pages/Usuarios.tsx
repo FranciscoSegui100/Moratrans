@@ -25,7 +25,7 @@ export function Usuarios() {
   const { user: yo } = useAuth();
   const { show } = useToast();
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
-  const [form, setForm] = useState({ nombre: '', email: '', password: '', rol: 'lectura' as Usuario['rol'] });
+  const [form, setForm] = useState({ nombre: '', email: '', rol: 'lectura' as Usuario['rol'] });
   const [loading, setLoading] = useState(false);
   const [editando, setEditando] = useState<string | null>(null);
   const [edit, setEdit] = useState<{ nombre: string; rol: Usuario['rol'] }>({ nombre: '', rol: 'lectura' });
@@ -38,9 +38,9 @@ export function Usuarios() {
     setLoading(true);
     try {
       await api.post('/api/usuarios', form);
-      setForm({ nombre: '', email: '', password: '', rol: 'lectura' });
+      setForm({ nombre: '', email: '', rol: 'lectura' });
       cargar();
-      show('success', 'Usuario creado', form.email);
+      show('success', 'Invitación enviada', `Le llegará un email a ${form.email} para elegir su contraseña`);
     } catch (err: any) {
       show('error', 'Error al crear', err.response?.data?.error || 'Datos inválidos');
     } finally {
@@ -74,7 +74,7 @@ export function Usuarios() {
   }
 
   async function resetearPassword(u: Usuario) {
-    const password = prompt(`Nueva contraseña para ${u.email} (mínimo 8 caracteres):`);
+    const password = prompt(`Nueva contraseña para ${u.email} (mínimo 12 caracteres, evitá algo predecible):`);
     if (!password) return;
     try {
       await api.patch(`/api/usuarios/${u.id}`, { password });
@@ -105,11 +105,6 @@ export function Usuarios() {
               onChange={(e) => setForm({ ...form, email: e.target.value })} />
           </div>
           <div className="form-group">
-            <label className="form-label">Contraseña</label>
-            <input className="form-input" type="password" placeholder="Mínimo 8 caracteres" value={form.password} required
-              onChange={(e) => setForm({ ...form, password: e.target.value })} />
-          </div>
-          <div className="form-group">
             <label className="form-label">Rol</label>
             <select className="form-select" value={form.rol}
               onChange={(e) => setForm({ ...form, rol: e.target.value as Usuario['rol'] })}>
@@ -117,9 +112,12 @@ export function Usuarios() {
             </select>
           </div>
           <button type="submit" className="btn btn-primary" disabled={loading}>
-            {loading ? 'Guardando...' : 'Crear usuario'}
+            {loading ? 'Enviando...' : 'Crear usuario'}
           </button>
         </form>
+        <p className="text-muted" style={{ fontSize: '0.78rem', marginTop: '8px' }}>
+          Se le manda un email de invitación para que elija su propia contraseña. No se comparte ninguna clave a mano.
+        </p>
       </div>
 
       <div className="table-wrapper">

@@ -1,17 +1,25 @@
 import { Server as HttpServer } from 'http';
 import { Server as IOServer } from 'socket.io';
 import jwt from 'jsonwebtoken';
+import cookie from 'cookie';
 import { env } from './env';
+import { ACCESS_COOKIE } from '../services/session.service';
 
 let io: IOServer | null = null;
 
 // Inicializa Socket.io sobre el mismo servidor HTTP de Express.
 export function initSocket(server: HttpServer): IOServer {
-  io = new IOServer(server, { cors: { origin: env.CORS_ORIGIN, credentials: true } });
+  io = new IOServer(server, {
+    cors: { origin: env.CORS_ORIGIN, credentials: true },
+  });
 
-  // Autenticación del socket con el mismo JWT del panel.
+  // Autenticación del socket con el access token del panel: ya no viaja en
+  // `auth.token` del handshake (el JWT dejó de ser accesible por JS), se lee
+  // de la misma cookie httpOnly mt_at que usa el resto de la API. El browser
+  // la adjunta solo si la conexión se abre con `withCredentials`.
   io.use((socket, next) => {
-    const token = socket.handshake.auth?.token as string | undefined;
+    const crudo = socket.handshake.headers.cookie;
+    const token = crudo ? cookie.parse(crudo)[ACCESS_COOKIE] : undefined;
     if (!token) return next(new Error('no token'));
     try {
       const payload = jwt.verify(token, env.JWT_SECRET) as { id: string; rol: string };

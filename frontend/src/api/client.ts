@@ -2,28 +2,60 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
-export const api = axios.create({ baseURL: API_URL });
+// withCredentials: la sesión vive en cookies httpOnly (mt_at/mt_rt), no en
+// localStorage — el browser las adjunta solo, pero hay que pedírselo.
+export const api = axios.create({ baseURL: API_URL, withCredentials: true });
 
-// Adjunta el JWT en cada request.
+function leerCookie(nombre: string): string | undefined {
+  const match = document.cookie.match(new RegExp(`(?:^|; )${nombre}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : undefined;
+}
+
+// Adjunta el token CSRF (doble-cookie) en cada request que muta estado. La
+// cookie mt_csrf no es httpOnly a propósito: sólo así este código puede leerla.
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  const metodo = (config.method || 'get').toUpperCase();
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(metodo)) {
+    const csrf = leerCookie('mt_csrf');
+    if (csrf) config.headers['X-CSRF-Token'] = csrf;
+  }
   return config;
 });
 
-// Redirige al login si el token expira.
+// Evita disparar varios refresh en paralelo si varias requests fallan a la vez.
+let refrescando: Promise<boolean> | null = null;
+function intentarRefresh(): Promise<boolean> {
+  if (!refrescando) {
+    refrescando = api.post('/api/auth/refresh')
+      .then(() => true)
+      .catch(() => false)
+      .finally(() => { refrescando = null; });
+  }
+  return refrescando;
+}
+
+// El access token dura 15 min: si expira a mitad de sesión, se intenta
+// renovar una vez con el refresh token (cookie aparte) antes de mandar al
+// usuario al login.
 api.interceptors.response.use(
   (r) => r,
-  (err) => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('token');
-      if (location.pathname !== '/login') location.href = '/login';
+  async (err) => {
+    const original = err.config;
+    const esEndpointAuth = original?.url?.startsWith('/api/auth/');
+
+    if (err.response?.status === 401 && !esEndpointAuth && !original?._retry) {
+      original._retry = true;
+      if (await intentarRefresh()) return api(original);
+    }
+
+    if (err.response?.status === 401 && location.pathname !== '/login') {
+      location.href = '/login';
     }
     return Promise.reject(err);
   },
 );
 
-// Descarga un archivo protegido (Excel/PDF) enviando el token y forzando el save.
+// Descarga un archivo protegido (Excel/PDF) enviando la cookie de sesión y forzando el save.
 export async function descargarArchivo(path: string, filename: string) {
   const res = await api.get(path, { responseType: 'blob' });
   const url = URL.createObjectURL(res.data);

@@ -22,21 +22,32 @@
     "@types/pg": "^8.11.10",
     "axios": "^1.7.7",
     "bcryptjs": "^2.4.3",
+    "cookie": "^2.0.1",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",
     "express": "^4.21.0",
     "express-async-errors": "^3.1.1",
+    "express-rate-limit": "^8.6.2",
     "form-data": "^4.0.0",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^3.0.3",
+    "otplib": "^12.0.1",
     "pdfkit": "^0.15.0",
     "pg": "^8.13.0",
+    "qrcode": "^1.5.4",
+    "resend": "^6.18.1",
     "socket.io": "^4.8.0",
     "typescript": "^5.6.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "zxcvbn": "^4.4.2"
   },
   "devDependencies": {
+    "@types/cookie": "^0.6.0",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/qrcode": "^1.5.6",
+    "@types/zxcvbn": "^4.4.5",
     "tsx": "^4.19.1"
   }
 }

@@ -5,12 +5,19 @@ import { z } from 'zod';
 const schema = z.object({
   PORT: z.coerce.number().default(4000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  CORS_ORIGIN: z.string().default('http://localhost:5173').transform((s) => s.trim()),
+  // Lista separada por comas: permite tener el localhost de desarrollo y el
+  // dominio de producción habilitados al mismo tiempo (CORS + cookies con credentials).
+  CORS_ORIGIN: z.string().default('http://localhost:5173')
+    .transform((s) => s.split(',').map((o) => o.trim()).filter(Boolean)),
 
   DATABASE_URL: z.string().url(),
 
+  // Firma del access token (JWT de corta duración, va en la cookie httpOnly mt_at).
   JWT_SECRET: z.string().min(16),
-  JWT_EXPIRES: z.string().default('8h'),
+  JWT_ACCESS_EXPIRES: z.string().default('15m'),
+  // Vida del refresh token (opaco, hasheado en la tabla `sesiones`, cookie mt_rt).
+  REFRESH_TTL_DIAS: z.coerce.number().default(30),
+  REFRESH_TTL_RECORDAR_DIAS: z.coerce.number().default(90),
   WA_GRAPH_VERSION: z.string().default('v21.0'),
   WA_PHONE_NUMBER_ID: z.string().default('000000000000000'),
   WA_ACCESS_TOKEN: z.string().default('mock'),
@@ -19,6 +26,14 @@ const schema = z.object({
 
   SYNC_API_KEY: z.string().min(16),
   MEDIA_DIR: z.string().default('./storage'),
+
+  // ---- Email transaccional (Resend): reset de contraseña, invitación, alertas ----
+  RESEND_API_KEY: z.string().min(1),
+  // Mientras no haya un dominio propio verificado en Resend, "onboarding@resend.dev"
+  // es el remitente de pruebas: solo entrega a la casilla con la que te registraste.
+  EMAIL_FROM: z.string().default('Moratrans <onboarding@resend.dev>'),
+  // Base para los links de los emails (reset de contraseña, invitación).
+  APP_URL: z.string().url().default('http://localhost:5173'),
 
   // Clave de cifrado en reposo: 64 caracteres hex (32 bytes) para AES-256-GCM.
   ENCRYPTION_KEY: z.string().regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY debe ser 64 hex (32 bytes)'),
