@@ -43,8 +43,12 @@ function boton(href: string, texto: string) {
   return `<a href="${href}" style="display:inline-block; background:#1e293b; color:#fff; text-decoration:none; padding:10px 20px; border-radius:6px; margin: 16px 0;">${texto}</a>`;
 }
 
+export function linkInvitacion(token: string): string {
+  return `${env.APP_URL}/aceptar-invitacion?token=${token}`;
+}
+
 export async function enviarInvitacion(to: string, nombre: string, token: string) {
-  const link = `${env.APP_URL}/aceptar-invitacion?token=${token}`;
+  const link = linkInvitacion(token);
   return enviar(
     to,
     'Te invitaron al panel de Moratrans',

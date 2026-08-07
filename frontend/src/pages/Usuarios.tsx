@@ -37,10 +37,17 @@ export function Usuarios() {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.post('/api/usuarios', form);
+      const { data } = await api.post('/api/usuarios', form);
       setForm({ nombre: '', email: '', rol: 'lectura' });
       cargar();
-      show('success', 'Invitación enviada', `Le llegará un email a ${form.email} para elegir su contraseña`);
+      if (data.emailEnviado) {
+        show('success', 'Invitación enviada', `Le llegará un email a ${form.email} para elegir su contraseña`);
+      } else {
+        // Modo sandbox de Resend (u otro error de envío): el usuario igual
+        // quedó creado, pero el link hay que pasárselo a mano.
+        try { await navigator.clipboard.writeText(data.linkInvitacion); } catch { /* portapapeles no disponible, igual queda visible abajo */ }
+        show('info', 'Usuario creado, pero el email no se pudo enviar', `Copiamos el link al portapapeles: ${data.linkInvitacion}`);
+      }
     } catch (err: any) {
       show('error', 'Error al crear', err.response?.data?.error || 'Datos inválidos');
     } finally {

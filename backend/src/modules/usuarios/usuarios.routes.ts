@@ -6,7 +6,7 @@ import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { revocarTodasLasSesiones } from '../../services/session.service';
 import { crearTokenAccion } from '../../services/token-accion.service';
-import { enviarInvitacion } from '../../services/email.service';
+import { enviarInvitacion, linkInvitacion } from '../../services/email.service';
 import { validarPassword } from '../../services/password-policy.service';
 
 export const usuariosRouter = Router();
@@ -46,8 +46,15 @@ usuariosRouter.post('/', async (req: Request, res: Response) => {
       [nombre, email, hashInutilizable, rol],
     );
     const token = await crearTokenAccion(row.id, 'invitacion');
-    await enviarInvitacion(email, nombre, token);
-    res.status(201).json(row);
+    const emailEnviado = await enviarInvitacion(email, nombre, token);
+    res.status(201).json({
+      ...row,
+      emailEnviado,
+      // Solo se manda al frontend si el email falló: es la única forma de que
+      // el admin pueda igual activar a la persona (pasándole el link a mano)
+      // mientras el remitente esté en modo sandbox de Resend.
+      linkInvitacion: emailEnviado ? undefined : linkInvitacion(token),
+    });
   } catch (e: any) {
     if (e.code === '23505') return res.status(409).json({ error: 'Ese email ya está registrado' });
     console.error('Error al crear usuario:', e);
