@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { query } from '../../config/db';
-import { requireAuth } from '../../middleware/rbac';
+import { requireAuth, requireRol } from '../../middleware/rbac';
 import { clearSesion } from '../whatsapp/session.store';
 
 export const alertasRouter = Router();
@@ -34,8 +34,8 @@ alertasRouter.get('/', async (req: Request, res: Response) => {
   res.json(rows);
 });
 
-/** PATCH /api/alertas/:id — cambia estado (vista/resuelta). */
-alertasRouter.patch('/:id', async (req: Request, res: Response) => {
+/** PATCH /api/alertas/:id — cambia estado (vista/resuelta). Solo roles que pueden operar sobre lo que la alerta representa (pago, asesoría, etc.), no lectura. */
+alertasRouter.patch('/:id', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const estado = req.body?.estado as string;
   if (!['nueva', 'vista', 'resuelta'].includes(estado))
     return res.status(400).json({ error: 'Estado inválido' });

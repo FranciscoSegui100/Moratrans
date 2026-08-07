@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { hashCodigo } from './email-mfa.store';
+import { hashCodigo, hashesIguales } from './email-mfa.store';
 
 /**
  * Challenges de MFA en memoria: igual que el rate-limit (ver
@@ -53,5 +53,5 @@ export function asignarCodigoEmail(challengeId: string, codigo: string) {
 
 export function verificarCodigoEmailChallenge(challengeId: string, codigo: string): boolean {
   const c = challenges.get(challengeId);
-  return !!c?.codigoEmailHash && c.codigoEmailHash === hashCodigo(codigo);
+  return !!c?.codigoEmailHash && hashesIguales(c.codigoEmailHash, hashCodigo(codigo));
 }

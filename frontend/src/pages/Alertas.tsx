@@ -152,7 +152,7 @@ export function Alertas() {
                     <div className="alerta-pago-extra">
                       <input
                         type="file"
-                        accept=".pdf,image/*"
+                        accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
                         onChange={(e) =>
                           setFacturaFile((prev) => ({ ...prev, [a.referencia_id]: e.target.files?.[0] }))
                         }

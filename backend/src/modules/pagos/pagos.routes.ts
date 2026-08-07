@@ -160,10 +160,12 @@ pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), a
 });
 
 /**
- * POST /api/pagos/:id/factura?filename=xxx.pdf — el operador carga la factura
- * (cuando el cliente la pidió tras el flujo de "Ya pagué") y se la reenviamos
- * por WhatsApp. El archivo viaja en el body crudo (no es un form-data); el
- * frontend manda el File directamente con su Content-Type real.
+ * POST /api/pagos/:id/factura — el operador carga la factura (cuando el
+ * cliente la pidió tras el flujo de "Ya pagué") y se la reenviamos por
+ * WhatsApp. El archivo viaja en el body crudo (no es un form-data); el
+ * frontend manda el File directamente con su Content-Type real. La extensión
+ * guardada sale del Content-Type validado contra una whitelist (pdf/jpg/png),
+ * nunca de un nombre de archivo dado por el cliente.
  */
 pagosRouter.post(
   '/:id/factura',
@@ -182,8 +184,16 @@ pagosRouter.post(
     if (!pago) return res.status(404).json({ error: 'Pago inexistente' });
 
     const contentType = req.header('content-type') || 'application/octet-stream';
-    const nombreOriginal = (req.query.filename as string) || `factura.${contentType.includes('pdf') ? 'pdf' : 'jpg'}`;
-    const ext = path.extname(nombreOriginal) || (contentType.includes('pdf') ? '.pdf' : '.jpg');
+    // La extensión sale SOLO del Content-Type (whitelist), nunca del filename que
+    // manda el cliente: así no se puede colar un archivo con extensión ejecutable/HTML.
+    const ext = contentType.includes('pdf')
+      ? '.pdf'
+      : contentType.includes('png')
+        ? '.png'
+        : contentType.includes('jpeg') || contentType.includes('jpg')
+          ? '.jpg'
+          : null;
+    if (!ext) return res.status(400).json({ error: 'Tipo de archivo no permitido (solo PDF, JPG o PNG)' });
 
     const dir = path.resolve(env.MEDIA_DIR, 'facturas');
     fs.mkdirSync(dir, { recursive: true });

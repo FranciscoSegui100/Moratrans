@@ -28,6 +28,14 @@ export function hashCodigo(codigo: string): string {
   return crypto.createHash('sha256').update(codigo).digest('hex');
 }
 
+/** Compara dos hashes hex en tiempo constante (evita filtrar el hash byte a byte por timing). */
+export function hashesIguales(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'hex');
+  const bufB = Buffer.from(b, 'hex');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 export function guardarCodigoAlta(usuarioId: string, codigo: string) {
   codigosAlta.set(usuarioId, { codigoHash: hashCodigo(codigo), expiraEn: Date.now() + TTL_MS });
 }
@@ -35,7 +43,7 @@ export function guardarCodigoAlta(usuarioId: string, codigo: string) {
 export function verificarCodigoAlta(usuarioId: string, codigo: string): boolean {
   const c = codigosAlta.get(usuarioId);
   if (!c || c.expiraEn < Date.now()) return false;
-  const ok = c.codigoHash === hashCodigo(codigo);
+  const ok = hashesIguales(c.codigoHash, hashCodigo(codigo));
   if (ok) codigosAlta.delete(usuarioId); // de un solo uso
   return ok;
 }
