@@ -16,6 +16,11 @@ let socket: Socket | null = null;
 export function conectarSocket(): Socket {
   if (!socket) {
     socket = io(API_URL, { withCredentials: true });
+    // Diagnóstico: sin esto, si el handshake falla (cookie, CORS, proxy) queda
+    // en silencio y el panel solo parece "andar" tras recargar (REST sí trae
+    // los datos, pero nunca llegan los eventos en vivo).
+    socket.on('connect_error', (err) => console.error('[socket] connect_error:', err.message));
+    socket.on('disconnect', (motivo) => console.warn('[socket] disconnect:', motivo));
   } else if (!socket.connected) {
     socket.connect();
   }
