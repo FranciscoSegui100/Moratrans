@@ -24,7 +24,7 @@ api.interceptors.request.use((config) => {
 
 // Evita disparar varios refresh en paralelo si varias requests fallan a la vez.
 let refrescando: Promise<boolean> | null = null;
-function intentarRefresh(): Promise<boolean> {
+export function intentarRefresh(): Promise<boolean> {
   if (!refrescando) {
     refrescando = api.post('/api/auth/refresh')
       .then(() => true)
@@ -41,9 +41,12 @@ api.interceptors.response.use(
   (r) => r,
   async (err) => {
     const original = err.config;
-    const esEndpointAuth = original?.url?.startsWith('/api/auth/');
+    // Solo /refresh queda afuera (evita loop infinito si el refresh token ya
+    // no sirve); /me y el resto sí deben poder renovarse solos si el access
+    // token venció a mitad de una sesión larga.
+    const esRefresh = original?.url?.startsWith('/api/auth/refresh');
 
-    if (err.response?.status === 401 && !esEndpointAuth && !original?._retry) {
+    if (err.response?.status === 401 && !esRefresh && !original?._retry) {
       original._retry = true;
       if (await intentarRefresh()) return api(original);
     }

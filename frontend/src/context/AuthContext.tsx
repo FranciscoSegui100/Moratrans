@@ -1,5 +1,11 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { api } from '../api/client';
+import { api, intentarRefresh } from '../api/client';
+
+// El access token dura 15 min (ver JWT_ACCESS_EXPIRES): con el panel abierto
+// horas de corrido, hay que renovarlo antes de que venza para que ni las
+// llamadas REST ni el socket (que solo se autentica una vez, al conectar o
+// reconectar) se encuentren con una cookie muerta.
+const INTERVALO_REFRESH_MS = 10 * 60 * 1000;
 
 export type Rol = 'admin' | 'operador' | 'finanzas' | 'lectura';
 export interface Usuario {
@@ -36,6 +42,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch(() => setUser(null))
       .finally(() => setCargando(false));
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const id = setInterval(() => { intentarRefresh(); }, INTERVALO_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [user]);
 
   async function login(email: string, password: string, recordar = false): Promise<ResultadoLogin> {
     const { data } = await api.post('/api/auth/login', { email, password, recordar });
