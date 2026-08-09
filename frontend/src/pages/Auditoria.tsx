@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { authEventoLabel } from '../lib/authEventLabels';
 
@@ -22,35 +23,44 @@ export function Auditoria() {
   const [eventos, setEventos] = useState<EventoAuth[]>([]);
   const [offset, setOffset] = useState(0);
   const [hayMas, setHayMas] = useState(true);
-  const [loading, setLoading] = useState(false);
+  const [loadingMas, setLoadingMas] = useState(false);
   const [filtroTipo, setFiltroTipo] = useState('');
   const [filtroEmail, setFiltroEmail] = useState('');
+  const [filtrosAplicados, setFiltrosAplicados] = useState({ tipo: '', email: '' });
 
-  async function cargar(reset: boolean) {
-    setLoading(true);
+  // Primera página cacheada por filtro: al revisitar la pestaña con el mismo
+  // filtro se muestra al instante en lo que se revalida en segundo plano.
+  const { data: primeraPagina = [], isFetching: cargandoPrimera } = useQuery({
+    queryKey: ['auditoria', filtrosAplicados.tipo, filtrosAplicados.email],
+    queryFn: () => api.get<EventoAuth[]>('/api/auditoria', {
+      params: { limit: LIMIT, offset: 0, tipo: filtrosAplicados.tipo || undefined, email: filtrosAplicados.email || undefined },
+    }).then((r) => r.data),
+  });
+
+  // La paginación ("cargar más") es local: se reinicia cada vez que llega una primera página nueva.
+  useEffect(() => {
+    setEventos(primeraPagina);
+    setOffset(primeraPagina.length);
+    setHayMas(primeraPagina.length === LIMIT);
+  }, [primeraPagina]);
+
+  async function cargarMas() {
+    setLoadingMas(true);
     try {
-      const nuevoOffset = reset ? 0 : offset;
       const { data } = await api.get<EventoAuth[]>('/api/auditoria', {
-        params: {
-          limit: LIMIT,
-          offset: nuevoOffset,
-          tipo: filtroTipo || undefined,
-          email: filtroEmail || undefined,
-        },
+        params: { limit: LIMIT, offset, tipo: filtrosAplicados.tipo || undefined, email: filtrosAplicados.email || undefined },
       });
-      setEventos(reset ? data : [...eventos, ...data]);
-      setOffset(nuevoOffset + LIMIT);
+      setEventos((prev) => [...prev, ...data]);
+      setOffset((o) => o + LIMIT);
       setHayMas(data.length === LIMIT);
     } finally {
-      setLoading(false);
+      setLoadingMas(false);
     }
   }
 
-  useEffect(() => { cargar(true); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   function onFiltrar(e: React.FormEvent) {
     e.preventDefault();
-    cargar(true);
+    setFiltrosAplicados({ tipo: filtroTipo, email: filtroEmail });
   }
 
   return (
@@ -74,7 +84,7 @@ export function Auditoria() {
           <label className="form-label">Email</label>
           <input className="form-input" placeholder="Buscar por email" value={filtroEmail} onChange={(e) => setFiltroEmail(e.target.value)} />
         </div>
-        <button type="submit" className="btn btn-primary" disabled={loading}>Filtrar</button>
+        <button type="submit" className="btn btn-primary" disabled={cargandoPrimera}>Filtrar</button>
       </form>
 
       <div className="table-wrapper">
@@ -103,7 +113,7 @@ export function Auditoria() {
                 </tr>
               );
             })}
-            {eventos.length === 0 && !loading && (
+            {eventos.length === 0 && !cargandoPrimera && (
               <tr>
                 <td colSpan={5} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   Sin eventos para este filtro
@@ -116,8 +126,8 @@ export function Auditoria() {
 
       {hayMas && eventos.length > 0 && (
         <div style={{ textAlign: 'center', marginTop: '16px' }}>
-          <button className="btn btn-ghost" onClick={() => cargar(false)} disabled={loading}>
-            {loading ? 'Cargando...' : 'Cargar más'}
+          <button className="btn btn-ghost" onClick={cargarMas} disabled={loadingMas}>
+            {loadingMas ? 'Cargando...' : 'Cargar más'}
           </button>
         </div>
       )}

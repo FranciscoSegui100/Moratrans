@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Check, X, RotateCcw, CircleCheck, FileCheck } from 'lucide-react';
 import { useAlertas } from '../hooks/useAlertas';
 import { RoleGate } from '../components/RoleGate';
@@ -17,12 +18,12 @@ export function Alertas() {
   const { show } = useToast();
   const [procesando, setProcesando] = useState<string | null>(null);
   const [validandoId, setValidandoId] = useState<string | null>(null);
-  const [choferes, setChoferes] = useState<Chofer[]>([]);
   const [facturaFile, setFacturaFile] = useState<Record<string, File | undefined>>({});
 
-  useEffect(() => {
-    api.get<Chofer[]>('/api/choferes').then((r) => setChoferes(r.data.filter((c) => c.activo))).catch(() => {});
-  }, []);
+  const { data: choferes = [] } = useQuery({
+    queryKey: ['choferes', 'activos'],
+    queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data.filter((c) => c.activo)),
+  });
 
   async function onValidar(pagoId: string, payload: ValidarPagoPayload) {
     setProcesando(pagoId);

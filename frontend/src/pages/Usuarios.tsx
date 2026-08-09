@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Pencil, KeyRound } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -24,14 +25,17 @@ const rolLabel: Record<Usuario['rol'], string> = {
 export function Usuarios() {
   const { user: yo } = useAuth();
   const { show } = useToast();
-  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const queryClient = useQueryClient();
   const [form, setForm] = useState({ nombre: '', email: '', rol: 'lectura' as Usuario['rol'] });
   const [loading, setLoading] = useState(false);
   const [editando, setEditando] = useState<string | null>(null);
   const [edit, setEdit] = useState<{ nombre: string; rol: Usuario['rol'] }>({ nombre: '', rol: 'lectura' });
 
-  const cargar = () => api.get<Usuario[]>('/api/usuarios').then((r) => setUsuarios(r.data)).catch(() => {});
-  useEffect(() => { cargar(); }, []);
+  const { data: usuarios = [] } = useQuery({
+    queryKey: ['usuarios'],
+    queryFn: () => api.get<Usuario[]>('/api/usuarios').then((r) => r.data),
+  });
+  const cargar = () => queryClient.invalidateQueries({ queryKey: ['usuarios'] });
 
   async function crear(e: React.FormEvent) {
     e.preventDefault();

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUpFromLine, ArrowDownToLine } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
@@ -20,12 +21,15 @@ const estados = ['programado', 'en_curso', 'completado', 'cancelado'];
 
 export function Viajes() {
   const { show } = useToast();
-  const [viajes, setViajes] = useState<Viaje[]>([]);
+  const queryClient = useQueryClient();
   const [form, setForm] = useState({ tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '' });
   const [loading, setLoading] = useState(false);
 
-  const cargar = () => api.get<Viaje[]>('/api/viajes').then((r) => setViajes(r.data)).catch(() => {});
-  useEffect(() => { cargar(); }, []);
+  const { data: viajes = [] } = useQuery({
+    queryKey: ['viajes'],
+    queryFn: () => api.get<Viaje[]>('/api/viajes').then((r) => r.data),
+  });
+  const cargar = () => queryClient.invalidateQueries({ queryKey: ['viajes'] });
 
   async function crear(e: React.FormEvent) {
     e.preventDefault();

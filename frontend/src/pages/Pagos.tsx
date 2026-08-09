@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CreditCard, Check, X, RotateCcw, CircleCheck } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
@@ -22,16 +23,20 @@ interface Chofer { id: string; nombre: string; activo: boolean; }
 
 export function Pagos() {
   const { show } = useToast();
-  const [pagos, setPagos] = useState<Pago[]>([]);
-  const [choferes, setChoferes] = useState<Chofer[]>([]);
+  const queryClient = useQueryClient();
   const [procesando, setProcesando] = useState<string | null>(null);
   const [validandoId, setValidandoId] = useState<string | null>(null);
 
-  const cargar = () => api.get<Pago[]>('/api/pagos?estado=pendiente').then((r) => setPagos(r.data)).catch(() => {});
-  useEffect(() => {
-    cargar();
-    api.get<Chofer[]>('/api/choferes').then((r) => setChoferes(r.data.filter((c) => c.activo))).catch(() => {});
-  }, []);
+  const { data: pagos = [] } = useQuery({
+    queryKey: ['pagos', 'pendiente'],
+    queryFn: () => api.get<Pago[]>('/api/pagos?estado=pendiente').then((r) => r.data),
+  });
+  const { data: choferes = [] } = useQuery({
+    queryKey: ['choferes', 'activos'],
+    queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data.filter((c) => c.activo)),
+  });
+
+  const cargar = () => queryClient.invalidateQueries({ queryKey: ['pagos', 'pendiente'] });
 
   async function validar(id: string, payload: ValidarPagoPayload) {
     setProcesando(id);

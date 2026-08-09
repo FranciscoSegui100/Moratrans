@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Pencil, Trash2 } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
@@ -14,14 +15,17 @@ interface Tarifa {
 
 export function Tarifas() {
   const { show } = useToast();
-  const [tarifas, setTarifas] = useState<Tarifa[]>([]);
+  const queryClient = useQueryClient();
   const [form, setForm] = useState({ departamento: '', precio: '', moneda: 'ARS' });
   const [loading, setLoading] = useState(false);
   const [editando, setEditando] = useState<string | null>(null);
   const [edit, setEdit] = useState({ precio: '', moneda: '' });
 
-  const cargar = () => api.get<Tarifa[]>('/api/tarifas').then((r) => setTarifas(r.data)).catch(() => {});
-  useEffect(() => { cargar(); }, []);
+  const { data: tarifas = [] } = useQuery({
+    queryKey: ['tarifas'],
+    queryFn: () => api.get<Tarifa[]>('/api/tarifas').then((r) => r.data),
+  });
+  const cargar = () => queryClient.invalidateQueries({ queryKey: ['tarifas'] });
 
   async function crear(e: React.FormEvent) {
     e.preventDefault();

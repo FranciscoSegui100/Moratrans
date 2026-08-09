@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -14,12 +15,15 @@ interface Contenedor {
 
 export function Contenedores() {
   const { show } = useToast();
-  const [contenedores, setContenedores] = useState<Contenedor[]>([]);
+  const queryClient = useQueryClient();
   const [form, setForm] = useState({ numero: '' });
   const [loading, setLoading] = useState(false);
 
-  const cargar = () => api.get<Contenedor[]>('/api/contenedores').then((r) => setContenedores(r.data)).catch(() => {});
-  useEffect(() => { cargar(); }, []);
+  const { data: contenedores = [] } = useQuery({
+    queryKey: ['contenedores'],
+    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
+  });
+  const cargar = () => queryClient.invalidateQueries({ queryKey: ['contenedores'] });
 
   async function crear(e: React.FormEvent) {
     e.preventDefault();

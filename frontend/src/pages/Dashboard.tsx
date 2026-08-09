@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, FileOutput } from 'lucide-react';
 import { api } from '../api/client';
 
@@ -31,13 +31,14 @@ const estadoColors: Record<string, string> = {
 };
 
 export function Dashboard() {
-  const [kpis, setKpis] = useState<Kpis | null>(null);
-  const [distribucion, setDistribucion] = useState<EstadoDist[]>([]);
-
-  useEffect(() => {
-    api.get<Kpis>('/api/dashboard/kpis').then((r) => setKpis(r.data)).catch(() => {});
-    api.get<EstadoDist[]>('/api/dashboard/contenedores').then((r) => setDistribucion(r.data)).catch(() => {});
-  }, []);
+  const { data: kpis = null } = useQuery({
+    queryKey: ['dashboard', 'kpis'],
+    queryFn: () => api.get<Kpis>('/api/dashboard/kpis').then((r) => r.data),
+  });
+  const { data: distribucion = [] } = useQuery({
+    queryKey: ['dashboard', 'contenedores'],
+    queryFn: () => api.get<EstadoDist[]>('/api/dashboard/contenedores').then((r) => r.data),
+  });
 
   const totalContenedores = distribucion.reduce((s, d) => s + d.total, 0) || 1;
 

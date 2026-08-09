@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
 import type { ValidarPagoPayload } from '../components/ValidarPagoForm';
@@ -20,37 +21,41 @@ export interface Alerta {
   moneda?: string | null;
 }
 
-/** Carga las alertas abiertas y las mantiene actualizadas por Socket.io. */
+const ALERTAS_KEY = ['alertas'];
+
+/** Carga las alertas abiertas (cacheadas, instantáneas al revisitar la pestaña) y las mantiene actualizadas por Socket.io. */
 export function useAlertas() {
-  const [alertas, setAlertas] = useState<Alerta[]>([]);
+  const queryClient = useQueryClient();
+  const { data: alertas = [] } = useQuery<Alerta[]>({
+    queryKey: ALERTAS_KEY,
+    queryFn: () => api.get<Alerta[]>('/api/alertas').then((r) => r.data),
+  });
 
   useEffect(() => {
-    const cargar = () => {
-      api.get<Alerta[]>('/api/alertas').then((r) => setAlertas(r.data)).catch(() => {});
-    };
-
     const socket = conectarSocket();
-    cargar(); // listado inicial
     // Resincroniza al (re)conectar para no perder alertas creadas durante
     // un corte de red o mientras la pestaña estaba en segundo plano.
-    socket.on('connect', cargar);
+    const resincronizar = () => queryClient.invalidateQueries({ queryKey: ALERTAS_KEY });
+    socket.on('connect', resincronizar);
     socket.on('nueva_alerta', (a: Alerta) => {
-      setAlertas((prev) => (prev.find((x) => x.id === a.id) ? prev : [a, ...prev]));
+      queryClient.setQueryData<Alerta[]>(ALERTAS_KEY, (prev = []) =>
+        prev.find((x) => x.id === a.id) ? prev : [a, ...prev]);
     });
     return () => {
-      socket.off('connect', cargar);
+      socket.off('connect', resincronizar);
       socket.off('nueva_alerta');
     };
-  }, []);
+  }, [queryClient]);
 
   async function resolver(id: string) {
     await api.patch(`/api/alertas/${id}`, { estado: 'resuelta' });
-    setAlertas((prev) => prev.filter((a) => a.id !== id));
+    queryClient.setQueryData<Alerta[]>(ALERTAS_KEY, (prev = []) => prev.filter((a) => a.id !== id));
   }
 
   /** Quita del listado la alerta cuyo (tipo, referencia_id) coincide (usado tras resolver una acción). */
   function quitarAlerta(tipo: string, referenciaId: string) {
-    setAlertas((prev) => prev.filter((a) => !(a.tipo === tipo && a.referencia_id === referenciaId)));
+    queryClient.setQueryData<Alerta[]>(ALERTAS_KEY, (prev = []) =>
+      prev.filter((a) => !(a.tipo === tipo && a.referencia_id === referenciaId)));
   }
 
   /** Valida el pago (el backend resuelve la alerta de forma atómica junto con la reserva). */

@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './context/AuthContext';
 import { ToastProvider } from './components/Toast';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -21,50 +22,65 @@ import { MfaSetup } from './pages/MfaSetup';
 import { MfaSetupEmail } from './pages/MfaSetupEmail';
 import { Auditoria } from './pages/Auditoria';
 
+// Datos ya vistos se muestran al instante desde caché al volver a una
+// pestaña (sin esperar el fetch), y se revalidan solos en segundo plano.
+// gcTime largo: mantiene esa caché mientras dure la sesión de trabajo.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      gcTime: 30 * 60_000,
+      refetchOnWindowFocus: true,
+    },
+  },
+});
+
 export default function App() {
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/forgot-password" element={<ForgotPassword />} />
-            <Route path="/reset-password" element={<SetPassword titulo="Elegí tu nueva contraseña" />} />
-            <Route path="/aceptar-invitacion" element={<SetPassword titulo="Activá tu cuenta" />} />
-            <Route
-              path="/seguridad/activar-verificacion"
-              element={<ProtectedRoute><MfaSetup /></ProtectedRoute>}
-            />
-            <Route
-              path="/seguridad/activar-verificacion-email"
-              element={<ProtectedRoute><MfaSetupEmail /></ProtectedRoute>}
-            />
-            <Route
-              path="/*"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <Routes>
-                      <Route path="/"             element={<Dashboard />} />
-                      <Route path="/pagos"         element={<Pagos />} />
-                      <Route path="/viajes"        element={<Viajes />} />
-                      <Route path="/alertas"       element={<Alertas />} />
-                      <Route path="/asesoria"      element={<PideAsesoria />} />
-                      <Route path="/choferes"      element={<Choferes />} />
-                      <Route path="/contenedores"  element={<Contenedores />} />
-                      <Route path="/tarifas"       element={<Tarifas />} />
-                      <Route path="/usuarios"      element={<Usuarios />} />
-                      <Route path="/seguridad"     element={<Seguridad />} />
-                      <Route path="/auditoria"     element={<Auditoria />} />
-                      <Route path="/reportes"      element={<Reportes />} />
-                    </Routes>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
-          </Routes>
-        </BrowserRouter>
-      </ToastProvider>
-    </AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <ToastProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<SetPassword titulo="Elegí tu nueva contraseña" />} />
+              <Route path="/aceptar-invitacion" element={<SetPassword titulo="Activá tu cuenta" />} />
+              <Route
+                path="/seguridad/activar-verificacion"
+                element={<ProtectedRoute><MfaSetup /></ProtectedRoute>}
+              />
+              <Route
+                path="/seguridad/activar-verificacion-email"
+                element={<ProtectedRoute><MfaSetupEmail /></ProtectedRoute>}
+              />
+              <Route
+                path="/*"
+                element={
+                  <ProtectedRoute>
+                    <Layout>
+                      <Routes>
+                        <Route path="/"             element={<Dashboard />} />
+                        <Route path="/pagos"         element={<Pagos />} />
+                        <Route path="/viajes"        element={<Viajes />} />
+                        <Route path="/alertas"       element={<Alertas />} />
+                        <Route path="/asesoria"      element={<PideAsesoria />} />
+                        <Route path="/choferes"      element={<Choferes />} />
+                        <Route path="/contenedores"  element={<Contenedores />} />
+                        <Route path="/tarifas"       element={<Tarifas />} />
+                        <Route path="/usuarios"      element={<Usuarios />} />
+                        <Route path="/seguridad"     element={<Seguridad />} />
+                        <Route path="/auditoria"     element={<Auditoria />} />
+                        <Route path="/reportes"      element={<Reportes />} />
+                      </Routes>
+                    </Layout>
+                  </ProtectedRoute>
+                }
+              />
+            </Routes>
+          </BrowserRouter>
+        </ToastProvider>
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }

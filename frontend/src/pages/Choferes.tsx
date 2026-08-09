@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Pencil, Trash2 } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
@@ -12,14 +13,19 @@ function initials(name: string) {
 
 export function Choferes() {
   const { show } = useToast();
-  const [choferes, setChoferes] = useState<Chofer[]>([]);
+  const queryClient = useQueryClient();
   const [form, setForm] = useState({ nombre: '', dni: '', telefono: '' });
   const [loading, setLoading] = useState(false);
   const [editando, setEditando] = useState<string | null>(null);
   const [edit, setEdit] = useState({ nombre: '', dni: '', telefono: '' });
 
-  const cargar = () => api.get<Chofer[]>('/api/choferes').then((r) => setChoferes(r.data)).catch(() => {});
-  useEffect(() => { cargar(); }, []);
+  const { data: choferes = [] } = useQuery({
+    queryKey: ['choferes'],
+    queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data),
+  });
+  // Invalida las dos variantes cacheadas de este endpoint: la lista completa
+  // (esta página) y la filtrada por activos que usa Pagos.tsx.
+  const cargar = () => queryClient.invalidateQueries({ queryKey: ['choferes'] });
 
   async function crear(e: React.FormEvent) {
     e.preventDefault();
