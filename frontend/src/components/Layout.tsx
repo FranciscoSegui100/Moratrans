@@ -47,7 +47,27 @@ export function Layout({ children }: { children: ReactNode }) {
   const [alertCount, setAlertCount] = useState(0);
   const [conversacionesCount, setConversacionesCount] = useState(0);
   const [pagosCount, setPagosCount] = useState(0);
+  const [conectado, setConectado] = useState(true);
   const navVisible = nav.filter((n) => !n.roles || tieneRol(user, ...n.roles));
+
+  // Indicador visible de si el socket está conectado, sin depender de que
+  // alguien sepa abrir la consola del navegador: si dice "Sin conexión en
+  // vivo", ni las alertas ni el resto de las pantallas se van a actualizar
+  // solas para esa persona hasta que reconecte (o refresque la página).
+  useEffect(() => {
+    const socket = conectarSocket();
+    const onConnect = () => setConectado(true);
+    const onDisconnect = () => setConectado(false);
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.on('connect_error', onDisconnect);
+    setConectado(socket.connected);
+    return () => {
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('connect_error', onDisconnect);
+    };
+  }, []);
 
   // Conectar socket globalmente y escuchar alertas para el badge + el toast.
   // "Conversaciones" muestra la cantidad de clientes que pidieron asesor
@@ -143,6 +163,10 @@ export function Layout({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="sidebar-footer">
+          <div className={`live-badge ${conectado ? '' : 'offline'}`} style={{ marginLeft: 0, marginBottom: 10 }}>
+            <span className="live-dot" />
+            {conectado ? 'Conectado en vivo' : 'Sin conexión en vivo'}
+          </div>
           <div className="sidebar-user">
             <div className="sidebar-user-email">{user?.email}</div>
             <div className="sidebar-user-role">{user?.rol}</div>

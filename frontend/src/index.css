@@ -286,6 +286,8 @@ body {
   border-radius: 50%;
   animation: pulse-dot 2.4s infinite;
 }
+.live-badge.offline { color: var(--danger); }
+.live-badge.offline .live-dot { background: var(--danger); animation: none; }
 @keyframes pulse-dot {
   0%,100% { opacity: 1; }
   50%      { opacity: 0.35; }
