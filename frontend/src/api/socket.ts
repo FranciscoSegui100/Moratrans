@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { intentarRefresh } from './client';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 let socket: Socket | null = null;
@@ -19,7 +20,16 @@ export function conectarSocket(): Socket {
     // Diagnóstico: sin esto, si el handshake falla (cookie, CORS, proxy) queda
     // en silencio y el panel solo parece "andar" tras recargar (REST sí trae
     // los datos, pero nunca llegan los eventos en vivo).
-    socket.on('connect_error', (err) => console.error('[socket] connect_error:', err.message));
+    socket.on('connect_error', (err) => {
+      console.error('[socket] connect_error:', err.message);
+      // La causa más común: la cookie de sesión (dura 15 min) venció mientras
+      // el socket estaba desconectado (redeploy, corte de red, la compu se
+      // suspendió) y nadie la renovó mientras tanto — sin esto, reintentaba
+      // solo con la cookie vieja para siempre y nunca volvía a conectar.
+      // socket.io reintenta la conexión solo (reconection: true por defecto);
+      // alcanza con dejar la cookie fresca antes de su próximo intento.
+      intentarRefresh();
+    });
     socket.on('disconnect', (motivo) => console.warn('[socket] disconnect:', motivo));
   } else if (!socket.connected) {
     socket.connect();

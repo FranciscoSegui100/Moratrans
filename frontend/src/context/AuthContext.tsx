@@ -46,7 +46,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user) return;
     const id = setInterval(() => { intentarRefresh(); }, INTERVALO_REFRESH_MS);
-    return () => clearInterval(id);
+    // El setInterval de arriba no alcanza solo: los navegadores frenan los
+    // temporizadores de una pestaña en segundo plano (minimizada, otra
+    // pestaña activa, compu suspendida) — si pasan más de 15 min así, la
+    // cookie vence sin que nadie la renueve. Al volver a esta pestaña,
+    // renovamos al toque en vez de esperar al próximo tick del intervalo.
+    const alVolver = () => { if (document.visibilityState === 'visible') intentarRefresh(); };
+    document.addEventListener('visibilitychange', alVolver);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', alVolver);
+    };
   }, [user]);
 
   async function login(email: string, password: string, recordar = false): Promise<ResultadoLogin> {
