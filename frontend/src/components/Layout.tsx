@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   LayoutGrid,
   CreditCard,
@@ -42,6 +43,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const loc = useLocation();
   const { show } = useToast();
+  const queryClient = useQueryClient();
   const [alertCount, setAlertCount] = useState(0);
   const [conversacionesCount, setConversacionesCount] = useState(0);
   const [pagosCount, setPagosCount] = useState(0);
@@ -80,6 +82,23 @@ export function Layout({ children }: { children: ReactNode }) {
       socket.off('nueva_alerta');
     };
   }, []);
+
+  // Live-refresh genérico para TODAS las pantallas del panel: cuando
+  // cualquier operador crea/edita/borra algo bajo /api/<recurso>, el backend
+  // avisa acá y esto le dice a React Query "traé de nuevo" — sin esto, cada
+  // pantalla solo se actualizaba para quien hizo la acción, y el resto tenía
+  // que hacer F5 para verlo (ver backend/src/middleware/broadcastCambios.ts).
+  useEffect(() => {
+    const socket = conectarSocket();
+    const onRecursoActualizado = ({ recurso }: { recurso: string }) => {
+      queryClient.invalidateQueries({ queryKey: [recurso] });
+      // El dashboard agrega datos de varios recursos (pagos, contenedores,
+      // viajes...): se refresca ante cualquier cambio, no solo el suyo.
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    };
+    socket.on('recurso_actualizado', onRecursoActualizado);
+    return () => { socket.off('recurso_actualizado', onRecursoActualizado); };
+  }, [queryClient]);
 
   // Al entrar a cada sección, resetear su badge
   useEffect(() => {

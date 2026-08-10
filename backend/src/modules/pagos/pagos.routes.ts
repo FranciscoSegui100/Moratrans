@@ -8,7 +8,7 @@ import { requireAuth, requireRol, puedeVerComprobante } from '../../middleware/r
 import { encrypt, decrypt } from '../../services/crypto.service';
 import { enviarTicketPorWhatsApp } from '../../services/pdf.service';
 import { sendText, sendButtons, uploadMedia, sendDocument } from '../whatsapp/graphApi';
-import { emitAlerta } from '../../config/socket';
+import { emitAlerta, emitAlertaActualizada } from '../../config/socket';
 
 export const pagosRouter = Router();
 pagosRouter.use(requireAuth);
@@ -119,6 +119,11 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       fecha: new Date(),
     }).catch((e) => console.error('Error enviando ticket:', e));
 
+    // fn_validar_pago ya resolvió la alerta atómicamente en SQL; acá solo se
+    // avisa por socket a los demás operadores (el que hizo la acción ya
+    // actualizó su propia pantalla de forma optimista).
+    emitAlertaActualizada({ tipo: 'pago_pendiente_validacion', referencia_id: pagoId, estado: 'resuelta' });
+
     res.json({ ok: true, ticket_id: result.ticket_id, contenedor: result.contenedor });
   } catch (e: any) {
     // p.ej. "No hay contenedores disponibles" -> genera alerta de stock
@@ -148,6 +153,7 @@ pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), a
 
   await query(`UPDATE alertas SET estado = 'resuelta'
                WHERE tipo = 'pago_pendiente_validacion' AND referencia_id = $1`, [req.params.id]);
+  emitAlertaActualizada({ tipo: 'pago_pendiente_validacion', referencia_id: req.params.id, estado: 'resuelta' });
 
   sendButtons(
     pago.cliente_telefono,
@@ -209,6 +215,7 @@ pagosRouter.post(
       `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'factura_solicitada' AND referencia_id = $1`,
       [req.params.id],
     );
+    emitAlertaActualizada({ tipo: 'factura_solicitada', referencia_id: req.params.id, estado: 'resuelta' });
 
     try {
       const mediaId = await uploadMedia(filePath, contentType);

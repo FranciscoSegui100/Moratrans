@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { sendText } from '../whatsapp/graphApi';
+import { emitAlertaActualizada } from '../../config/socket';
 
 export const contenedoresRouter = Router();
 contenedoresRouter.use(requireAuth);
@@ -87,6 +88,7 @@ contenedoresRouter.post(
       `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'confirmar_retiro' AND referencia_id = $1`,
       [numero],
     );
+    emitAlertaActualizada({ tipo: 'confirmar_retiro', referencia_id: numero, estado: 'resuelta' });
 
     if (viaje.chofer_id) {
       const [chofer] = await query<{ telefono: string }>('SELECT telefono FROM choferes WHERE id = $1', [viaje.chofer_id]);

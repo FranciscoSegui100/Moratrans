@@ -51,9 +51,18 @@ export function useConversaciones() {
       });
     };
     socket.on('nuevo_mensaje_chat', onNuevoMensaje);
+    // Cuando OTRO operador pausa/reanuda el bot (o resuelve la alerta de
+    // "pide asesor", que también libera la conversación), esto lo refleja acá
+    // en vivo — antes cada quien solo veía su propia acción hasta hacer F5.
+    const onConversacionActualizada = (p: { telefono: string; modo_humano: boolean }) => {
+      queryClient.setQueryData<Conversacion[]>(CONVERSACIONES_KEY, (prev = []) =>
+        prev.map((c) => (c.telefono === p.telefono ? { ...c, modo_humano: p.modo_humano } : c)));
+    };
+    socket.on('conversacion_actualizada', onConversacionActualizada);
     return () => {
       socket.off('connect', resincronizar);
       socket.off('nuevo_mensaje_chat', onNuevoMensaje);
+      socket.off('conversacion_actualizada', onConversacionActualizada);
     };
   }, [queryClient]);
 

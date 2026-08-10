@@ -5,6 +5,7 @@ import { requireAuth, requireRol } from '../../middleware/rbac';
 import { sendText } from '../whatsapp/graphApi';
 import { logMensaje } from '../whatsapp/chatLog.service';
 import { getSesion, setSesion } from '../whatsapp/session.store';
+import { emitConversacionActualizada } from '../../config/socket';
 
 export const chatRouter = Router();
 chatRouter.use(requireAuth);
@@ -73,6 +74,7 @@ chatRouter.post('/:telefono', requireRol('admin', 'operador'), async (req: Reque
 
   const sesion = await getSesion(telefono);
   await setSesion({ ...sesion, contexto: { ...sesion.contexto, modoHumano: true } });
+  emitConversacionActualizada({ telefono, modo_humano: true });
 
   res.json({ ok: true });
 });
@@ -93,6 +95,7 @@ chatRouter.patch('/:telefono/modo-humano', requireRol('admin', 'operador'), asyn
 
   const sesion = await getSesion(telefono);
   await setSesion({ ...sesion, contexto: { ...sesion.contexto, modoHumano: parsed.data.activo } });
+  emitConversacionActualizada({ telefono, modo_humano: parsed.data.activo });
 
   res.json({ ok: true, modoHumano: parsed.data.activo });
 });

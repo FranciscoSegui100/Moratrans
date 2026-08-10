@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CreditCard, Check, X, RotateCcw, CircleCheck } from 'lucide-react';
 import { api } from '../api/client';
+import { conectarSocket } from '../api/socket';
 import { RoleGate } from '../components/RoleGate';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
 import { ValidarPagoForm, ValidarPagoPayload } from '../components/ValidarPagoForm';
@@ -37,6 +38,19 @@ export function Pagos() {
   });
 
   const cargar = () => queryClient.invalidateQueries({ queryKey: ['pagos', 'pendiente'] });
+
+  // Cuando OTRO operador valida/rechaza un pago desde acá o desde Alertas,
+  // esto lo saca de esta lista en vivo — sin esto, cada quien solo veía
+  // reflejadas sus propias acciones hasta hacer F5.
+  useEffect(() => {
+    const socket = conectarSocket();
+    const onAlertaActualizada = (p: { tipo: string; estado: string }) => {
+      if (p.tipo === 'pago_pendiente_validacion' && p.estado === 'resuelta') cargar();
+    };
+    socket.on('alerta_actualizada', onAlertaActualizada);
+    return () => { socket.off('alerta_actualizada', onAlertaActualizada); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function validar(id: string, payload: ValidarPagoPayload) {
     setProcesando(id);

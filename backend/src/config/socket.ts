@@ -47,6 +47,33 @@ export function emitMensajeChat(payload: unknown): void {
   io?.to('alertas').emit('nuevo_mensaje_chat', payload);
 }
 
+/**
+ * Avisa que una alerta cambió de estado (resuelta, vista, etc.) a TODOS los
+ * operadores conectados, no solo al que hizo la acción. Sin esto, cuando un
+ * operador resuelve una alerta / valida o rechaza un pago / confirma un
+ * retiro, el resto solo lo ve reflejado tras un F5 manual — cada acción solo
+ * actualizaba el caché local de quien la disparó.
+ */
+export function emitAlertaActualizada(payload: { tipo: string; referencia_id: string; estado: string }): void {
+  io?.to('alertas').emit('alerta_actualizada', payload);
+}
+
+/** Avisa que se pausó/reanudó el bot para un teléfono, para que la lista de "Conversaciones" se actualice en todos los operadores conectados. */
+export function emitConversacionActualizada(payload: { telefono: string; modo_humano: boolean }): void {
+  io?.to('alertas').emit('conversacion_actualizada', payload);
+}
+
+/**
+ * Evento genérico: "algo cambió bajo /api/<recurso>". Lo dispara el
+ * middleware `broadcastCambios` después de cualquier POST/PATCH/PUT/DELETE
+ * exitoso, para que TODAS las pantallas del panel (contenedores, choferes,
+ * viajes, tarifas, usuarios...) se refresquen solas en cualquier operador
+ * conectado, sin tener que instrumentar cada endpoint a mano.
+ */
+export function emitRecursoActualizado(recurso: string): void {
+  io?.to('alertas').emit('recurso_actualizado', { recurso });
+}
+
 export function getIO(): IOServer {
   if (!io) throw new Error('Socket.io no inicializado');
   return io;

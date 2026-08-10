@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { env, isProd } from './config/env';
 import { requireCsrf } from './middleware/csrf';
+import { broadcastCambios } from './middleware/broadcastCambios';
 import { webhookRouter } from './modules/whatsapp/webhook.controller';
 import { authRouter } from './modules/auth/auth.routes';
 import { dashboardRouter } from './modules/dashboard/dashboard.routes';
@@ -71,6 +72,11 @@ export function crearApp() {
   // método mutante (POST/PATCH/PUT/DELETE), porque se autentica con la
   // cookie httpOnly mt_at enviada automáticamente por el browser.
   app.use('/api', requireCsrf);
+  // Después de CSRF (así solo corre para requests ya validadas): avisa por
+  // socket a todos los operadores conectados cuando algo cambia, para que el
+  // panel se actualice solo en cualquier pestaña abierta (ver useLayout /
+  // Layout.tsx del lado del frontend).
+  app.use('/api', broadcastCambios);
 
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/pagos', pagosRouter);

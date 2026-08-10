@@ -41,9 +41,20 @@ export function useAlertas() {
       queryClient.setQueryData<Alerta[]>(ALERTAS_KEY, (prev = []) =>
         prev.find((x) => x.id === a.id) ? prev : [a, ...prev]);
     });
+    // Cuando OTRO operador resuelve/valida/rechaza algo, esto la saca de acá
+    // en vivo — sin esto, cada quien solo veía reflejadas sus propias
+    // acciones hasta hacer F5.
+    const onAlertaActualizada = (p: { tipo: string; referencia_id: string; estado: string }) => {
+      queryClient.setQueryData<Alerta[]>(ALERTAS_KEY, (prev = []) =>
+        p.estado === 'resuelta'
+          ? prev.filter((a) => !(a.tipo === p.tipo && a.referencia_id === p.referencia_id))
+          : prev.map((a) => (a.tipo === p.tipo && a.referencia_id === p.referencia_id ? { ...a, estado: p.estado } : a)));
+    };
+    socket.on('alerta_actualizada', onAlertaActualizada);
     return () => {
       socket.off('connect', resincronizar);
       socket.off('nueva_alerta');
+      socket.off('alerta_actualizada', onAlertaActualizada);
     };
   }, [queryClient]);
 
