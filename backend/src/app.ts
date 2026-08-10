@@ -95,8 +95,12 @@ export function crearApp() {
   const frontendDist = path.join(__dirname, '../public');
   if (fs.existsSync(path.join(frontendDist, 'index.html'))) {
     app.use(express.static(frontendDist));
-    app.get('*', (req: Request, res: Response, next: NextFunction) => {
-      if (req.path.startsWith('/api') || req.path.startsWith('/webhook') || req.path === '/health') return next();
+    // Middleware sin patrón de ruta (no 'app.get('*', ...)'): Express 4.21+
+    // trae una versión de path-to-regexp que rompe en tiempo de ejecución con
+    // comodines de string tipo '*' ("Missing parameter name"). Un middleware
+    // plano no pasa por ese parser y matchea cualquier método/path igual.
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/webhook') || req.path === '/health') return next();
       res.sendFile(path.join(frontendDist, 'index.html'));
     });
   }
