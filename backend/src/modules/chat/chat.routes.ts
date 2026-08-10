@@ -9,6 +9,27 @@ import { getSesion, setSesion } from '../whatsapp/session.store';
 export const chatRouter = Router();
 chatRouter.use(requireAuth);
 
+/**
+ * GET /api/chat — lista TODAS las conversaciones (no solo las escaladas a
+ * "asesor"): último mensaje de cada teléfono + si el bot está pausado
+ * (modoHumano) para esa conversación en este momento.
+ */
+chatRouter.get('/', async (_req: Request, res: Response) => {
+  const rows = await query(
+    `SELECT m.telefono, m.texto AS ultimo_mensaje, m.origen AS ultimo_origen, m.creado_en AS ultimo_en,
+            COALESCE((s.contexto->>'modoHumano')::boolean, false) AS modo_humano
+       FROM (
+         SELECT DISTINCT ON (telefono) telefono, texto, origen, creado_en
+           FROM mensajes_chat
+          ORDER BY telefono, creado_en DESC
+       ) m
+       LEFT JOIN sesiones_chat s ON s.telefono = m.telefono
+      ORDER BY m.creado_en DESC
+      LIMIT 200`,
+  );
+  res.json(rows);
+});
+
 /** GET /api/chat/:telefono — hilo de conversación con un cliente (para la alerta "pide asesor"). */
 chatRouter.get('/:telefono', async (req: Request, res: Response) => {
   const rows = await query(
@@ -51,4 +72,24 @@ chatRouter.post('/:telefono', requireRol('admin', 'operador'), async (req: Reque
   await setSesion({ ...sesion, contexto: { ...sesion.contexto, modoHumano: true } });
 
   res.json({ ok: true });
+});
+
+const modoHumanoSchema = z.object({ activo: z.boolean() });
+
+/**
+ * PATCH /api/chat/:telefono/modo-humano — pausa o reanuda el bot para este
+ * número puntual, sin depender de que haya una alerta de "pide asesor" de
+ * por medio (a diferencia de POST /:telefono, que solo pausa al enviar un
+ * mensaje). Sirve para que un operador tome cualquier conversación desde la
+ * vista general y la devuelva al bot cuando termine.
+ */
+chatRouter.patch('/:telefono/modo-humano', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const parsed = modoHumanoSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
+  const telefono = req.params.telefono;
+
+  const sesion = await getSesion(telefono);
+  await setSesion({ ...sesion, contexto: { ...sesion.contexto, modoHumano: parsed.data.activo } });
+
+  res.json({ ok: true, modoHumano: parsed.data.activo });
 });

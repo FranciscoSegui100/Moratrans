@@ -28,7 +28,7 @@ const nav: { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] }
   { to: '/pagos', label: 'Validar pagos', icon: CreditCard },
   { to: '/viajes', label: 'Viajes', icon: Truck },
   { to: '/alertas', label: 'Alertas', icon: Bell },
-  { to: '/asesoria', label: 'Pide Asesoría', icon: MessageCircle },
+  { to: '/conversaciones', label: 'Conversaciones', icon: MessageCircle },
   { to: '/choferes', label: 'Choferes', icon: HardHat },
   { to: '/contenedores', label: 'Contenedores', icon: Package },
   { to: '/tarifas', label: 'Tarifas', icon: DollarSign },
@@ -43,20 +43,21 @@ export function Layout({ children }: { children: ReactNode }) {
   const loc = useLocation();
   const { show } = useToast();
   const [alertCount, setAlertCount] = useState(0);
-  const [asesoriaCount, setAsesoriaCount] = useState(0);
+  const [conversacionesCount, setConversacionesCount] = useState(0);
   const [pagosCount, setPagosCount] = useState(0);
   const navVisible = nav.filter((n) => !n.roles || tieneRol(user, ...n.roles));
 
   // Conectar socket globalmente y escuchar alertas para el badge + el toast.
-  // "Pide Asesoría" tiene su propio badge, separado del de "Alertas". Los
-  // pagos pendientes de validar suman a su propio badge en "Validar pagos"
-  // además de quedar listados en "Alertas" (no se les saca de ahí).
+  // "Conversaciones" muestra la cantidad de clientes que pidieron asesor
+  // (tipo 'solicita_asesor'), separado del badge de "Alertas". Los pagos
+  // pendientes de validar suman a su propio badge en "Validar pagos" además
+  // de quedar listados en "Alertas" (no se les saca de ahí).
   useEffect(() => {
     const cargarConteo = () => {
       api.get<{ id: string; tipo: string }[]>('/api/alertas?estado=nueva')
         .then((r) => {
           setAlertCount(r.data.filter((a) => a.tipo !== 'solicita_asesor').length);
-          setAsesoriaCount(r.data.filter((a) => a.tipo === 'solicita_asesor').length);
+          setConversacionesCount(r.data.filter((a) => a.tipo === 'solicita_asesor').length);
           setPagosCount(r.data.filter((a) => a.tipo === 'pago_pendiente_validacion').length);
         })
         .catch(() => {});
@@ -69,7 +70,7 @@ export function Layout({ children }: { children: ReactNode }) {
     // socket y quedaría afuera del contador hasta un refresh manual.
     socket.on('connect', cargarConteo);
     socket.on('nueva_alerta', (a: AlertaSocket) => {
-      if (a.tipo === 'solicita_asesor') setAsesoriaCount((c) => c + 1);
+      if (a.tipo === 'solicita_asesor') setConversacionesCount((c) => c + 1);
       else setAlertCount((c) => c + 1);
       if (a.tipo === 'pago_pendiente_validacion') setPagosCount((c) => c + 1);
       show('info', tipoLabel[a.tipo] ?? a.tipo, a.cliente_telefono ? `${a.cliente_telefono} · ${a.mensaje}` : a.mensaje);
@@ -83,7 +84,7 @@ export function Layout({ children }: { children: ReactNode }) {
   // Al entrar a cada sección, resetear su badge
   useEffect(() => {
     if (loc.pathname === '/alertas') setAlertCount(0);
-    if (loc.pathname === '/asesoria') setAsesoriaCount(0);
+    if (loc.pathname === '/conversaciones') setConversacionesCount(0);
     if (loc.pathname === '/pagos') setPagosCount(0);
   }, [loc.pathname]);
 
@@ -102,10 +103,10 @@ export function Layout({ children }: { children: ReactNode }) {
           {navVisible.map((n) => {
             const isActive = loc.pathname === n.to;
             const isAlertas = n.to === '/alertas';
-            const isAsesoria = n.to === '/asesoria';
+            const isConversaciones = n.to === '/conversaciones';
             const isPagos = n.to === '/pagos';
             const Icon = n.icon;
-            const badge = isAlertas ? alertCount : isAsesoria ? asesoriaCount : isPagos ? pagosCount : 0;
+            const badge = isAlertas ? alertCount : isConversaciones ? conversacionesCount : isPagos ? pagosCount : 0;
             return (
               <Link
                 key={n.to}
