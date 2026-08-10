@@ -39,17 +39,20 @@ export function verifySignature(rawBody: Buffer, signature?: string): boolean {
  */
 export async function sendText(to: string, body: string, opts: { log?: boolean } = {}): Promise<void> {
   const { log = true } = opts;
-  to = normalizarDestinoWhatsApp(to);
+  const destino = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
-    console.log(`[MOCK WA] 📲 Texto a ${to}: "${body}"`);
+    console.log(`[MOCK WA] 📲 Texto a ${destino}: "${body}"`);
   } else {
     await http.post(`/${PHONE}/messages`, {
       messaging_product: 'whatsapp',
-      to,
+      to: destino,
       type: 'text',
       text: { body },
     });
   }
+  // Loguea con el `to` original (formato wa_id), no con `destino` (formato de
+  // envío): así el hilo del cliente y el del bot quedan bajo el MISMO
+  // teléfono en mensajes_chat, en vez de partirse en dos conversaciones.
   if (log) await logMensaje(to, 'bot', body).catch((e) => console.error('Error logueando mensaje del bot:', e));
 }
 
@@ -61,13 +64,13 @@ export async function sendList(
   buttonText: string,
   rows: { id: string; title: string; description?: string }[],
 ): Promise<void> {
-  to = normalizarDestinoWhatsApp(to);
+  const destino = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
-    console.log(`[MOCK WA] 📋 Lista a ${to}: "${header}" -> Botón: [${buttonText}] con ${rows.length} opciones.`);
+    console.log(`[MOCK WA] 📋 Lista a ${destino}: "${header}" -> Botón: [${buttonText}] con ${rows.length} opciones.`);
   } else {
     await http.post(`/${PHONE}/messages`, {
       messaging_product: 'whatsapp',
-      to,
+      to: destino,
       type: 'interactive',
       interactive: {
         type: 'list',
@@ -90,13 +93,13 @@ export async function sendButtons(
   body: string,
   buttons: { id: string; title: string }[],
 ): Promise<void> {
-  to = normalizarDestinoWhatsApp(to);
+  const destino = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
-    console.log(`[MOCK WA] 🔘 Botones a ${to}: "${body}" -> Opciones:`, buttons.map((b) => b.title).join(' | '));
+    console.log(`[MOCK WA] 🔘 Botones a ${destino}: "${body}" -> Opciones:`, buttons.map((b) => b.title).join(' | '));
   } else {
     await http.post(`/${PHONE}/messages`, {
       messaging_product: 'whatsapp',
-      to,
+      to: destino,
       type: 'interactive',
       interactive: {
         type: 'button',
@@ -120,13 +123,13 @@ export async function sendButtons(
  * ignorar el botón y responder con texto (dirección escrita) en su lugar.
  */
 export async function sendLocationRequest(to: string, body: string): Promise<void> {
-  to = normalizarDestinoWhatsApp(to);
+  const destino = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
-    console.log(`[MOCK WA] 📍 Pedido de ubicación a ${to}: "${body}"`);
+    console.log(`[MOCK WA] 📍 Pedido de ubicación a ${destino}: "${body}"`);
   } else {
     await http.post(`/${PHONE}/messages`, {
       messaging_product: 'whatsapp',
-      to,
+      to: destino,
       type: 'interactive',
       interactive: {
         type: 'location_request_message',
@@ -149,9 +152,9 @@ export async function sendTemplate(
   languageCode: string,
   variables: string[] = [],
 ): Promise<void> {
-  to = normalizarDestinoWhatsApp(to);
+  const destino = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
-    console.log(`[MOCK WA] ✉️ Plantilla '${templateName}' a ${to}. Variables: [${variables.join(', ')}]`);
+    console.log(`[MOCK WA] ✉️ Plantilla '${templateName}' a ${destino}. Variables: [${variables.join(', ')}]`);
   } else {
     const components =
       variables.length > 0
@@ -159,7 +162,7 @@ export async function sendTemplate(
         : [];
     await http.post(`/${PHONE}/messages`, {
       messaging_product: 'whatsapp',
-      to,
+      to: destino,
       type: 'template',
       template: {
         name: templateName,
@@ -204,10 +207,10 @@ export async function sendDocument(
   filename: string,
   caption?: string,
 ): Promise<void> {
-  to = normalizarDestinoWhatsApp(to);
+  const destino = normalizarDestinoWhatsApp(to);
   await http.post(`/${PHONE}/messages`, {
     messaging_product: 'whatsapp',
-    to,
+    to: destino,
     type: 'document',
     document: { id: mediaId, filename, caption },
   });
