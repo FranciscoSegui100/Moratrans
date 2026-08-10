@@ -70,7 +70,13 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
           const normalizado = normalizar(msg);
           const textoLog =
             normalizado.texto ??
-            (normalizado.tipo === 'image' ? '📎 Imagen' : normalizado.tipo === 'document' ? '📎 Documento' : '(mensaje)');
+            (normalizado.tipo === 'image'
+              ? '📎 Imagen'
+              : normalizado.tipo === 'document'
+                ? '📎 Documento'
+                : normalizado.tipo === 'location'
+                  ? `📍 Ubicación compartida (${normalizado.lat}, ${normalizado.lng})`
+                  : '(mensaje)');
           await logMensaje(normalizado.from, 'cliente', textoLog).catch((e) => console.error('Error logueando mensaje:', e));
           await enrutar(normalizado).catch((e) => console.error('Error enrutando:', e));
         }

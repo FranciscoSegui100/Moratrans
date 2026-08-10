@@ -151,6 +151,9 @@ CREATE TABLE pedidos (
   zona             TEXT          NOT NULL,     -- departamento cotizado
   precio           NUMERIC(12,2),             -- congelado al momento de cotizar
   fecha_aproximada DATE,
+  destino_lat      NUMERIC(9,6),               -- ubicación GPS compartida por WhatsApp (si aplica)
+  destino_lng      NUMERIC(9,6),
+  destino_direccion TEXT,                      -- dirección escrita por el cliente, o la que venga con la ubicación GPS
   estado           estado_pedido NOT NULL DEFAULT 'nuevo',
   creado_en        TIMESTAMPTZ   NOT NULL DEFAULT now()
 );

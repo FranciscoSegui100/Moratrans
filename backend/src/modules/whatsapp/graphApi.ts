@@ -102,6 +102,29 @@ export async function sendButtons(
 }
 
 /**
+ * Pide la ubicación GPS actual del cliente: manda un botón "Enviar ubicación"
+ * que abre el selector de mapa nativo del celular. El cliente también puede
+ * ignorar el botón y responder con texto (dirección escrita) en su lugar.
+ */
+export async function sendLocationRequest(to: string, body: string): Promise<void> {
+  to = normalizarDestinoWhatsApp(to);
+  if (env.WA_ACCESS_TOKEN === 'mock') {
+    console.log(`[MOCK WA] 📍 Pedido de ubicación a ${to}: "${body}"`);
+    return;
+  }
+  await http.post(`/${PHONE}/messages`, {
+    messaging_product: 'whatsapp',
+    to,
+    type: 'interactive',
+    interactive: {
+      type: 'location_request_message',
+      body: { text: body },
+      action: { name: 'send_location' },
+    },
+  });
+}
+
+/**
  * Envía un mensaje de PLANTILLA (template) pre-aprobada por Meta.
  * Requerido para mensajes proactivos FUERA de la ventana de 24 h (sección 9).
  * `variables` rellena los {{1}}, {{2}}... del cuerpo, en orden.

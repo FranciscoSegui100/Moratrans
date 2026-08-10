@@ -9,11 +9,15 @@ import { handleAsesor } from './flows/asesor.flow';
 /** Mensaje normalizado, agnóstico del formato crudo de Meta. */
 export interface MensajeEntrante {
   from: string; // teléfono E.164 sin '+'
-  tipo: 'text' | 'interactive_list' | 'interactive_button' | 'image' | 'document' | 'otro';
+  tipo: 'text' | 'interactive_list' | 'interactive_button' | 'image' | 'document' | 'location' | 'otro';
   texto?: string; // texto o título del botón/lista
   seleccionId?: string; // id de la opción elegida en list/button
   mediaId?: string; // id del media (comprobante)
   mediaMime?: string;
+  lat?: number; // ubicación GPS compartida por el cliente
+  lng?: number;
+  ubicacionNombre?: string; // 'name' que WhatsApp adjunta a la ubicación, si el usuario le puso una
+  ubicacionDireccion?: string; // 'address' que WhatsApp adjunta a la ubicación, si el usuario le puso una
 }
 
 /** Extrae un MensajeEntrante del objeto `message` de la Graph API. */
@@ -34,6 +38,15 @@ export function normalizar(msg: any): MensajeEntrante {
       return { from, tipo: 'image', mediaId: msg.image?.id, mediaMime: msg.image?.mime_type };
     case 'document':
       return { from, tipo: 'document', mediaId: msg.document?.id, mediaMime: msg.document?.mime_type };
+    case 'location':
+      return {
+        from,
+        tipo: 'location',
+        lat: msg.location?.latitude,
+        lng: msg.location?.longitude,
+        ubicacionNombre: msg.location?.name,
+        ubicacionDireccion: msg.location?.address,
+      };
     default:
       return { from, tipo: 'otro' };
   }
