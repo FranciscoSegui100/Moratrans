@@ -4,6 +4,7 @@ import fs from 'fs';
 import FormData from 'form-data';
 import { env, isProd } from '../../config/env';
 import { normalizarDestinoWhatsApp } from '../../services/telefono.service';
+import { logMensaje } from './chatLog.service';
 
 export { normalizarDestinoWhatsApp };
 
@@ -29,19 +30,27 @@ export function verifySignature(rawBody: Buffer, signature?: string): boolean {
   }
 }
 
-/** Envío de texto simple. */
-export async function sendText(to: string, body: string): Promise<void> {
+/**
+ * Envío de texto simple.
+ * `log` queda en true por defecto para que quede en el historial de
+ * `mensajes_chat` (pantalla "Conversaciones"); se pasa en false cuando quien
+ * llama ya lo va a loguear con otro origen (ver POST /api/chat/:telefono,
+ * que loguea como 'operador' en vez de 'bot').
+ */
+export async function sendText(to: string, body: string, opts: { log?: boolean } = {}): Promise<void> {
+  const { log = true } = opts;
   to = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
     console.log(`[MOCK WA] 📲 Texto a ${to}: "${body}"`);
-    return;
+  } else {
+    await http.post(`/${PHONE}/messages`, {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'text',
+      text: { body },
+    });
   }
-  await http.post(`/${PHONE}/messages`, {
-    messaging_product: 'whatsapp',
-    to,
-    type: 'text',
-    text: { body },
-  });
+  if (log) await logMensaje(to, 'bot', body).catch((e) => console.error('Error logueando mensaje del bot:', e));
 }
 
 /** List message (menú cerrado). rows: [{id, title, description?}] */
@@ -55,22 +64,24 @@ export async function sendList(
   to = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
     console.log(`[MOCK WA] 📋 Lista a ${to}: "${header}" -> Botón: [${buttonText}] con ${rows.length} opciones.`);
-    return;
-  }
-  await http.post(`/${PHONE}/messages`, {
-    messaging_product: 'whatsapp',
-    to,
-    type: 'interactive',
-    interactive: {
-      type: 'list',
-      header: { type: 'text', text: header },
-      body: { text: body },
-      action: {
-        button: buttonText,
-        sections: [{ title: 'Opciones', rows }],
+  } else {
+    await http.post(`/${PHONE}/messages`, {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'interactive',
+      interactive: {
+        type: 'list',
+        header: { type: 'text', text: header },
+        body: { text: body },
+        action: {
+          button: buttonText,
+          sections: [{ title: 'Opciones', rows }],
+        },
       },
-    },
-  });
+    });
+  }
+  await logMensaje(to, 'bot', `${body}\n(opciones: ${rows.map((r) => r.title).join(', ')})`)
+    .catch((e) => console.error('Error logueando mensaje del bot:', e));
 }
 
 /** Botones (máx 3). */
@@ -82,23 +93,25 @@ export async function sendButtons(
   to = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
     console.log(`[MOCK WA] 🔘 Botones a ${to}: "${body}" -> Opciones:`, buttons.map((b) => b.title).join(' | '));
-    return;
-  }
-  await http.post(`/${PHONE}/messages`, {
-    messaging_product: 'whatsapp',
-    to,
-    type: 'interactive',
-    interactive: {
-      type: 'button',
-      body: { text: body },
-      action: {
-        buttons: buttons.map((b) => ({
-          type: 'reply',
-          reply: { id: b.id, title: b.title },
-        })),
+  } else {
+    await http.post(`/${PHONE}/messages`, {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        body: { text: body },
+        action: {
+          buttons: buttons.map((b) => ({
+            type: 'reply',
+            reply: { id: b.id, title: b.title },
+          })),
+        },
       },
-    },
-  });
+    });
+  }
+  await logMensaje(to, 'bot', `${body}\n(opciones: ${buttons.map((b) => b.title).join(', ')})`)
+    .catch((e) => console.error('Error logueando mensaje del bot:', e));
 }
 
 /**
@@ -110,18 +123,19 @@ export async function sendLocationRequest(to: string, body: string): Promise<voi
   to = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
     console.log(`[MOCK WA] 📍 Pedido de ubicación a ${to}: "${body}"`);
-    return;
+  } else {
+    await http.post(`/${PHONE}/messages`, {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'interactive',
+      interactive: {
+        type: 'location_request_message',
+        body: { text: body },
+        action: { name: 'send_location' },
+      },
+    });
   }
-  await http.post(`/${PHONE}/messages`, {
-    messaging_product: 'whatsapp',
-    to,
-    type: 'interactive',
-    interactive: {
-      type: 'location_request_message',
-      body: { text: body },
-      action: { name: 'send_location' },
-    },
-  });
+  await logMensaje(to, 'bot', body).catch((e) => console.error('Error logueando mensaje del bot:', e));
 }
 
 /**
@@ -138,22 +152,24 @@ export async function sendTemplate(
   to = normalizarDestinoWhatsApp(to);
   if (env.WA_ACCESS_TOKEN === 'mock') {
     console.log(`[MOCK WA] ✉️ Plantilla '${templateName}' a ${to}. Variables: [${variables.join(', ')}]`);
-    return;
+  } else {
+    const components =
+      variables.length > 0
+        ? [{ type: 'body', parameters: variables.map((v) => ({ type: 'text', text: v })) }]
+        : [];
+    await http.post(`/${PHONE}/messages`, {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: languageCode },
+        ...(components.length ? { components } : {}),
+      },
+    });
   }
-  const components =
-    variables.length > 0
-      ? [{ type: 'body', parameters: variables.map((v) => ({ type: 'text', text: v })) }]
-      : [];
-  await http.post(`/${PHONE}/messages`, {
-    messaging_product: 'whatsapp',
-    to,
-    type: 'template',
-    template: {
-      name: templateName,
-      language: { code: languageCode },
-      ...(components.length ? { components } : {}),
-    },
-  });
+  await logMensaje(to, 'bot', `[Plantilla: ${templateName}]${variables.length ? ' ' + variables.join(', ') : ''}`)
+    .catch((e) => console.error('Error logueando mensaje del bot:', e));
 }
 
 /** Descarga un media (comprobante) por su id: 2 pasos (metadata -> binario). */
@@ -195,4 +211,6 @@ export async function sendDocument(
     type: 'document',
     document: { id: mediaId, filename, caption },
   });
+  await logMensaje(to, 'bot', `[Documento: ${filename}]${caption ? ' — ' + caption : ''}`)
+    .catch((e) => console.error('Error logueando mensaje del bot:', e));
 }

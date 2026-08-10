@@ -2,7 +2,6 @@ import { query } from '../../../config/db';
 import { sendText } from '../graphApi';
 import { setSesion } from '../session.store';
 import { emitAlerta } from '../../../config/socket';
-import { logMensaje } from '../chatLog.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -47,5 +46,4 @@ export async function handleAsesor(m: MensajeEntrante, sesion: Sesion): Promise<
     '_Tenés una ventana de 24hs para seguir esta conversación: si pasa ese tiempo sin que escribas, ' +
     'WhatsApp la cierra y vas a tener que volver a escribirnos para retomarla._';
   await sendText(to, textoAviso);
-  await logMensaje(to, 'bot', textoAviso).catch((e) => console.error('Error logueando mensaje:', e));
 }

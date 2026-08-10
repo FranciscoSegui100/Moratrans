@@ -53,7 +53,10 @@ chatRouter.post('/:telefono', requireRol('admin', 'operador'), async (req: Reque
   const telefono = req.params.telefono;
 
   try {
-    await sendText(telefono, parsed.data.texto);
+    // log: false — este envío se loguea abajo como 'operador' (con usuarioId),
+    // no como 'bot' (que es lo que sendText hace por defecto para cualquier
+    // otro llamador en los flujos automáticos).
+    await sendText(telefono, parsed.data.texto, { log: false });
   } catch (e: any) {
     const motivoMeta = e.response?.data?.error?.message as string | undefined;
     console.error('Error enviando mensaje de operador por WhatsApp:', motivoMeta ?? e.message);
