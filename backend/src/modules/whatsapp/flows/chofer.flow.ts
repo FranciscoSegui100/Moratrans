@@ -1,7 +1,7 @@
 import { query } from '../../../config/db';
 import { sendText, sendList, sendButtons } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
-import { emitAlerta } from '../../../config/socket';
+import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { blindIndex } from '../../../services/crypto.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
@@ -189,6 +189,10 @@ async function aplicarEstado(
       'INSERT INTO historial_contenedores (numero_contenedor, estado, chofer_id, nota) VALUES ($1,$2,$3,$4)',
       [numero, estado, choferId, 'registrado por chofer vía WhatsApp'],
     );
+    // Este cambio viene del webhook de WhatsApp, no de la API del panel, así
+    // que no pasa por el middleware que avisa solo (broadcastCambios) — sin
+    // esto, la pestaña Contenedores quedaba desactualizada hasta hacer F5.
+    emitRecursoActualizado('contenedores');
     await clearSesion(to);
     await sendText(to, `✅ ¡Listo! Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*. 💪`);
   } catch (err: any) {

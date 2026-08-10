@@ -49,8 +49,8 @@ contenedoresRouter.post('/', requireRol('admin', 'operador'), async (req: Reques
  * POST /api/contenedores/:numero/confirmar-retiro — el operador confirma
  * desde el panel que el contenedor que un chofer marcó como "retirado" por
  * WhatsApp llegó físicamente a la empresa. Recién ahí se aplica el cambio
- * de estado (antes queda pendiente, ver flows/chofer.flow.ts) y se avisa
- * al chofer.
+ * de estado (antes queda pendiente, ver flows/chofer.flow.ts), vuelve a
+ * quedar disponible para un cliente nuevo, y se avisa al chofer.
  */
 contenedoresRouter.post(
   '/:numero/confirmar-retiro',
@@ -69,9 +69,17 @@ contenedoresRouter.post(
     }
 
     try {
-      // El trigger fn_validar_transicion_contenedor exige que venga de "entregado".
+      // El trigger fn_validar_transicion_contenedor solo permite "entregado" ->
+      // "retirado" directo; de ahí sí puede pasar a "disponible" (dos updates,
+      // cada uno válido por separado para el trigger). Vacía vence_en (era la
+      // fecha límite del cliente anterior, ya no aplica) para que el cron de
+      // "contenedor por vencer" no dispare una alerta vieja por error.
       await query(
         `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
+        [numero, `operador:${req.user!.id}`],
+      );
+      await query(
+        `UPDATE contenedores SET estado = 'disponible', vence_en = NULL, cliente_id = NULL, actualizado_por = $2 WHERE numero = $1`,
         [numero, `operador:${req.user!.id}`],
       );
     } catch (e: any) {
