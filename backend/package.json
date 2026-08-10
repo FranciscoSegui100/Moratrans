@@ -1,6 +1,6 @@
 {
   "name": "logistica-whatsapp-backend",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Backend: chatbot WhatsApp (Graph API) + panel logístico",
   "main": "dist/server.js",
   "engines": {
