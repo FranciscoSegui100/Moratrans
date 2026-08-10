@@ -1,0 +1,7 @@
+{
+  "name": "moratrans",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  }
+}
