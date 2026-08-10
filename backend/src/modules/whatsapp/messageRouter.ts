@@ -18,26 +18,27 @@ export interface MensajeEntrante {
   lng?: number;
   ubicacionNombre?: string; // 'name' que WhatsApp adjunta a la ubicación, si el usuario le puso una
   ubicacionDireccion?: string; // 'address' que WhatsApp adjunta a la ubicación, si el usuario le puso una
+  nombrePerfil?: string; // nombre que el cliente tiene puesto en su WhatsApp (viene gratis en cada mensaje)
 }
 
 /** Extrae un MensajeEntrante del objeto `message` de la Graph API. */
-export function normalizar(msg: any): MensajeEntrante {
+export function normalizar(msg: any, nombrePerfil?: string): MensajeEntrante {
   const from = msg.from as string;
   switch (msg.type) {
     case 'text':
-      return { from, tipo: 'text', texto: msg.text?.body?.trim() };
+      return { from, tipo: 'text', texto: msg.text?.body?.trim(), nombrePerfil };
     case 'interactive': {
       const it = msg.interactive;
       if (it.type === 'list_reply')
-        return { from, tipo: 'interactive_list', seleccionId: it.list_reply.id, texto: it.list_reply.title };
+        return { from, tipo: 'interactive_list', seleccionId: it.list_reply.id, texto: it.list_reply.title, nombrePerfil };
       if (it.type === 'button_reply')
-        return { from, tipo: 'interactive_button', seleccionId: it.button_reply.id, texto: it.button_reply.title };
-      return { from, tipo: 'otro' };
+        return { from, tipo: 'interactive_button', seleccionId: it.button_reply.id, texto: it.button_reply.title, nombrePerfil };
+      return { from, tipo: 'otro', nombrePerfil };
     }
     case 'image':
-      return { from, tipo: 'image', mediaId: msg.image?.id, mediaMime: msg.image?.mime_type };
+      return { from, tipo: 'image', mediaId: msg.image?.id, mediaMime: msg.image?.mime_type, nombrePerfil };
     case 'document':
-      return { from, tipo: 'document', mediaId: msg.document?.id, mediaMime: msg.document?.mime_type };
+      return { from, tipo: 'document', mediaId: msg.document?.id, mediaMime: msg.document?.mime_type, nombrePerfil };
     case 'location':
       return {
         from,
@@ -46,9 +47,10 @@ export function normalizar(msg: any): MensajeEntrante {
         lng: msg.location?.longitude,
         ubicacionNombre: msg.location?.name,
         ubicacionDireccion: msg.location?.address,
+        nombrePerfil,
       };
     default:
-      return { from, tipo: 'otro' };
+      return { from, tipo: 'otro', nombrePerfil };
   }
 }
 

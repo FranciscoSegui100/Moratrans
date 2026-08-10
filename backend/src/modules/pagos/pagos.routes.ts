@@ -62,6 +62,47 @@ const validarSchema = z.object({
 });
 
 /**
+ * Le avisa al chofer asignado, por WhatsApp, qué contenedor le toca llevar,
+ * a quién y adónde. El chofer confirma el avance ("voy en camino" / "ya
+ * entregué") desde su propio menú de WhatsApp (ver chofer.flow.ts) — esos
+ * botones ya validan la transición de estado del contenedor.
+ */
+async function avisarChoferAsignacion(
+  choferId: string,
+  contenedor: string,
+  info: {
+    cliente_telefono: string;
+    cliente_nombre: string | null;
+    destino_lat: string | null;
+    destino_lng: string | null;
+    destino_direccion: string | null;
+  } | undefined,
+): Promise<void> {
+  const [chofer] = await query<{ telefono: string | null; nombre: string }>(
+    'SELECT telefono, nombre FROM choferes WHERE id = $1',
+    [choferId],
+  );
+  if (!chofer?.telefono) return; // chofer sin número vinculado todavía: nada que mandar
+
+  const partesDestino: string[] = [];
+  if (info?.destino_direccion) partesDestino.push(info.destino_direccion);
+  if (info?.destino_lat && info?.destino_lng) {
+    partesDestino.push(`https://www.google.com/maps?q=${info.destino_lat},${info.destino_lng}`);
+  }
+  const destino = partesDestino.length > 0 ? partesDestino.join('\n') : 'Sin ubicación registrada, coordiná con el cliente.';
+
+  await sendText(
+    chofer.telefono,
+    `🚚 *Nueva entrega asignada*\n\n` +
+      `📦 Contenedor: *${contenedor}*\n` +
+      `👤 Cliente: ${info?.cliente_nombre ?? 'Sin nombre registrado'}\n` +
+      `📞 Teléfono: ${info?.cliente_telefono ?? '—'}\n` +
+      `📍 Destino:\n${destino}\n\n` +
+      `_Cuando salgas y cuando entregues, avisá desde tu menú (escribí *menú*)._`,
+  );
+}
+
+/**
  * POST /api/pagos/:id/validar — SÓLO operador/admin/finanzas.
  * Llama a fn_validar_pago (atómico): reserva contenedor + crea ticket.
  * Opcionalmente, el operador indica cuántos días va a demorar el retiro,
@@ -81,9 +122,19 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       [pagoId, req.user!.id],
     );
 
-    // Datos para el ticket
-    const [info] = await query<{ cliente_telefono: string; zona: string; precio: string; moneda: string | null }>(
-      `SELECT p.cliente_telefono, pe.zona, pe.precio, td.moneda
+    // Datos para el ticket + para avisarle al chofer adónde tiene que llevar el contenedor.
+    const [info] = await query<{
+      cliente_telefono: string;
+      cliente_nombre: string | null;
+      zona: string;
+      precio: string;
+      moneda: string | null;
+      destino_lat: string | null;
+      destino_lng: string | null;
+      destino_direccion: string | null;
+    }>(
+      `SELECT p.cliente_telefono, pe.cliente_nombre, pe.zona, pe.precio, td.moneda,
+              pe.destino_lat, pe.destino_lng, pe.destino_direccion
          FROM pagos p
          LEFT JOIN pedidos pe ON pe.id = p.pedido_id
          LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
@@ -99,6 +150,12 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
         `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas)
          VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', 'Asignado al validar el pago')`,
         [venceEn ?? null, choferId, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null],
+      );
+
+      // Avisamos al chofer por WhatsApp: qué contenedor, a quién y adónde. No
+      // bloquea la respuesta del panel si falla el envío.
+      avisarChoferAsignacion(choferId, result.contenedor, info).catch((e) =>
+        console.error('Error avisando al chofer la asignación:', e),
       );
     }
     if (diasDemora != null) {

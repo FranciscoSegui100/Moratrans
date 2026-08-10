@@ -61,13 +61,17 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
     for (const entry of entries) {
       for (const change of entry.changes ?? []) {
         const messages = change.value?.messages ?? [];
+        const contacts = change.value?.contacts ?? [];
         for (const msg of messages) {
           const esNuevo = await registrarMensaje(msg.id);
           if (!esNuevo) {
             console.log('Mensaje duplicado ignorado:', msg.id);
             continue;
           }
-          const normalizado = normalizar(msg);
+          // Meta manda el nombre que el cliente tiene puesto en su WhatsApp junto
+          // a cada mensaje (contacts[].profile.name) — no hace falta pedírselo.
+          const nombrePerfil = contacts.find((c: any) => c.wa_id === msg.from)?.profile?.name;
+          const normalizado = normalizar(msg, nombrePerfil);
           const textoLog =
             normalizado.texto ??
             (normalizado.tipo === 'image'

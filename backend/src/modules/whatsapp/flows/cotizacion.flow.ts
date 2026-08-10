@@ -108,11 +108,12 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
 
     const { precio, moneda } = tarifa[0];
 
-    // Registrar el pedido en estado "cotizado" (traza para el panel), con la ubicación de entrega.
+    // Registrar el pedido en estado "cotizado" (traza para el panel), con la ubicación de entrega
+    // y el nombre que el cliente tiene puesto en su WhatsApp (lo manda Meta solo, no hace falta pedirlo).
     await query(
-      `INSERT INTO pedidos (cliente_telefono, zona, precio, estado, destino_lat, destino_lng, destino_direccion)
-       VALUES ($1,$2,$3,'cotizado',$4,$5,$6)`,
-      [to, departamento, precio, destinoLat, destinoLng, destinoDireccion],
+      `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_lat, destino_lng, destino_direccion)
+       VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7)`,
+      [to, m.nombrePerfil ?? null, departamento, precio, destinoLat, destinoLng, destinoDireccion],
     );
 
     await sendText(

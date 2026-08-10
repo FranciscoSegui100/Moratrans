@@ -148,6 +148,7 @@ CREATE INDEX idx_hist_contenedor ON historial_contenedores(numero_contenedor);
 CREATE TABLE pedidos (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   cliente_telefono TEXT          NOT NULL,
+  cliente_nombre   TEXT,                        -- nombre de perfil de WhatsApp del cliente (contacts[].profile.name)
   zona             TEXT          NOT NULL,     -- departamento cotizado
   precio           NUMERIC(12,2),             -- congelado al momento de cotizar
   fecha_aproximada DATE,
