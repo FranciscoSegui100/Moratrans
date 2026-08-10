@@ -48,7 +48,7 @@ export const authRouter = Router();
 // middleware/rateLimit.ts) — este frena a alguien que reparte los intentos
 // entre varias IPs, algo que un límite por IP no puede ver.
 const MAX_INTENTOS_FALLIDOS = 5;
-const BLOQUEO_MINUTOS = 15;
+const BLOQUEO_MINUTOS = 1; // TEMPORAL para pruebas — volver a 15 cuando terminen de probar
 
 interface UsuarioFila {
   id: string;
