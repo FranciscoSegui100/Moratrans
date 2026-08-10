@@ -5,6 +5,8 @@ import 'express-async-errors';
 import express, { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import fs from 'fs';
+import path from 'path';
 import { env, isProd } from './config/env';
 import { requireCsrf } from './middleware/csrf';
 import { webhookRouter } from './modules/whatsapp/webhook.controller';
@@ -84,6 +86,20 @@ export function crearApp() {
   app.use('/api/chat', chatRouter);
   app.use('/api/reportes', reportesRouter);
   app.use('/api/sync', syncRouter);
+
+  // Sirve el build del panel (frontend/dist, copiado acá por `vite build` -> ../backend/public)
+  // cuando existe: en Railway un solo servicio sirve API + panel bajo el mismo dominio, evitando
+  // el problema de que la cookie mt_csrf (CSRF) no se pueda leer entre dominios distintos. En dev
+  // local esta carpeta no existe (el panel corre aparte con `vite dev` en el puerto 5173) y este
+  // bloque queda inactivo.
+  const frontendDist = path.join(__dirname, '../public');
+  if (fs.existsSync(path.join(frontendDist, 'index.html'))) {
+    app.use(express.static(frontendDist));
+    app.get('*', (req: Request, res: Response, next: NextFunction) => {
+      if (req.path.startsWith('/api') || req.path.startsWith('/webhook') || req.path === '/health') return next();
+      res.sendFile(path.join(frontendDist, 'index.html'));
+    });
+  }
 
   // Error handler global: cualquier excepción/rechazo de un handler (sync o
   // async, gracias a express-async-errors) termina acá en vez de tirar abajo
