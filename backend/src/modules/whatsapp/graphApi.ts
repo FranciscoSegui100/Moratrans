@@ -16,6 +16,18 @@ const http = axios.create({
   headers: { Authorization: `Bearer ${env.WA_ACCESS_TOKEN}` },
 });
 
+/**
+ * Extrae solo el mensaje de error útil de un fallo contra la Graph API.
+ * Usar SIEMPRE esto (nunca `console.error('...', e)` con el error crudo) al
+ * loguear un error de sendText/sendList/sendButtons/sendDocument/uploadMedia:
+ * el objeto de error de axios trae el request completo adentro, incluido el
+ * header `Authorization: Bearer <token>` en texto plano — lo logueás en
+ * texto plano si no filtrás antes.
+ */
+export function motivoErrorWa(e: any): string {
+  return e?.response?.data?.error?.message ?? e?.message ?? String(e);
+}
+
 /** Valida la firma X-Hub-Signature-256 del webhook (seguridad contra spoofing). */
 export function verifySignature(rawBody: Buffer, signature?: string): boolean {
   if (!env.WA_APP_SECRET) return !isProd; // permitido sólo en dev sin secret; en prod falla cerrado

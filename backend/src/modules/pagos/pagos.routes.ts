@@ -7,7 +7,7 @@ import { env } from '../../config/env';
 import { requireAuth, requireRol, puedeVerComprobante } from '../../middleware/rbac';
 import { encrypt, decrypt } from '../../services/crypto.service';
 import { enviarTicketPorWhatsApp } from '../../services/pdf.service';
-import { sendText, sendButtons, uploadMedia, sendDocument } from '../whatsapp/graphApi';
+import { sendText, sendButtons, uploadMedia, sendDocument, motivoErrorWa } from '../whatsapp/graphApi';
 import { emitAlerta, emitAlertaActualizada } from '../../config/socket';
 
 export const pagosRouter = Router();
@@ -155,14 +155,14 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       // Avisamos al chofer por WhatsApp: qué contenedor, a quién y adónde. No
       // bloquea la respuesta del panel si falla el envío.
       avisarChoferAsignacion(choferId, result.contenedor, info).catch((e) =>
-        console.error('Error avisando al chofer la asignación:', e),
+        console.error('Error avisando al chofer la asignación:', motivoErrorWa(e)),
       );
     }
     if (diasDemora != null) {
       sendText(
         info.cliente_telefono,
         `📅 Tu contenedor se pasará a recoger en *${diasDemora} día${diasDemora === 1 ? '' : 's'}* desde la entrega del mismo.`,
-      ).catch((e) => console.error('Error avisando plazo de retiro:', e));
+      ).catch((e) => console.error('Error avisando plazo de retiro:', motivoErrorWa(e)));
     }
 
     // Envío del PDF (no bloqueante para la respuesta HTTP)
@@ -174,7 +174,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       moneda: info?.moneda ?? undefined,
       clienteTelefono: info.cliente_telefono,
       fecha: new Date(),
-    }).catch((e) => console.error('Error enviando ticket:', e));
+    }).catch((e) => console.error('Error enviando ticket:', motivoErrorWa(e)));
 
     // fn_validar_pago ya resolvió la alerta atómicamente en SQL; acá solo se
     // avisa por socket a los demás operadores (el que hizo la acción ya
@@ -217,7 +217,7 @@ pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), a
     `⚠️ Tu comprobante no pudo validarse. Motivo: ${motivo}\n` +
       'Si tenés alguna duda, comunicate con un asesor.',
     [{ id: 'opt_asesor', title: '🙋 Hablar con asesor' }],
-  ).catch((e) => console.error(e));
+  ).catch((e) => console.error('Error avisando rechazo de pago:', motivoErrorWa(e)));
 
   res.json({ ok: true });
 });
@@ -278,7 +278,7 @@ pagosRouter.post(
       const mediaId = await uploadMedia(filePath, contentType);
       await sendDocument(pago.cliente_telefono, mediaId, `factura${ext}`, '🧾 ¡Acá tenés tu factura!');
     } catch (e) {
-      console.error('Error enviando factura por WhatsApp:', e);
+      console.error('Error enviando factura por WhatsApp:', motivoErrorWa(e));
       return res.status(502).json({ error: 'La factura se guardó pero no se pudo enviar por WhatsApp' });
     }
 

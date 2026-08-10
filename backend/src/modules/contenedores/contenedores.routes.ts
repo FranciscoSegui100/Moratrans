@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
-import { sendText } from '../whatsapp/graphApi';
+import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
 import { emitAlertaActualizada } from '../../config/socket';
 
 export const contenedoresRouter = Router();
@@ -96,7 +96,7 @@ contenedoresRouter.post(
         sendText(
           chofer.telefono,
           `✅ Confirmado: el contenedor *${numero}* ya quedó registrado en la empresa. ¡Gracias por tu trabajo! 🙌`,
-        ).catch((e) => console.error('Error avisando al chofer:', e));
+        ).catch((e) => console.error('Error avisando al chofer:', motivoErrorWa(e)));
       }
     }
 
