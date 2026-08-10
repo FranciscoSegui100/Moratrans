@@ -8,6 +8,7 @@ import { requireAuth, requireRol, puedeVerComprobante } from '../../middleware/r
 import { encrypt, decrypt } from '../../services/crypto.service';
 import { enviarTicketPorWhatsApp } from '../../services/pdf.service';
 import { sendText, sendButtons, uploadMedia, sendDocument, motivoErrorWa } from '../whatsapp/graphApi';
+import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { emitAlerta, emitAlertaActualizada } from '../../config/socket';
 
 export const pagosRouter = Router();
@@ -97,9 +98,11 @@ async function avisarChoferAsignacion(
       `📦 Contenedor: *${contenedor}*\n` +
       `👤 Cliente: ${info?.cliente_nombre ?? 'Sin nombre registrado'}\n` +
       `📞 Teléfono: ${info?.cliente_telefono ?? '—'}\n` +
-      `📍 Destino:\n${destino}\n\n` +
-      `_Cuando salgas y cuando entregues, avisá desde tu menú (escribí *menú*)._`,
+      `📍 Destino:\n${destino}`,
   );
+  // El menú (botones) sale abajo del aviso: un solo toque para avisar
+  // "voy en camino" apenas arranca, sin tener que escribir nada.
+  await menuChofer(chofer.telefono, chofer.nombre);
 }
 
 /**

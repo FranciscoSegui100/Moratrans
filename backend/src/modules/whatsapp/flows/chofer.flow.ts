@@ -1,5 +1,5 @@
 import { query } from '../../../config/db';
-import { sendText, sendList } from '../graphApi';
+import { sendText, sendList, sendButtons } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
 import { emitAlerta } from '../../../config/socket';
 import { blindIndex } from '../../../services/crypto.service';
@@ -9,10 +9,11 @@ import type { Sesion } from '../session.store';
 // Únicos estados que un chofer puede aplicar.
 const ESTADOS_CHOFER = ['en_camino', 'entregado', 'retirado'] as const;
 
+// Título del botón: WhatsApp corta a 20 caracteres, por eso van cortos.
 const LABEL_ESTADO: Record<(typeof ESTADOS_CHOFER)[number], string> = {
   en_camino: '🚛 Voy en camino',
   entregado: '📦 Ya entregué',
-  retirado: '📥 Retiré el contenedor',
+  retirado: '📥 Ya retiré',
 };
 
 export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -82,8 +83,8 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
 
-  // 2) Chofer reconocido: manejar cambio de estado
-  if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('estado:')) {
+  // 2) Chofer reconocido: manejar cambio de estado (botones) y elección de contenedor (lista).
+  if (m.tipo === 'interactive_button' && m.seleccionId?.startsWith('estado:')) {
     return elegirContenedor(to, chofer[0].id, m.seleccionId.replace('estado:', ''), sesion);
   }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('cont:')) {
@@ -93,13 +94,15 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   return menuChofer(to, chofer[0].nombre);
 }
 
-/** Menú principal del chofer: elegir estado logístico. */
-async function menuChofer(to: string, nombre?: string): Promise<void> {
-  await sendList(
+/**
+ * Menú principal del chofer: 3 botones pegados al mensaje (un solo toque),
+ * en vez de una lista desplegable — más rápido para alguien manejando.
+ * Se manda después de cada acción para que nunca tenga que escribir "menú".
+ */
+export async function menuChofer(to: string, nombre?: string): Promise<void> {
+  await sendButtons(
     to,
-    nombre ? `🚚 ¡Hola, ${nombre}!` : '🚚 Panel del chofer',
-    '¿Qué querés registrar?',
-    'Ver acciones',
+    nombre ? `🚚 ¡Hola, ${nombre}! ¿Qué querés registrar?` : '🚚 Panel del chofer. ¿Qué querés registrar?',
     ESTADOS_CHOFER.map((e) => ({ id: `estado:${e}`, title: LABEL_ESTADO[e] })),
   );
 }
@@ -108,7 +111,7 @@ async function menuChofer(to: string, nombre?: string): Promise<void> {
 async function elegirContenedor(to: string, choferId: string, estado: string, sesion: Sesion): Promise<void> {
   if (!ESTADOS_CHOFER.includes(estado as any)) {
     await sendText(to, 'Esa acción no está disponible para choferes.');
-    return;
+    return menuChofer(to);
   }
   // Contenedores en un estado desde el que la transición es válida.
   const origen =
@@ -143,7 +146,7 @@ async function aplicarEstado(
   if (!ESTADOS_CHOFER.includes(estado as any)) {
     await sendText(to, 'Esa acción no está disponible.');
     await clearSesion(to);
-    return;
+    return menuChofer(to, choferNombre);
   }
 
   // "Retirado" no se aplica al toque: queda pendiente hasta que un operador
@@ -169,10 +172,10 @@ async function aplicarEstado(
         `📥 ¡Anotado! En cuanto el contenedor *${numero}* llegue a la empresa, un operador lo confirma y te avisamos por acá. ¡Gracias por tu trabajo! 🙌`,
       );
     } catch (err: any) {
-      await sendText(to, `⚠️ No pudimos registrar el retiro de ${numero}. Probá de nuevo o escribí *menú*.`);
+      await sendText(to, `⚠️ No pudimos registrar el retiro de ${numero}. Probá de nuevo.`);
       console.error('Error registrando retiro pendiente:', err.message);
     }
-    return;
+    return menuChofer(to, choferNombre);
   }
 
   try {
@@ -192,9 +195,9 @@ async function aplicarEstado(
     // Error de transición inválida u otro
     await sendText(
       to,
-      `⚠️ No pude aplicar el cambio en ${numero}. ` +
-        'Puede que el contenedor no esté en el estado correcto. Escribí *menú* para volver a intentar.',
+      `⚠️ No pude aplicar el cambio en ${numero}. Puede que el contenedor no esté en el estado correcto.`,
     );
     console.error('Error aplicarEstado:', err.message);
   }
+  return menuChofer(to, choferNombre);
 }
