@@ -18,8 +18,30 @@ const origenLabel: Record<MensajeChat['origen'], string> = {
   operador: 'Vos',
 };
 
+function etiquetaDia(iso: string): string {
+  const fecha = new Date(iso);
+  const hoy = new Date();
+  if (fecha.toDateString() === hoy.toDateString()) return 'Hoy';
+  const ayer = new Date(hoy);
+  ayer.setDate(hoy.getDate() - 1);
+  if (fecha.toDateString() === ayer.toDateString()) return 'Ayer';
+  return fecha.toLocaleDateString('es-AR', { day: 'numeric', month: 'long' });
+}
+
+/** Agrupa los mensajes por día para intercalar separadores tipo WhatsApp. */
+function agruparPorDia(mensajes: MensajeChat[]): { etiqueta: string; mensajes: MensajeChat[] }[] {
+  const grupos: { etiqueta: string; mensajes: MensajeChat[] }[] = [];
+  for (const m of mensajes) {
+    const etiqueta = etiquetaDia(m.creado_en);
+    const ultimo = grupos[grupos.length - 1];
+    if (ultimo?.etiqueta === etiqueta) ultimo.mensajes.push(m);
+    else grupos.push({ etiqueta, mensajes: [m] });
+  }
+  return grupos;
+}
+
 /** Hilo de conversación + cuadro de respuesta libre para la alerta "pide asesor". */
-export function ChatAsesor({ telefono }: { telefono: string }) {
+export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ventanaCerrada?: boolean }) {
   const [mensajes, setMensajes] = useState<MensajeChat[]>([]);
   const [texto, setTexto] = useState('');
   const [enviando, setEnviando] = useState(false);
@@ -79,27 +101,39 @@ export function ChatAsesor({ telefono }: { telefono: string }) {
     <div className="chat-asesor">
       <div className="chat-asesor-hilo">
         {mensajes.length === 0 && <div className="text-muted">Todavía no hay mensajes.</div>}
-        {mensajes.map((m) => (
-          <div key={m.id} className={`chat-burbuja chat-burbuja-${m.origen}`}>
-            <div className="chat-burbuja-autor">{origenLabel[m.origen]}</div>
-            <div className="chat-burbuja-texto">{m.texto}</div>
-            <div className="chat-burbuja-hora">
-              {new Date(m.creado_en).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
-            </div>
+        {agruparPorDia(mensajes).map((grupo) => (
+          <div key={grupo.etiqueta + grupo.mensajes[0].id}>
+            <div className="chat-dia"><span>{grupo.etiqueta}</span></div>
+            {grupo.mensajes.map((m) => (
+              <div key={m.id} className={`chat-burbuja chat-burbuja-${m.origen}`}>
+                <div className="chat-burbuja-autor">{origenLabel[m.origen]}</div>
+                <div className="chat-burbuja-texto">{m.texto}</div>
+                <div className="chat-burbuja-hora">
+                  {new Date(m.creado_en).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                </div>
+              </div>
+            ))}
           </div>
         ))}
         <div ref={finRef} />
       </div>
+
+      {ventanaCerrada && (
+        <div className="chat-asesor-aviso">
+          Pasaron más de 24hs desde el último mensaje del cliente: WhatsApp ya no permite mandarle texto libre.
+          Esperá a que vuelva a escribir para poder responderle.
+        </div>
+      )}
       <div className="chat-asesor-input">
         <input
           className="form-input"
-          placeholder="Escribí tu respuesta y se manda por WhatsApp..."
+          placeholder={ventanaCerrada ? 'Ventana de 24hs cerrada' : 'Escribí tu respuesta y se manda por WhatsApp...'}
           value={texto}
           onChange={(e) => setTexto(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') enviar(); }}
-          disabled={enviando}
+          disabled={enviando || ventanaCerrada}
         />
-        <button className="btn btn-primary btn-sm" onClick={enviar} disabled={enviando || !texto.trim()}>
+        <button className="btn btn-primary btn-sm" onClick={enviar} disabled={enviando || ventanaCerrada || !texto.trim()}>
           <Send strokeWidth={2} /> Enviar
         </button>
       </div>

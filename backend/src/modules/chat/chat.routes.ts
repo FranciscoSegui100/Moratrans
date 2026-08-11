@@ -13,18 +13,34 @@ chatRouter.use(requireAuth);
 /**
  * GET /api/chat — lista TODAS las conversaciones (no solo las escaladas a
  * "asesor"): último mensaje de cada teléfono + si el bot está pausado
- * (modoHumano) para esa conversación en este momento.
+ * (modoHumano) para esa conversación en este momento. Suma el nombre del
+ * cliente (si ya cotizó alguna vez, tomado del perfil de WhatsApp) y el
+ * momento de su último mensaje, para calcular la ventana de 24hs de WhatsApp
+ * en el panel (pasado ese lapso sin que el cliente escriba, no se le puede
+ * volver a mandar texto libre).
  */
 chatRouter.get('/', async (_req: Request, res: Response) => {
   const rows = await query(
     `SELECT m.telefono, m.texto AS ultimo_mensaje, m.origen AS ultimo_origen, m.creado_en AS ultimo_en,
-            COALESCE((s.contexto->>'modoHumano')::boolean, false) AS modo_humano
+            COALESCE((s.contexto->>'modoHumano')::boolean, false) AS modo_humano,
+            uc.creado_en AS ultimo_cliente_en,
+            p.cliente_nombre AS nombre
        FROM (
          SELECT DISTINCT ON (telefono) telefono, texto, origen, creado_en
            FROM mensajes_chat
           ORDER BY telefono, creado_en DESC
        ) m
        LEFT JOIN sesiones_chat s ON s.telefono = m.telefono
+       LEFT JOIN LATERAL (
+         SELECT mc.creado_en FROM mensajes_chat mc
+          WHERE mc.telefono = m.telefono AND mc.origen = 'cliente'
+          ORDER BY mc.creado_en DESC LIMIT 1
+       ) uc ON true
+       LEFT JOIN LATERAL (
+         SELECT pd.cliente_nombre FROM pedidos pd
+          WHERE pd.cliente_telefono = m.telefono AND pd.cliente_nombre IS NOT NULL
+          ORDER BY pd.creado_en DESC LIMIT 1
+       ) p ON true
       ORDER BY m.creado_en DESC
       LIMIT 200`,
   );

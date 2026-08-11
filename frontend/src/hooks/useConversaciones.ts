@@ -5,9 +5,11 @@ import { conectarSocket } from '../api/socket';
 
 export interface Conversacion {
   telefono: string;
+  nombre: string | null;
   ultimo_mensaje: string;
   ultimo_origen: 'cliente' | 'bot' | 'operador';
   ultimo_en: string;
+  ultimo_cliente_en: string | null;
   modo_humano: boolean;
 }
 
@@ -41,9 +43,12 @@ export function useConversaciones() {
         return [
           {
             telefono: m.telefono,
+            nombre: actual?.nombre ?? null,
             ultimo_mensaje: m.texto,
             ultimo_origen: m.origen,
             ultimo_en: m.creado_en,
+            // Solo un mensaje DEL CLIENTE reabre la ventana de 24hs de WhatsApp.
+            ultimo_cliente_en: m.origen === 'cliente' ? m.creado_en : actual?.ultimo_cliente_en ?? null,
             modo_humano: actual?.modo_humano ?? false,
           },
           ...resto,

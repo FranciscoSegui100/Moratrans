@@ -619,9 +619,16 @@ body {
   height: calc(100vh - 200px);
   min-height: 420px;
 }
-.asesoria-lista {
+.asesoria-lista-col {
   width: 300px;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.asesoria-lista {
+  flex: 1;
   overflow-y: auto;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -644,16 +651,44 @@ body {
 }
 .asesoria-item:hover { background: var(--bg-card-hover); }
 .asesoria-item.active { background: var(--accent-tint); border-color: var(--accent-tint-strong); }
-.asesoria-item-phone { font-size: 0.84rem; font-weight: 600; color: var(--text-primary); font-family: var(--font-mono); }
-.asesoria-item-msg {
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-  margin-top: 2px;
+.asesoria-item-top { display: flex; align-items: center; gap: 9px; }
+.asesoria-item-quien { flex: 1; min-width: 0; }
+.asesoria-item-nombre {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.asesoria-item-time { font-size: 0.68rem; color: var(--text-muted); margin-top: 3px; }
+.asesoria-item-tel { font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono); }
+.asesoria-item-msg {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin: 6px 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asesoria-item-time { font-size: 0.68rem; color: var(--text-muted); flex-shrink: 0; }
+.asesoria-item-pie { display: flex; align-items: center; gap: 6px; }
+
+.asesoria-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.asesoria-avatar-lg { width: 38px; height: 38px; font-size: 0.82rem; }
+
 .asesoria-panel {
   flex: 1;
   display: flex;
@@ -674,9 +709,82 @@ body {
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
 }
-.asesoria-panel-phone { font-size: 1rem; font-weight: 700; font-family: var(--font-mono); }
+.asesoria-panel-quien { display: flex; align-items: center; gap: 10px; }
+.asesoria-panel-nombre { font-size: 1rem; font-weight: 700; color: var(--text-primary); }
+.asesoria-panel-tel { font-size: 0.76rem; color: var(--text-muted); font-family: var(--font-mono); }
 .asesoria-panel .chat-asesor { flex: 1; min-height: 0; }
 .asesoria-panel .chat-asesor-hilo { flex: 1; max-height: none; }
+
+/* ===== FILTROS DE CONVERSACIONES ===== */
+.conv-filtros { display: flex; gap: 6px; }
+.conv-filtro {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  transition: all var(--transition);
+}
+.conv-filtro b { font-family: var(--font-mono); font-weight: 600; margin-left: 4px; opacity: 0.7; }
+.conv-filtro:hover { border-color: var(--border-light); }
+.conv-filtro.active { background: var(--text-primary); border-color: var(--text-primary); color: #fff; }
+.conv-filtro.active b { opacity: 0.85; }
+
+/* ===== CHIPS DE ESTADO DE CONVERSACIÓN ===== */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid;
+}
+.chip--bot { background: var(--bg-surface); border-color: var(--border-light); color: var(--text-secondary); }
+.chip--espera { background: var(--warning-bg); border-color: rgba(163,105,15,0.25); color: var(--warning); }
+.chip--cerrada { background: var(--purple-bg); border-color: rgba(90,80,121,0.25); color: var(--purple); }
+
+/* ===== VENTANA DE 24HS DE WHATSAPP ===== */
+.ventana { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.ventana-fila { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.rotulo {
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.ventana-resta { font-family: var(--font-mono); font-size: 0.76rem; font-weight: 600; color: var(--text-primary); }
+.ventana-resta.cerrada { color: var(--purple); }
+.ventana-barra { height: 4px; background: var(--bg-surface); border-radius: 2px; overflow: hidden; }
+.ventana-barra span { display: block; height: 100%; background: var(--accent); transition: width 60s linear; }
+
+/* ===== SEPARADOR DE DÍA EN EL HILO ===== */
+.chat-dia { display: flex; justify-content: center; margin: 4px 0; }
+.chat-dia span {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 2px 11px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.chat-asesor-aviso {
+  font-size: 0.76rem;
+  color: var(--purple);
+  background: var(--purple-bg);
+  border: 1px solid rgba(90,80,121,0.25);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
 
 /* ===== CHAT ASESOR ===== */
 .chat-asesor { display: flex; flex-direction: column; gap: 10px; width: 100%; }
