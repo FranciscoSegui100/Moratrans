@@ -5,7 +5,7 @@
 #  - frontend  : panel de administración            -> http://localhost:5173
 #  - adminer   : ver la base de datos               -> http://localhost:8080
 #
-#  Login del panel:  admin@empresa.com  /  Admin1234!
+#  Login del panel:  admin@empresa.com  /  Moratrans2026!
 #  Reset total (borra datos):  docker compose down -v && docker compose up -d --build
 # ============================================================
 services:
@@ -37,18 +37,28 @@ services:
       NODE_ENV: production
       CORS_ORIGIN: http://localhost:5173
       DATABASE_URL: ${DATABASE_URL}
+      # Estos valores son SOLO para levantar el stack local con un comando.
+      # NUNCA los reutilices tal cual en Railway/producción — es exactamente
+      # lo que pasó antes (la clave de cifrado y la de sync de acá terminaron
+      # siendo también las de producción, porque alguien las copió de este
+      # archivo). En producción, generá valores propios y random para cada una.
       JWT_SECRET: cambia-esto-por-un-secreto-largo-y-aleatorio-1234567890
       JWT_ACCESS_EXPIRES: 15m
       REFRESH_TTL_DIAS: 30
       REFRESH_TTL_RECORDAR_DIAS: 90
       SYNC_API_KEY: clave-larga-para-el-endpoint-de-replicacion-000
-      MEDIA_DIR: ./storage
       # Email transaccional (Resend): cargado desde el .env de la raíz (gitignored).
       RESEND_API_KEY: ${RESEND_API_KEY}
       EMAIL_FROM: Moratrans <onboarding@resend.dev>
       APP_URL: http://localhost:5173
-      # Cifrado en reposo (cambiar en producción)
-      ENCRYPTION_KEY: c76d0232d1933d7a830df01c26c33ccc675d2c23dce5cb9e8b9cd08295c051c1
+      # Comprobantes/facturas/tickets (Supabase Storage): cargado desde el .env
+      # de la raíz (gitignored) — necesita un bucket real, no hay mock local.
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_STORAGE_BUCKET: ${SUPABASE_STORAGE_BUCKET}
+      # Cifrado en reposo: clave de uso EXCLUSIVAMENTE local (distinta de la de
+      # producción a propósito).
+      ENCRYPTION_KEY: 8a65aa9783f651269337381d166a25c387bed080866a55be29db09a782db4fbf
       # WhatsApp: credenciales reales, cargadas desde el .env de la raíz (gitignored).
       # docker compose lee automáticamente ./.env para resolver estas ${VAR}.
       WA_GRAPH_VERSION: v21.0
