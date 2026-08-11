@@ -1,7 +1,5 @@
 import PDFDocument from 'pdfkit';
-import fs from 'fs';
-import path from 'path';
-import { env } from '../config/env';
+import { subirArchivo } from './storage.service';
 import { uploadMedia, sendDocument } from '../modules/whatsapp/graphApi';
 
 export interface DatosTicket {
@@ -14,16 +12,14 @@ export interface DatosTicket {
   fecha: Date;
 }
 
-/** Genera un PDF de ticket y devuelve la ruta local. */
-export function generarTicketPDF(d: DatosTicket): Promise<string> {
+/** Genera el PDF del ticket en memoria y devuelve el buffer. */
+function generarTicketPDF(d: DatosTicket): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const dir = path.resolve(env.MEDIA_DIR, 'tickets');
-    fs.mkdirSync(dir, { recursive: true });
-    const filePath = path.join(dir, `ticket_${d.ticketId}.pdf`);
-
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
-    const stream = fs.createWriteStream(filePath);
-    doc.pipe(stream);
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
 
     doc.fontSize(20).text('Ticket de Reserva Logística', { align: 'center' });
     doc.moveDown();
@@ -50,20 +46,19 @@ export function generarTicketPDF(d: DatosTicket): Promise<string> {
     );
 
     doc.end();
-    stream.on('finish', () => resolve(filePath));
-    stream.on('error', reject);
   });
 }
 
-/** Genera el ticket, lo sube a /media y lo envía al cliente por WhatsApp. */
-export async function enviarTicketPorWhatsApp(d: DatosTicket): Promise<string> {
-  const filePath = await generarTicketPDF(d);
-  const mediaId = await uploadMedia(filePath, 'application/pdf');
+/** Genera el ticket, lo guarda en Supabase Storage y lo envía al cliente por WhatsApp. */
+export async function enviarTicketPorWhatsApp(d: DatosTicket): Promise<void> {
+  const buffer = await generarTicketPDF(d);
+  const filename = `ticket_${d.ticketId}.pdf`;
+  await subirArchivo(buffer, `tickets/${filename}`, 'application/pdf');
+  const mediaId = await uploadMedia(buffer, 'application/pdf', filename);
   await sendDocument(
     d.clienteTelefono,
     mediaId,
-    `ticket_${d.ticketId}.pdf`,
+    filename,
     `✅ ¡Pago validado! Tu contenedor asignado es ${d.contenedor}.`,
   );
-  return filePath;
 }

@@ -1,12 +1,10 @@
-import fs from 'fs';
-import path from 'path';
 import { query } from '../../../config/db';
-import { env } from '../../../config/env';
 import { sendText, sendButtons } from '../graphApi';
 import { downloadMedia } from '../graphApi';
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta } from '../../../config/socket';
 import { encrypt } from '../../../services/crypto.service';
+import { subirArchivo } from '../../../services/storage.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -44,14 +42,13 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   }
 
   try {
-    // 1) Descargar el media desde la Graph API
+    // 1) Descargar el media desde la Graph API y guardarlo en Supabase Storage
+    // (no en disco: el filesystem de Railway es efímero y se pierde en cada redeploy).
     const { buffer, mime } = await downloadMedia(m.mediaId!);
     const ext = mime.includes('pdf') ? 'pdf' : mime.split('/')[1] || 'jpg';
-    const dir = path.resolve(env.MEDIA_DIR, 'comprobantes');
-    fs.mkdirSync(dir, { recursive: true });
     const filename = `${to}_${Date.now()}.${ext}`;
-    const filePath = path.join(dir, filename);
-    fs.writeFileSync(filePath, buffer);
+    const rutaStorage = `comprobantes/${filename}`;
+    await subirArchivo(buffer, rutaStorage, mime);
 
     // 2) Vincular al último pedido cotizado/confirmado del cliente (si existe)
     const pedido = await query<{ id: string; zona: string; precio: string; moneda: string | null }>(
@@ -65,7 +62,7 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
 
     // 3) Registrar el pago como PENDIENTE (no se crea ticket).
     //    La ruta del comprobante se guarda CIFRADA en reposo.
-    const rutaCifrada = encrypt(`/storage/comprobantes/${filename}`);
+    const rutaCifrada = encrypt(rutaStorage);
     const [pago] = await query<{ id: string }>(
       `INSERT INTO pagos (cliente_telefono, pedido_id, url_comprobante, media_id, estado)
        VALUES ($1,$2,$3,$4,'pendiente')

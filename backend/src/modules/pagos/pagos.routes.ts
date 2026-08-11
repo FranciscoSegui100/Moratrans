@@ -1,12 +1,11 @@
 import express, { Router, Request, Response } from 'express';
-import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
 import { query } from '../../config/db';
-import { env } from '../../config/env';
 import { requireAuth, requireRol, puedeVerComprobante } from '../../middleware/rbac';
 import { encrypt, decrypt } from '../../services/crypto.service';
 import { enviarTicketPorWhatsApp } from '../../services/pdf.service';
+import { subirArchivo, descargarArchivo } from '../../services/storage.service';
 import { sendText, sendButtons, uploadMedia, sendDocument, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
@@ -14,6 +13,15 @@ import { emitAlerta, emitAlertaActualizada } from '../../config/socket';
 
 export const pagosRouter = Router();
 pagosRouter.use(requireAuth);
+
+/** Content-Type a partir de la extensión guardada — comprobantes/facturas solo son imagen o PDF. */
+function mimeDeExtension(ext: string): string {
+  const e = ext.toLowerCase();
+  if (e === '.pdf') return 'application/pdf';
+  if (e === '.png') return 'image/png';
+  if (e === '.jpg' || e === '.jpeg') return 'image/jpeg';
+  return 'application/octet-stream';
+}
 
 /** GET /api/pagos?estado=pendiente — lista de pagos (comprobante enmascarado por rol). */
 pagosRouter.get('/', async (req: Request, res: Response) => {
@@ -51,10 +59,14 @@ pagosRouter.get('/:id/comprobante', requireRol('admin', 'finanzas'), async (req:
 
   // basename() evita path traversal aunque el valor descifrado sea de confianza (defensa en profundidad).
   const filename = path.basename(decrypt(pago.url_comprobante));
-  const filePath = path.resolve(env.MEDIA_DIR, 'comprobantes', filename);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Archivo no encontrado en el servidor' });
-
-  res.sendFile(filePath);
+  try {
+    const buffer = await descargarArchivo(`comprobantes/${filename}`);
+    res.setHeader('Content-Type', mimeDeExtension(path.extname(filename)));
+    res.send(buffer);
+  } catch (e) {
+    console.error('Error descargando comprobante de Supabase Storage:', e);
+    res.status(404).json({ error: 'Archivo no encontrado en el storage' });
+  }
 });
 
 const validarSchema = z.object({
@@ -274,15 +286,13 @@ pagosRouter.post(
           : null;
     if (!ext) return res.status(400).json({ error: 'Tipo de archivo no permitido (solo PDF, JPG o PNG)' });
 
-    const dir = path.resolve(env.MEDIA_DIR, 'facturas');
-    fs.mkdirSync(dir, { recursive: true });
     const filename = `${req.params.id}_${Date.now()}${ext}`;
-    const filePath = path.join(dir, filename);
-    fs.writeFileSync(filePath, buffer);
+    const rutaStorage = `facturas/${filename}`;
+    await subirArchivo(buffer, rutaStorage, contentType);
 
     await query('UPDATE pagos SET factura_url = $2 WHERE id = $1', [
       req.params.id,
-      encrypt(`/storage/facturas/${filename}`),
+      encrypt(rutaStorage),
     ]);
     await query(
       `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'factura_solicitada' AND referencia_id = $1`,
@@ -291,7 +301,7 @@ pagosRouter.post(
     emitAlertaActualizada({ tipo: 'factura_solicitada', referencia_id: req.params.id, estado: 'resuelta' });
 
     try {
-      const mediaId = await uploadMedia(filePath, contentType);
+      const mediaId = await uploadMedia(buffer, contentType, `factura${ext}`);
       await sendDocument(pago.cliente_telefono, mediaId, `factura${ext}`, '🧾 ¡Acá tenés tu factura!');
     } catch (e) {
       const motivo = motivoErrorWa(e);

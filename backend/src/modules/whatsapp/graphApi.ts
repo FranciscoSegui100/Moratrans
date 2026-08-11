@@ -1,6 +1,5 @@
 import axios from 'axios';
 import crypto from 'crypto';
-import fs from 'fs';
 import FormData from 'form-data';
 import { env, isProd } from '../../config/env';
 import { normalizarDestinoWhatsApp } from '../../services/telefono.service';
@@ -203,11 +202,11 @@ export async function downloadMedia(mediaId: string): Promise<{ buffer: Buffer; 
   return { buffer: Buffer.from(bin.data), mime };
 }
 
-/** Sube un archivo local al endpoint /media y devuelve el media_id. */
-export async function uploadMedia(filePath: string, mime: string): Promise<string> {
+/** Sube un archivo (en memoria) al endpoint /media y devuelve el media_id. */
+export async function uploadMedia(buffer: Buffer, mime: string, filename: string): Promise<string> {
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
-  form.append('file', fs.createReadStream(filePath), { contentType: mime });
+  form.append('file', buffer, { filename, contentType: mime });
   const res = await http.post(`/${PHONE}/media`, form, { headers: form.getHeaders() });
   return res.data.id as string;
 }
