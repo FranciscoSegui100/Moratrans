@@ -72,7 +72,7 @@ async function emitirSesion(res: Response, req: Request, user: UsuarioFila, reco
   const { refreshToken, dias } = await crearSesion({ usuarioId: user.id, req, recordar, reemplazaA });
   setAccessCookie(res, accessToken);
   setRefreshCookie(res, refreshToken, dias);
-  setCsrfCookie(res);
+  setCsrfCookie(res, dias * 24 * 60 * 60 * 1000);
   await query('UPDATE usuarios SET ultima_conexion = now() WHERE id = $1', [user.id]);
 }
 
