@@ -24,8 +24,8 @@ contenedoresRouter.get('/', async (req: Request, res: Response) => {
               ELSE c.actualizado_por
             END AS actualizado_por
        FROM contenedores c
-       LEFT JOIN choferes ch ON c.actualizado_por LIKE 'chofer:%' AND ch.id = substring(c.actualizado_por FROM 8)::uuid
-       LEFT JOIN usuarios u  ON c.actualizado_por LIKE 'operador:%' AND u.id = substring(c.actualizado_por FROM 10)::uuid
+       LEFT JOIN choferes ch ON c.actualizado_por LIKE 'chofer:%' AND ch.id::text = substring(c.actualizado_por FROM 8)
+       LEFT JOIN usuarios u  ON c.actualizado_por LIKE 'operador:%' AND u.id::text = substring(c.actualizado_por FROM 10)
       ORDER BY c.actualizado_en DESC`,
   );
   res.json(rows);
