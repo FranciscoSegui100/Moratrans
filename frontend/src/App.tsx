@@ -13,7 +13,6 @@ import { Alertas } from './pages/Alertas';
 import { Conversaciones } from './pages/Conversaciones';
 import { Choferes } from './pages/Choferes';
 import { Viajes } from './pages/Viajes';
-import { Reportes } from './pages/Reportes';
 import { Contenedores } from './pages/Contenedores';
 import { Tarifas } from './pages/Tarifas';
 import { Usuarios } from './pages/Usuarios';
@@ -71,7 +70,6 @@ export default function App() {
                         <Route path="/usuarios"      element={<Usuarios />} />
                         <Route path="/seguridad"     element={<Seguridad />} />
                         <Route path="/auditoria"     element={<Auditoria />} />
-                        <Route path="/reportes"      element={<Reportes />} />
                       </Routes>
                     </Layout>
                   </ProtectedRoute>

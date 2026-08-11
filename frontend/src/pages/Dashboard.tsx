@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, FileOutput } from 'lucide-react';
+import { Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users } from 'lucide-react';
 import { api } from '../api/client';
 
 interface Kpis {
@@ -104,7 +104,6 @@ export function Dashboard() {
               { href: '/viajes',      icon: Truck,      label: 'Programar viaje' },
               { href: '/contenedores',icon: Package,    label: 'Gestionar contenedores' },
               { href: '/choferes',    icon: Users,      label: 'Alta de chofer' },
-              { href: '/reportes',    icon: FileOutput, label: 'Exportar reportes' },
             ].map((item) => {
               const Icon = item.icon;
               return (
