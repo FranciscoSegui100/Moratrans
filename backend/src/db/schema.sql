@@ -397,4 +397,29 @@ CREATE TABLE tokens_accion (
 );
 CREATE INDEX idx_tokens_accion_usuario ON tokens_accion(usuario_id);
 
+-- ---------------------------------------------------------------------
+-- 11. ROW LEVEL SECURITY
+-- El backend accede con conexión directa (pg.Pool), no vía la API
+-- PostgREST de Supabase: no hacen falta policies, solo bloquear el
+-- acceso público (roles anon/authenticated) por defecto.
+-- ---------------------------------------------------------------------
+ALTER TABLE usuarios               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE clientes               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE choferes               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tarifas_departamento   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contenedores           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE historial_contenedores ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pedidos                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pagos                  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tickets                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE alertas                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sesiones_chat          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mensajes_chat          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE viajes                 ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mensajes_procesados    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sesiones               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dispositivos_conocidos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auth_eventos           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tokens_accion          ENABLE ROW LEVEL SECURITY;
+
 COMMIT;
