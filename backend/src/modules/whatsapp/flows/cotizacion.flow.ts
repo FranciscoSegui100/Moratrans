@@ -74,7 +74,9 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
     return;
   }
 
-  // Paso 3: recibió la ubicación (GPS de WhatsApp o dirección escrita) -> se cotiza y cierra.
+  // Paso 3: recibió la ubicación (GPS de WhatsApp o dirección escrita) -> antes
+  // de guardarla, se la mostramos de vuelta y pedimos que la confirme (evita
+  // guardar un pin mal tirado o una dirección mal tipeada sin que nadie lo note).
   if (sesion.paso === 'ubicacion') {
     let destinoLat: number | null = null;
     let destinoLng: number | null = null;
@@ -95,7 +97,48 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       return;
     }
 
+    const resumenUbicacion =
+      destinoLat != null && destinoLng != null
+        ? `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`
+        : (destinoDireccion as string);
+
+    await sendButtons(
+      to,
+      `📍 Confirmá la dirección de entrega:\n\n${resumenUbicacion}\n\n¿Es correcta?`,
+      [
+        { id: 'ubicacion_si', title: '✅ Sí, es correcta' },
+        { id: 'ubicacion_no', title: '↩️ Volver a enviar' },
+      ],
+    );
+    await setSesion({
+      ...sesion,
+      paso: 'confirmar_ubicacion',
+      contexto: { ...sesion.contexto, destinoLat, destinoLng, destinoDireccion },
+    });
+    return;
+  }
+
+  // Paso 4: confirmó (o no) la ubicación -> recién ahí se cotiza y se cierra.
+  if (sesion.paso === 'confirmar_ubicacion') {
     const departamento = sesion.contexto.departamento as string;
+
+    if (m.seleccionId === 'ubicacion_no') {
+      await sendLocationRequest(
+        to,
+        '📍 Dale, mandámela de nuevo: tocá "Enviar ubicación" o escribí la dirección.',
+      );
+      await setSesion({ ...sesion, paso: 'ubicacion', contexto: { departamento } });
+      return;
+    }
+    if (m.seleccionId !== 'ubicacion_si') {
+      await sendText(to, 'Elegí "✅ Sí, es correcta" o "↩️ Volver a enviar".');
+      return;
+    }
+
+    const destinoLat = sesion.contexto.destinoLat as number | null;
+    const destinoLng = sesion.contexto.destinoLng as number | null;
+    const destinoDireccion = sesion.contexto.destinoDireccion as string | null;
+
     const tarifa = await query<{ precio: string; moneda: string }>(
       'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
       [departamento],

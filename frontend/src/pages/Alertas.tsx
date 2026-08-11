@@ -10,6 +10,7 @@ import { api } from '../api/client';
 import { tipoLabel } from '../lib/alertLabels';
 
 interface Chofer { id: string; nombre: string; activo: boolean; }
+interface Contenedor { numero: string; estado: string; }
 
 export function Alertas() {
   const { alertas: todasLasAlertas, resolver, validarPago, rechazarPago, confirmarRetiro, enviarFactura } = useAlertas();
@@ -23,6 +24,11 @@ export function Alertas() {
   const { data: choferes = [] } = useQuery({
     queryKey: ['choferes', 'activos'],
     queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data.filter((c) => c.activo)),
+  });
+
+  const { data: contenedoresDisponibles = [] } = useQuery({
+    queryKey: ['contenedores', 'disponibles'],
+    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data.filter((c) => c.estado === 'disponible')),
   });
 
   async function onValidar(pagoId: string, payload: ValidarPagoPayload) {
@@ -220,6 +226,7 @@ export function Alertas() {
                 {expandida && (
                   <ValidarPagoForm
                     choferes={choferes}
+                    contenedoresDisponibles={contenedoresDisponibles}
                     procesando={procesando === a.referencia_id}
                     onConfirm={(payload) => onValidar(a.referencia_id, payload)}
                     onCancel={() => setValidandoId(null)}

@@ -3,15 +3,14 @@ import { query } from '../config/db';
 
 /**
  * Retención de tablas que solo crecen (auditoría / dedup de webhooks) — sin
- * esto, crecen para siempre. Valores conservadores: no hay razón operativa
- * para revisar historial de contenedores de hace más de 6 meses, ni eventos
- * de auth de más de un año; el dedup de mensajes de WhatsApp no sirve pasado
- * el mes (schema.sql ya lo sugería, nunca se había implementado).
+ * esto, crecen para siempre. auth_eventos se "reinicia" mensualmente (solo
+ * queda el último mes); el dedup de mensajes de WhatsApp tampoco sirve
+ * pasado el mes (schema.sql ya lo sugería, nunca se había implementado).
  */
 const RETENCION_DIAS: Record<string, number> = {
   mensajes_procesados: 30,
   historial_contenedores: 180,
-  auth_eventos: 365,
+  auth_eventos: 30,
 };
 
 async function limpiarTablasViejas(): Promise<void> {
@@ -26,10 +25,10 @@ async function limpiarTablasViejas(): Promise<void> {
   }
 }
 
-/** Corre una vez por día (madrugada). */
+/** Corre una vez por mes (madrugada del día 1). */
 export function iniciarCronLimpieza(): void {
-  cron.schedule('0 4 * * *', () => {
+  cron.schedule('0 4 1 * *', () => {
     limpiarTablasViejas().catch((e) => console.error('[limpieza] error:', e));
   });
-  console.log('🧹 Cron de limpieza activo (diario 04:00)');
+  console.log('🧹 Cron de limpieza activo (mensual, día 1 04:00)');
 }

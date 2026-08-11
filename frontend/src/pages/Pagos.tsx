@@ -21,6 +21,7 @@ interface Pago {
 }
 
 interface Chofer { id: string; nombre: string; activo: boolean; }
+interface Contenedor { numero: string; estado: string; }
 
 export function Pagos() {
   const { show } = useToast();
@@ -35,6 +36,10 @@ export function Pagos() {
   const { data: choferes = [] } = useQuery({
     queryKey: ['choferes', 'activos'],
     queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data.filter((c) => c.activo)),
+  });
+  const { data: contenedoresDisponibles = [] } = useQuery({
+    queryKey: ['contenedores', 'disponibles'],
+    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data.filter((c) => c.estado === 'disponible')),
   });
 
   const cargar = () => queryClient.invalidateQueries({ queryKey: ['pagos', 'pendiente'] });
@@ -167,6 +172,7 @@ export function Pagos() {
               {validandoId === p.id && (
                 <ValidarPagoForm
                   choferes={choferes}
+                  contenedoresDisponibles={contenedoresDisponibles}
                   procesando={procesando === p.id}
                   onConfirm={(payload) => validar(p.id, payload)}
                   onCancel={() => setValidandoId(null)}

@@ -114,3 +114,13 @@ usuariosRouter.patch('/:id', async (req: Request, res: Response) => {
   if (revocaSesiones) await revocarTodasLasSesiones(row.id);
   res.json(row);
 });
+
+/** DELETE /api/usuarios/:id — elimina un usuario del panel (solo admin). */
+usuariosRouter.delete('/:id', async (req: Request, res: Response) => {
+  if (req.params.id === req.user!.id) {
+    return res.status(400).json({ error: 'No podés eliminar tu propia cuenta' });
+  }
+  const [row] = await query('DELETE FROM usuarios WHERE id = $1 RETURNING id', [req.params.id]);
+  if (!row) return res.status(404).json({ error: 'Usuario inexistente' });
+  res.json({ ok: true });
+});

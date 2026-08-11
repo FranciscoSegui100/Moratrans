@@ -8,10 +8,25 @@ import { emitAlertaActualizada, emitRecursoActualizado } from '../../config/sock
 export const contenedoresRouter = Router();
 contenedoresRouter.use(requireAuth);
 
-/** GET /api/contenedores — Listar todos los contenedores. */
+/**
+ * GET /api/contenedores — Listar todos los contenedores.
+ * `actualizado_por` se guarda como "chofer:<uuid>"/"operador:<uuid>" (para
+ * poder resolverlo bien acá) — sin este JOIN se mostraba el uuid crudo en el
+ * panel y parecía un valor cifrado/ilegible.
+ */
 contenedoresRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query(
-    'SELECT numero, estado, cliente_id, vence_en, actualizado_por, actualizado_en, creado_en FROM contenedores ORDER BY actualizado_en DESC'
+    `SELECT c.numero, c.estado, c.cliente_id, c.vence_en, c.actualizado_en, c.creado_en,
+            CASE
+              WHEN c.actualizado_por LIKE 'chofer:%'   THEN COALESCE(ch.nombre, 'Chofer eliminado')
+              WHEN c.actualizado_por LIKE 'operador:%' THEN COALESCE(u.nombre, 'Usuario eliminado')
+              WHEN c.actualizado_por = 'validacion_pago' THEN 'Sistema (validación de pago)'
+              ELSE c.actualizado_por
+            END AS actualizado_por
+       FROM contenedores c
+       LEFT JOIN choferes ch ON c.actualizado_por LIKE 'chofer:%' AND ch.id = substring(c.actualizado_por FROM 8)::uuid
+       LEFT JOIN usuarios u  ON c.actualizado_por LIKE 'operador:%' AND u.id = substring(c.actualizado_por FROM 10)::uuid
+      ORDER BY c.actualizado_en DESC`,
   );
   res.json(rows);
 });

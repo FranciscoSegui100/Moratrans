@@ -73,6 +73,7 @@ const validarSchema = z.object({
   diasDemora: z.coerce.number().int().min(0).optional(),
   choferId: z.string().uuid().optional(),
   venceEn: z.string().optional(), // fecha (YYYY-MM-DD) en la que vence/hay que retirar el contenedor
+  contenedorNumero: z.string().optional(), // si no se manda, fn_validar_pago toma el primero disponible
 });
 
 /**
@@ -130,12 +131,12 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
   const pagoId = req.params.id;
   const parsed = validarSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const { diasDemora, choferId, venceEn } = parsed.data;
+  const { diasDemora, choferId, venceEn, contenedorNumero } = parsed.data;
 
   try {
     const [result] = await query<{ ticket_id: string; contenedor: string }>(
-      'SELECT * FROM fn_validar_pago($1, $2)',
-      [pagoId, req.user!.id],
+      'SELECT * FROM fn_validar_pago($1, $2, $3)',
+      [pagoId, req.user!.id, contenedorNumero?.trim().toUpperCase() || null],
     );
 
     // Datos para el ticket + para avisarle al chofer adónde tiene que llevar el contenedor.
