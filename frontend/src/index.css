@@ -806,9 +806,22 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border);
 }
-.chat-burbuja-cliente { align-self: flex-start; }
+/* Cliente a la derecha; bot y operador (nuestro lado) a la izquierda, para
+   que se note de un vistazo quién dijo qué. */
+.chat-burbuja-cliente { align-self: flex-end; background: var(--accent-tint); border-color: transparent; }
 .chat-burbuja-bot { align-self: flex-start; background: var(--neutral-bg); border-color: transparent; }
-.chat-burbuja-operador { align-self: flex-end; background: var(--accent-tint); border-color: transparent; }
+.chat-burbuja-operador { align-self: flex-start; background: var(--success-bg); border-color: transparent; }
+
+.chat-opciones { display: flex; flex-direction: column; border-top: 1px solid var(--border-light); margin-top: 8px; }
+.chat-opcion {
+  padding: 6px 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-align: center;
+  border-bottom: 1px solid var(--border-light);
+}
+.chat-opcion:last-child { border-bottom: none; }
 .chat-burbuja-autor {
   font-size: 0.63rem;
   text-transform: uppercase;

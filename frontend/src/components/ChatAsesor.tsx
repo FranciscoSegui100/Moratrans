@@ -28,6 +28,17 @@ function etiquetaDia(iso: string): string {
   return fecha.toLocaleDateString('es-AR', { day: 'numeric', month: 'long' });
 }
 
+// sendList/sendButtons (graphApi.ts) loguean el mensaje interactivo como
+// "<cuerpo>\n(opciones: A, B, C)" — esto separa ambas partes para poder
+// mostrar las opciones como en el mensaje real de WhatsApp, no como texto plano.
+const OPCIONES_RE = /\n\(opciones: (.+)\)$/;
+
+function parsearOpciones(texto: string): { cuerpo: string; opciones: string[] | null } {
+  const m = texto.match(OPCIONES_RE);
+  if (!m) return { cuerpo: texto, opciones: null };
+  return { cuerpo: texto.slice(0, m.index), opciones: m[1].split(', ') };
+}
+
 /** Agrupa los mensajes por día para intercalar separadores tipo WhatsApp. */
 function agruparPorDia(mensajes: MensajeChat[]): { etiqueta: string; mensajes: MensajeChat[] }[] {
   const grupos: { etiqueta: string; mensajes: MensajeChat[] }[] = [];
@@ -104,15 +115,25 @@ export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ven
         {agruparPorDia(mensajes).map((grupo) => (
           <div key={grupo.etiqueta + grupo.mensajes[0].id}>
             <div className="chat-dia"><span>{grupo.etiqueta}</span></div>
-            {grupo.mensajes.map((m) => (
-              <div key={m.id} className={`chat-burbuja chat-burbuja-${m.origen}`}>
-                <div className="chat-burbuja-autor">{origenLabel[m.origen]}</div>
-                <div className="chat-burbuja-texto">{m.texto}</div>
-                <div className="chat-burbuja-hora">
-                  {new Date(m.creado_en).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+            {grupo.mensajes.map((m) => {
+              const { cuerpo, opciones } = parsearOpciones(m.texto);
+              return (
+                <div key={m.id} className={`chat-burbuja chat-burbuja-${m.origen}`}>
+                  <div className="chat-burbuja-autor">{origenLabel[m.origen]}</div>
+                  <div className="chat-burbuja-texto">{cuerpo}</div>
+                  {opciones && (
+                    <div className="chat-opciones">
+                      {opciones.map((op) => (
+                        <div key={op} className="chat-opcion">{op}</div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="chat-burbuja-hora">
+                    {new Date(m.creado_en).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ))}
         <div ref={finRef} />
