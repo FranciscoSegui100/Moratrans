@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
-import { emitAlertaActualizada } from '../../config/socket';
+import { emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 
 export const contenedoresRouter = Router();
 contenedoresRouter.use(requireAuth);
@@ -97,6 +97,11 @@ contenedoresRouter.post(
       [numero],
     );
     emitAlertaActualizada({ tipo: 'confirmar_retiro', referencia_id: numero, estado: 'resuelta' });
+    // Redundante con broadcastCambios (que ya debería cubrir esta ruta), pero
+    // explícito acá para no depender de esa cobertura genérica: la pestaña
+    // Contenedores tiene que verse "disponible" sin que nadie tenga que
+    // refrescar la página.
+    emitRecursoActualizado('contenedores');
 
     if (viaje.chofer_id) {
       const [chofer] = await query<{ telefono: string }>('SELECT telefono FROM choferes WHERE id = $1', [viaje.chofer_id]);
