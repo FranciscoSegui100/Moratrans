@@ -12,22 +12,40 @@ interface Viaje {
   estado: string;
   zona: string | null;
   contenedor_numero: string | null;
+  destino_direccion: string | null;
   cliente_telefono: string | null;
   chofer_nombre: string | null;
   notas: string | null;
 }
+interface Contenedor { numero: string; estado: string; }
+interface Tarifa { departamento: string; activo: boolean; }
+interface Chofer { id: string; nombre: string; activo: boolean; }
 
 const estados = ['programado', 'en_curso', 'completado', 'cancelado'];
+
+const formInicial = { tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', chofer_id: '', destino_direccion: '' };
 
 export function Viajes() {
   const { show } = useToast();
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '' });
+  const [form, setForm] = useState(formInicial);
   const [loading, setLoading] = useState(false);
 
   const { data: viajes = [] } = useQuery({
     queryKey: ['viajes'],
     queryFn: () => api.get<Viaje[]>('/api/viajes').then((r) => r.data),
+  });
+  const { data: contenedoresDisponibles = [] } = useQuery({
+    queryKey: ['contenedores', 'disponibles'],
+    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data.filter((c) => c.estado === 'disponible')),
+  });
+  const { data: zonas = [] } = useQuery({
+    queryKey: ['tarifas', 'activas'],
+    queryFn: () => api.get<Tarifa[]>('/api/tarifas').then((r) => r.data.filter((t) => t.activo)),
+  });
+  const { data: choferes = [] } = useQuery({
+    queryKey: ['choferes', 'activos'],
+    queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data.filter((c) => c.activo)),
   });
   const cargar = () => queryClient.invalidateQueries({ queryKey: ['viajes'] });
 
@@ -36,10 +54,16 @@ export function Viajes() {
     if (!form.fecha) return;
     setLoading(true);
     try {
-      await api.post('/api/viajes', form);
-      setForm({ tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '' });
+      await api.post('/api/viajes', {
+        ...form,
+        chofer_id: form.chofer_id || undefined,
+        contenedor_numero: form.contenedor_numero || undefined,
+        zona: form.zona || undefined,
+        destino_direccion: form.destino_direccion || undefined,
+      });
+      setForm(formInicial);
       cargar();
-      show('success', 'Viaje programado correctamente');
+      show('success', 'Viaje programado correctamente', form.chofer_id ? 'Se avisó al chofer por WhatsApp' : undefined);
     } catch (err: any) {
       show('error', 'Error al programar', err.response?.data?.error || 'Error desconocido');
     } finally {
@@ -91,11 +115,33 @@ export function Viajes() {
             </div>
             <div className="form-group">
               <label className="form-label">Zona</label>
-              <input className="form-input" placeholder="Ej. Montevideo" value={form.zona} onChange={(e) => setForm({ ...form, zona: e.target.value })} />
+              <select className="form-select" value={form.zona} onChange={(e) => setForm({ ...form, zona: e.target.value })}>
+                <option value="">— Elegir zona —</option>
+                {zonas.map((z) => <option key={z.departamento} value={z.departamento}>{z.departamento}</option>)}
+              </select>
             </div>
             <div className="form-group">
               <label className="form-label">Contenedor</label>
-              <input className="form-input" placeholder="Ej. MSKU1000001" value={form.contenedor_numero} onChange={(e) => setForm({ ...form, contenedor_numero: e.target.value })} />
+              <select className="form-select" value={form.contenedor_numero} onChange={(e) => setForm({ ...form, contenedor_numero: e.target.value })}>
+                <option value="">— Elegir contenedor disponible —</option>
+                {contenedoresDisponibles.map((c) => <option key={c.numero} value={c.numero}>{c.numero}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Chofer</label>
+              <select className="form-select" value={form.chofer_id} onChange={(e) => setForm({ ...form, chofer_id: e.target.value })}>
+                <option value="">— Sin asignar —</option>
+                {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Dirección de destino</label>
+              <input
+                className="form-input"
+                placeholder="Ej. Av. San Martín 1234, Godoy Cruz"
+                value={form.destino_direccion}
+                onChange={(e) => setForm({ ...form, destino_direccion: e.target.value })}
+              />
             </div>
             <button type="submit" className="btn btn-primary" disabled={loading}>
               {loading ? 'Guardando...' : 'Programar viaje'}

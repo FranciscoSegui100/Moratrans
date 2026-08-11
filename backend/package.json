@@ -8,13 +8,17 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/db/migrations','dist/db/migrations',{recursive:true})\"",
     "start": "node dist/server.js",
     "db:schema": "psql \"$DATABASE_URL\" -f src/db/schema.sql",
     "db:seed": "psql \"$DATABASE_URL\" -f src/db/seed.sql",
-    "db:seed-choferes": "tsx src/db/seedChoferes.ts"
+    "db:seed-choferes": "tsx src/db/seedChoferes.ts",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "db:rotar-clave": "tsx src/db/rotarClaveCifrado.ts",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie": "^0.6.0",
     "@types/cookie-parser": "^1.4.10",
@@ -50,6 +54,7 @@
     "zxcvbn": "^4.4.2"
   },
   "devDependencies": {
-    "tsx": "^4.19.1"
+    "tsx": "^4.19.1",
+    "vitest": "^4.1.10"
   }
 }

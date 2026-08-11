@@ -51,7 +51,8 @@ CREATE TYPE tipo_alerta AS ENUM (
   'stock_bajo',
   'solicita_asesor',
   'confirmar_retiro',
-  'factura_solicitada'
+  'factura_solicitada',
+  'envio_fallido'
 );
 
 -- Roles del panel (RBAC). Ver middleware/rbac.ts
@@ -245,6 +246,7 @@ CREATE TABLE viajes (
   contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
   cliente_telefono  TEXT,
   zona              TEXT,
+  destino_direccion TEXT,
   estado            estado_viaje NOT NULL DEFAULT 'programado',
   notas             TEXT,
   creado_en         TIMESTAMPTZ  NOT NULL DEFAULT now(),

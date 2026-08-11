@@ -9,4 +9,5 @@ export const tipoLabel: Record<string, string> = {
   solicita_asesor:            'Pide hablar con un asesor',
   confirmar_retiro:           'Confirmar llegada de contenedor',
   factura_solicitada:         'Pide factura',
+  envio_fallido:              'No se pudo enviar un WhatsApp',
 };

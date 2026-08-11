@@ -1,7 +1,7 @@
 import { query } from '../../../config/db';
 import { sendText, sendList, sendButtons } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
-import { emitAlerta } from '../../../config/socket';
+import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { blindIndex } from '../../../services/crypto.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
@@ -116,9 +116,18 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
   // Contenedores en un estado desde el que la transición es válida.
   const origen =
     estado === 'en_camino' ? 'reservado' : estado === 'entregado' ? 'en_camino' : 'entregado';
+  // Solo contenedores con un viaje activo asignado a ESTE chofer — sin este
+  // filtro, cualquier chofer veía y podía tocar el contenedor de otro chofer
+  // si ambos tenían uno en el mismo estado a la vez.
   const conts = await query<{ numero: string }>(
-    'SELECT numero FROM contenedores WHERE estado = $1 ORDER BY actualizado_en LIMIT 10',
-    [origen],
+    `SELECT c.numero
+       FROM contenedores c
+       JOIN viajes v ON v.contenedor_numero = c.numero
+      WHERE c.estado = $1
+        AND v.chofer_id = $2
+        AND v.estado IN ('programado', 'en_curso')
+      ORDER BY c.actualizado_en LIMIT 10`,
+    [origen, choferId],
   );
   if (conts.length === 0) {
     await sendText(to, `🙁 No tengo contenedores en estado "${origen}" para pasar a "${estado.replace('_', ' ')}".`);
@@ -189,6 +198,20 @@ async function aplicarEstado(
       'INSERT INTO historial_contenedores (numero_contenedor, estado, chofer_id, nota) VALUES ($1,$2,$3,$4)',
       [numero, estado, choferId, 'registrado por chofer vía WhatsApp'],
     );
+    // El viaje de "entrega" (creado al validar el pago) quedaba en
+    // 'programado' para siempre — nada lo cerraba. Se completa acá, cuando
+    // el contenedor efectivamente llega al cliente.
+    if (estado === 'entregado') {
+      await query(
+        `UPDATE viajes SET estado = 'completado'
+          WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')`,
+        [numero, choferId],
+      );
+    }
+    // Este cambio viene del webhook de WhatsApp, no de la API del panel, así
+    // que no pasa por el middleware que avisa solo (broadcastCambios) — sin
+    // esto, la pestaña Contenedores quedaba desactualizada hasta hacer F5.
+    emitRecursoActualizado('contenedores');
     await clearSesion(to);
     await sendText(to, `✅ ¡Listo! Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*. 💪`);
   } catch (err: any) {

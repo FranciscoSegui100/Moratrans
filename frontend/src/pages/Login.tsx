@@ -171,9 +171,11 @@ export function Login() {
           </button>
         </form>
 
-        <p style={{ textAlign: 'center', marginTop: '18px', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-          Admin1234! para iniciar sesión en modo demo
-        </p>
+        {import.meta.env.DEV && (
+          <p style={{ textAlign: 'center', marginTop: '18px', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+            Moratrans2026! para iniciar sesión en modo demo
+          </p>
+        )}
       </div>
     </div>
   );

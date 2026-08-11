@@ -3,15 +3,30 @@ import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
-import { emitAlertaActualizada } from '../../config/socket';
+import { emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 
 export const contenedoresRouter = Router();
 contenedoresRouter.use(requireAuth);
 
-/** GET /api/contenedores — Listar todos los contenedores. */
+/**
+ * GET /api/contenedores — Listar todos los contenedores.
+ * `actualizado_por` se guarda como "chofer:<uuid>"/"operador:<uuid>" (para
+ * poder resolverlo bien acá) — sin este JOIN se mostraba el uuid crudo en el
+ * panel y parecía un valor cifrado/ilegible.
+ */
 contenedoresRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query(
-    'SELECT numero, estado, cliente_id, vence_en, actualizado_por, actualizado_en, creado_en FROM contenedores ORDER BY actualizado_en DESC'
+    `SELECT c.numero, c.estado, c.cliente_id, c.vence_en, c.actualizado_en, c.creado_en,
+            CASE
+              WHEN c.actualizado_por LIKE 'chofer:%'   THEN COALESCE(ch.nombre, 'Chofer eliminado')
+              WHEN c.actualizado_por LIKE 'operador:%' THEN COALESCE(u.nombre, 'Usuario eliminado')
+              WHEN c.actualizado_por = 'validacion_pago' THEN 'Sistema (validación de pago)'
+              ELSE c.actualizado_por
+            END AS actualizado_por
+       FROM contenedores c
+       LEFT JOIN choferes ch ON c.actualizado_por LIKE 'chofer:%' AND ch.id::text = substring(c.actualizado_por FROM 8)
+       LEFT JOIN usuarios u  ON c.actualizado_por LIKE 'operador:%' AND u.id::text = substring(c.actualizado_por FROM 10)
+      ORDER BY c.actualizado_en DESC`,
   );
   res.json(rows);
 });
@@ -49,8 +64,8 @@ contenedoresRouter.post('/', requireRol('admin', 'operador'), async (req: Reques
  * POST /api/contenedores/:numero/confirmar-retiro — el operador confirma
  * desde el panel que el contenedor que un chofer marcó como "retirado" por
  * WhatsApp llegó físicamente a la empresa. Recién ahí se aplica el cambio
- * de estado (antes queda pendiente, ver flows/chofer.flow.ts) y se avisa
- * al chofer.
+ * de estado (antes queda pendiente, ver flows/chofer.flow.ts), vuelve a
+ * quedar disponible para un cliente nuevo, y se avisa al chofer.
  */
 contenedoresRouter.post(
   '/:numero/confirmar-retiro',
@@ -69,9 +84,17 @@ contenedoresRouter.post(
     }
 
     try {
-      // El trigger fn_validar_transicion_contenedor exige que venga de "entregado".
+      // El trigger fn_validar_transicion_contenedor solo permite "entregado" ->
+      // "retirado" directo; de ahí sí puede pasar a "disponible" (dos updates,
+      // cada uno válido por separado para el trigger). Vacía vence_en (era la
+      // fecha límite del cliente anterior, ya no aplica) para que el cron de
+      // "contenedor por vencer" no dispare una alerta vieja por error.
       await query(
         `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
+        [numero, `operador:${req.user!.id}`],
+      );
+      await query(
+        `UPDATE contenedores SET estado = 'disponible', vence_en = NULL, cliente_id = NULL, actualizado_por = $2 WHERE numero = $1`,
         [numero, `operador:${req.user!.id}`],
       );
     } catch (e: any) {
@@ -89,6 +112,11 @@ contenedoresRouter.post(
       [numero],
     );
     emitAlertaActualizada({ tipo: 'confirmar_retiro', referencia_id: numero, estado: 'resuelta' });
+    // Redundante con broadcastCambios (que ya debería cubrir esta ruta), pero
+    // explícito acá para no depender de esa cobertura genérica: la pestaña
+    // Contenedores tiene que verse "disponible" sin que nadie tenga que
+    // refrescar la página.
+    emitRecursoActualizado('contenedores');
 
     if (viaje.chofer_id) {
       const [chofer] = await query<{ telefono: string }>('SELECT telefono FROM choferes WHERE id = $1', [viaje.chofer_id]);

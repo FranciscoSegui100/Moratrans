@@ -2,6 +2,9 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
+import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
+import { menuChofer } from '../whatsapp/flows/chofer.flow';
+import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -15,7 +18,7 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
   if (estado) { params.push(estado); conds.push(`v.estado = $${params.length}`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const rows = await query(
-    `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero,
+    `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
             v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id
        FROM viajes v LEFT JOIN choferes c ON c.id = v.chofer_id
        ${where}
@@ -32,8 +35,40 @@ const nuevoSchema = z.object({
   contenedor_numero: z.string().optional(),
   cliente_telefono: z.string().optional(),
   zona: z.string().optional(),
+  destino_direccion: z.string().optional(),
   notas: z.string().optional(),
 });
+
+/**
+ * Le avisa por WhatsApp al chofer que le acaban de programar un viaje desde
+ * el panel — aclara si es envío (llevar) o retiro (buscar) del contenedor,
+ * y la dirección de destino, si se cargó.
+ */
+async function avisarChoferViaje(
+  choferId: string,
+  tipo: 'entrega' | 'retiro',
+  contenedorNumero: string | null,
+  destinoDireccion: string | null,
+): Promise<void> {
+  const [chofer] = await query<{ telefono: string | null; nombre: string }>(
+    'SELECT telefono, nombre FROM choferes WHERE id = $1',
+    [choferId],
+  );
+  if (!chofer?.telefono) return; // chofer sin número vinculado todavía: nada que mandar
+
+  const titulo = tipo === 'entrega' ? '📦 Envío de contenedor' : '📥 Retiro de contenedor';
+  const destino = destinoDireccion
+    ? `${destinoDireccion}\nhttps://www.google.com/maps?q=${encodeURIComponent(destinoDireccion)}`
+    : 'Sin ubicación registrada, coordiná con el cliente.';
+
+  await sendText(
+    chofer.telefono,
+    `🚚 *${titulo}*\n\n` +
+      (contenedorNumero ? `Contenedor: *${contenedorNumero}*\n` : '') +
+      `📍 Ubicación:\n${destino}`,
+  );
+  await menuChofer(chofer.telefono, chofer.nombre);
+}
 
 /** POST /api/viajes — programar un viaje (admin/operador). */
 viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
@@ -42,11 +77,22 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
   const v = parsed.data;
   try {
     const [row] = await query(
-      `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, notas)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [v.tipo, v.fecha, v.chofer_id ?? null, v.contenedor_numero ?? null,
-       v.cliente_telefono ?? null, v.zona ?? null, v.notas ?? null],
+       v.cliente_telefono ?? null, v.zona ?? null, v.destino_direccion ?? null, v.notas ?? null],
     );
+
+    if (v.chofer_id) {
+      avisarChoferViaje(v.chofer_id, v.tipo, v.contenedor_numero ?? null, v.destino_direccion ?? null).catch((e) => {
+        const motivo = motivoErrorWa(e);
+        console.error('Error avisando al chofer el viaje programado:', motivo);
+        notificarEnvioFallido(row.id, `chofer del viaje ${row.id}`, 'aviso de viaje programado', motivo).catch(
+          (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+        );
+      });
+    }
+
     res.status(201).json(row);
   } catch (error: any) {
     if (error.code === '23503') { // Foreign key violation

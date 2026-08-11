@@ -1,18 +1,27 @@
 import express, { Router, Request, Response } from 'express';
-import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
 import { query } from '../../config/db';
-import { env } from '../../config/env';
 import { requireAuth, requireRol, puedeVerComprobante } from '../../middleware/rbac';
 import { encrypt, decrypt } from '../../services/crypto.service';
 import { enviarTicketPorWhatsApp } from '../../services/pdf.service';
+import { subirArchivo, descargarArchivo } from '../../services/storage.service';
 import { sendText, sendButtons, uploadMedia, sendDocument, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
+import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada } from '../../config/socket';
 
 export const pagosRouter = Router();
 pagosRouter.use(requireAuth);
+
+/** Content-Type a partir de la extensión guardada — comprobantes/facturas solo son imagen o PDF. */
+function mimeDeExtension(ext: string): string {
+  const e = ext.toLowerCase();
+  if (e === '.pdf') return 'application/pdf';
+  if (e === '.png') return 'image/png';
+  if (e === '.jpg' || e === '.jpeg') return 'image/jpeg';
+  return 'application/octet-stream';
+}
 
 /** GET /api/pagos?estado=pendiente — lista de pagos (comprobante enmascarado por rol). */
 pagosRouter.get('/', async (req: Request, res: Response) => {
@@ -50,16 +59,21 @@ pagosRouter.get('/:id/comprobante', requireRol('admin', 'finanzas'), async (req:
 
   // basename() evita path traversal aunque el valor descifrado sea de confianza (defensa en profundidad).
   const filename = path.basename(decrypt(pago.url_comprobante));
-  const filePath = path.resolve(env.MEDIA_DIR, 'comprobantes', filename);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Archivo no encontrado en el servidor' });
-
-  res.sendFile(filePath);
+  try {
+    const buffer = await descargarArchivo(`comprobantes/${filename}`);
+    res.setHeader('Content-Type', mimeDeExtension(path.extname(filename)));
+    res.send(buffer);
+  } catch (e) {
+    console.error('Error descargando comprobante de Supabase Storage:', e);
+    res.status(404).json({ error: 'Archivo no encontrado en el storage' });
+  }
 });
 
 const validarSchema = z.object({
   diasDemora: z.coerce.number().int().min(0).optional(),
   choferId: z.string().uuid().optional(),
   venceEn: z.string().optional(), // fecha (YYYY-MM-DD) en la que vence/hay que retirar el contenedor
+  contenedorNumero: z.string().optional(), // si no se manda, fn_validar_pago toma el primero disponible
 });
 
 /**
@@ -117,12 +131,12 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
   const pagoId = req.params.id;
   const parsed = validarSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const { diasDemora, choferId, venceEn } = parsed.data;
+  const { diasDemora, choferId, venceEn, contenedorNumero } = parsed.data;
 
   try {
     const [result] = await query<{ ticket_id: string; contenedor: string }>(
-      'SELECT * FROM fn_validar_pago($1, $2)',
-      [pagoId, req.user!.id],
+      'SELECT * FROM fn_validar_pago($1, $2, $3)',
+      [pagoId, req.user!.id, contenedorNumero?.trim().toUpperCase() || null],
     );
 
     // Datos para el ticket + para avisarle al chofer adónde tiene que llevar el contenedor.
@@ -156,10 +170,16 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       );
 
       // Avisamos al chofer por WhatsApp: qué contenedor, a quién y adónde. No
-      // bloquea la respuesta del panel si falla el envío.
-      avisarChoferAsignacion(choferId, result.contenedor, info).catch((e) =>
-        console.error('Error avisando al chofer la asignación:', motivoErrorWa(e)),
-      );
+      // bloquea la respuesta del panel si falla el envío, pero si falla queda
+      // una alerta en el panel — si no, el chofer nunca se entera de la
+      // entrega y nadie lo nota hasta que pregunte por qué no salió.
+      avisarChoferAsignacion(choferId, result.contenedor, info).catch((e) => {
+        const motivo = motivoErrorWa(e);
+        console.error('Error avisando al chofer la asignación:', motivo);
+        notificarEnvioFallido(result.contenedor, `chofer de ${result.contenedor}`, 'aviso de entrega asignada', motivo).catch(
+          (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+        );
+      });
     }
     if (diasDemora != null) {
       sendText(
@@ -177,7 +197,13 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       moneda: info?.moneda ?? undefined,
       clienteTelefono: info.cliente_telefono,
       fecha: new Date(),
-    }).catch((e) => console.error('Error enviando ticket:', motivoErrorWa(e)));
+    }).catch((e) => {
+      const motivo = motivoErrorWa(e);
+      console.error('Error enviando ticket:', motivo);
+      notificarEnvioFallido(result.ticket_id, info.cliente_telefono, 'envío de ticket/comprobante de entrega', motivo).catch(
+        (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+      );
+    });
 
     // fn_validar_pago ya resolvió la alerta atómicamente en SQL; acá solo se
     // avisa por socket a los demás operadores (el que hizo la acción ya
@@ -261,15 +287,13 @@ pagosRouter.post(
           : null;
     if (!ext) return res.status(400).json({ error: 'Tipo de archivo no permitido (solo PDF, JPG o PNG)' });
 
-    const dir = path.resolve(env.MEDIA_DIR, 'facturas');
-    fs.mkdirSync(dir, { recursive: true });
     const filename = `${req.params.id}_${Date.now()}${ext}`;
-    const filePath = path.join(dir, filename);
-    fs.writeFileSync(filePath, buffer);
+    const rutaStorage = `facturas/${filename}`;
+    await subirArchivo(buffer, rutaStorage, contentType);
 
     await query('UPDATE pagos SET factura_url = $2 WHERE id = $1', [
       req.params.id,
-      encrypt(`/storage/facturas/${filename}`),
+      encrypt(rutaStorage),
     ]);
     await query(
       `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'factura_solicitada' AND referencia_id = $1`,
@@ -278,10 +302,17 @@ pagosRouter.post(
     emitAlertaActualizada({ tipo: 'factura_solicitada', referencia_id: req.params.id, estado: 'resuelta' });
 
     try {
-      const mediaId = await uploadMedia(filePath, contentType);
+      const mediaId = await uploadMedia(buffer, contentType, `factura${ext}`);
       await sendDocument(pago.cliente_telefono, mediaId, `factura${ext}`, '🧾 ¡Acá tenés tu factura!');
     } catch (e) {
-      console.error('Error enviando factura por WhatsApp:', motivoErrorWa(e));
+      const motivo = motivoErrorWa(e);
+      console.error('Error enviando factura por WhatsApp:', motivo);
+      // Además del 502 al operador que la está cargando ahora, queda una
+      // alerta en el panel por si nadie ve esa respuesta (se cerró la
+      // pestaña, no se fijó) — que no se pierda que el cliente se quedó sin factura.
+      notificarEnvioFallido(req.params.id, pago.cliente_telefono, 'envío de factura', motivo).catch((e2) =>
+        console.error('Error registrando alerta de envío fallido:', e2),
+      );
       return res.status(502).json({ error: 'La factura se guardó pero no se pudo enviar por WhatsApp' });
     }
 

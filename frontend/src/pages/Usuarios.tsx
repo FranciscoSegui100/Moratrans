@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Pencil, KeyRound } from 'lucide-react';
+import { Check, Pencil, KeyRound, Trash2 } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
@@ -81,6 +81,17 @@ export function Usuarios() {
       cargar();
     } catch (err: any) {
       show('error', 'No se pudo cambiar el estado', err.response?.data?.error);
+    }
+  }
+
+  async function eliminar(u: Usuario) {
+    if (!confirm(`¿Eliminar a ${u.nombre} (${u.email})? Esta acción no se puede deshacer.`)) return;
+    try {
+      await api.delete(`/api/usuarios/${u.id}`);
+      cargar();
+      show('success', 'Usuario eliminado', u.email);
+    } catch (err: any) {
+      show('error', 'No se pudo eliminar', err.response?.data?.error);
     }
   }
 
@@ -197,6 +208,14 @@ export function Usuarios() {
                           title={u.id === yo?.id && u.activo ? 'No podés desactivar tu propia cuenta' : ''}
                         >
                           {u.activo ? 'Desactivar' : 'Activar'}
+                        </button>
+                        <button
+                          onClick={() => eliminar(u)}
+                          className="btn btn-danger btn-sm"
+                          disabled={u.id === yo?.id}
+                          title={u.id === yo?.id ? 'No podés eliminar tu propia cuenta' : ''}
+                        >
+                          <Trash2 strokeWidth={1.75} /> Eliminar
                         </button>
                       </div>
                     )}

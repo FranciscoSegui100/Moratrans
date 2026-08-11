@@ -25,7 +25,14 @@ const schema = z.object({
   WA_APP_SECRET: z.string().default(''),
 
   SYNC_API_KEY: z.string().min(16),
-  MEDIA_DIR: z.string().default('./storage'),
+
+  // Comprobantes/facturas/tickets viven en un bucket privado de Supabase
+  // Storage (no en disco: el filesystem de Railway es efímero y se pierde en
+  // cada redeploy). service_role porque el backend valida el acceso vía RBAC,
+  // no vía RLS de Supabase.
+  SUPABASE_URL: z.string().default(''),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().default(''),
+  SUPABASE_STORAGE_BUCKET: z.string().default('media'),
 
   // ---- Email transaccional (Resend): reset de contraseña, invitación, alertas ----
   RESEND_API_KEY: z.string().min(1),
@@ -45,6 +52,16 @@ const schema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['WA_APP_SECRET'],
       message: 'WA_APP_SECRET es obligatorio (min 16 chars) en producción',
+    });
+  }
+  // En producción los comprobantes/facturas/tickets tienen que persistir en
+  // Supabase Storage: sin esto, se guardarían en el disco efímero de Railway
+  // y se perderían en el próximo redeploy.
+  if (val.NODE_ENV === 'production' && (!val.SUPABASE_URL || !val.SUPABASE_SERVICE_ROLE_KEY)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['SUPABASE_URL'],
+      message: 'SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios en producción',
     });
   }
 });

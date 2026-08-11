@@ -1,43 +1,6 @@
--- =====================================================================
---  SEED de datos iniciales + función de validación de pago (atómica)
--- =====================================================================
-BEGIN;
-
--- Tarifas (el bot SIEMPRE lee de aquí; nada hardcodeado).
--- Departamentos del Gran Mendoza. Precios de referencia — ajustalos desde
--- el panel (Tarifas), son solo un punto de partida.
-INSERT INTO tarifas_departamento (departamento, precio, moneda) VALUES
-  ('Capital',        8000.00, 'ARS'),
-  ('Godoy Cruz',      8500.00, 'ARS'),
-  ('Guaymallén',      9000.00, 'ARS'),
-  ('Las Heras',       9500.00, 'ARS'),
-  ('Luján de Cuyo',  11000.00, 'ARS'),
-  ('Maipú',          10000.00, 'ARS')
-ON CONFLICT (departamento) DO NOTHING;
-
--- Usuario admin inicial. El hash corresponde a "Moratrans2026!" (bcrypt).
--- Cámbialo en producción; nunca guardes credenciales en el repo.
-INSERT INTO usuarios (nombre, email, password_hash, rol) VALUES
-  ('Administrador', 'admin@empresa.com',
-   '$2a$10$WfVk5Som.phoggqcdqKZteO0mpT3MOzl4d9pbXp2v5yjbb3uPhRDq', 'admin')
-ON CONFLICT (email) DO NOTHING;
-
--- NOTA: los contenedores NO se siembran acá a propósito — se cargan desde
--- el panel (página Contenedores). Las alertas tampoco se siembran: las
--- genera el sistema solo (cron + eventos reales).
-
--- NOTA: los choferes NO se insertan aquí porque el DNI se cifra en la app.
--- Cargá el chofer inicial con:  npm run db:seed-choferes
--- (ver backend/src/db/seedChoferes.ts)
-
-COMMIT;
-
--- ---------------------------------------------------------------------
--- Función atómica: validar pago -> reservar contenedor -> crear ticket
--- Se llama desde el panel (POST /api/pagos/:id/validar).
--- Devuelve el ticket creado. Si no hay contenedor libre, hace ROLLBACK
--- implícito vía EXCEPTION.
--- ---------------------------------------------------------------------
+-- Permite elegir a mano qué contenedor específico se reserva al validar un
+-- pago (antes siempre tomaba el primero disponible sin poder elegir). Si no
+-- se pasa p_contenedor_numero, se comporta exactamente igual que antes.
 CREATE OR REPLACE FUNCTION fn_validar_pago(
   p_pago_id           UUID,
   p_usuario_id        UUID,
@@ -59,7 +22,7 @@ BEGIN
   END IF;
 
   -- 2. Tomar el contenedor: el elegido a mano (si lo pasaron y está
-  --    disponible) o el primero disponible (con lock de fila).
+  --    disponible) o el primero disponible (con lock de fila) como antes.
   IF p_contenedor_numero IS NOT NULL THEN
     SELECT numero INTO v_cont
       FROM contenedores
