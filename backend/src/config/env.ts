@@ -12,9 +12,15 @@ const schema = z.object({
 
   DATABASE_URL: z.string().url(),
 
-  // Firma del access token (JWT de corta duración, va en la cookie httpOnly mt_at).
+  // Firma del access token (JWT, va en la cookie httpOnly mt_at). 8h en vez
+  // de los 15 min originales: cubre un turno entero sin que haga falta
+  // renovar ni una vez. La renovación (access + CSRF) sigue pasando sola de
+  // fondo (AuthContext, cada 10 min o al volver a la pestaña) para que la
+  // sesión no corte ni siquiera en turnos más largos — este número es el
+  // margen de seguridad para cuando esa renovación automática no llegó a
+  // tiempo, no el único mecanismo del que depende.
   JWT_SECRET: z.string().min(16),
-  JWT_ACCESS_EXPIRES: z.string().default('15m'),
+  JWT_ACCESS_EXPIRES: z.string().default('8h'),
   // Vida del refresh token (opaco, hasheado en la tabla `sesiones`, cookie mt_rt).
   REFRESH_TTL_DIAS: z.coerce.number().default(30),
   REFRESH_TTL_RECORDAR_DIAS: z.coerce.number().default(90),

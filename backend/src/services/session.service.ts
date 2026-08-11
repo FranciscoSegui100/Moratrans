@@ -14,7 +14,19 @@ export const ACCESS_COOKIE = 'mt_at';
 export const REFRESH_COOKIE = 'mt_rt';
 export const CSRF_COOKIE = 'mt_csrf';
 
-const ACCESS_MAXAGE_MS = 15 * 60 * 1000;
+const UNIDADES_MS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+
+/** Convierte "4h"/"15m"/"30s" (mismo formato que acepta jsonwebtoken en `expiresIn`) a milisegundos. */
+function duracionMs(expresion: string): number {
+  const m = /^(\d+)\s*(ms|s|m|h|d)$/.exec(expresion.trim());
+  if (!m) throw new Error(`Duración inválida: "${expresion}" (formato esperado: "4h", "15m", "30s", etc.)`);
+  return Number(m[1]) * UNIDADES_MS[m[2]];
+}
+
+// Derivado de env.JWT_ACCESS_EXPIRES en vez de un número aparte: si algún día
+// se cambia la duración del JWT sin tocar acá, la cookie quedaría venciendo
+// en un momento distinto al token que contiene — mismo bug que tuvo mt_csrf.
+const ACCESS_MAXAGE_MS = duracionMs(env.JWT_ACCESS_EXPIRES);
 
 function baseCookieOpts() {
   // Cross-site en producción (frontend en Vercel, backend en Railway): hace
