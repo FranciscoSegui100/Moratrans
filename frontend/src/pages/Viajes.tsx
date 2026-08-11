@@ -35,10 +35,14 @@ export function Viajes() {
     queryKey: ['viajes'],
     queryFn: () => api.get<Viaje[]>('/api/viajes').then((r) => r.data),
   });
-  const { data: contenedoresDisponibles = [] } = useQuery({
-    queryKey: ['contenedores', 'disponibles'],
-    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data.filter((c) => c.estado === 'disponible')),
+  const { data: contenedores = [] } = useQuery({
+    queryKey: ['contenedores'],
+    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
   });
+  // Entrega: se lleva un contenedor disponible. Retiro: se va a buscar uno
+  // que ya está entregado en lo del cliente (venció el alquiler).
+  const estadoElegible = form.tipo === 'retiro' ? 'entregado' : 'disponible';
+  const contenedoresElegibles = contenedores.filter((c) => c.estado === estadoElegible);
   const { data: zonas = [] } = useQuery({
     queryKey: ['tarifas', 'activas'],
     queryFn: () => api.get<Tarifa[]>('/api/tarifas').then((r) => r.data.filter((t) => t.activo)),
@@ -104,7 +108,11 @@ export function Viajes() {
           <form onSubmit={crear} className="form-row">
             <div className="form-group">
               <label className="form-label">Tipo</label>
-              <select className="form-select" value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
+              <select
+                className="form-select"
+                value={form.tipo}
+                onChange={(e) => setForm({ ...form, tipo: e.target.value, contenedor_numero: '' })}
+              >
                 <option value="entrega">Entrega</option>
                 <option value="retiro">Retiro</option>
               </select>
@@ -123,8 +131,10 @@ export function Viajes() {
             <div className="form-group">
               <label className="form-label">Contenedor</label>
               <select className="form-select" value={form.contenedor_numero} onChange={(e) => setForm({ ...form, contenedor_numero: e.target.value })}>
-                <option value="">— Elegir contenedor disponible —</option>
-                {contenedoresDisponibles.map((c) => <option key={c.numero} value={c.numero}>{c.numero}</option>)}
+                <option value="">
+                  {form.tipo === 'retiro' ? '— Elegir contenedor entregado —' : '— Elegir contenedor disponible —'}
+                </option>
+                {contenedoresElegibles.map((c) => <option key={c.numero} value={c.numero}>{c.numero}</option>)}
               </select>
             </div>
             <div className="form-group">

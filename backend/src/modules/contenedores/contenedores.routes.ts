@@ -107,6 +107,19 @@ contenedoresRouter.post(
       [numero, viaje.chofer_id],
     );
     await query(`UPDATE viajes SET estado = 'completado' WHERE id = $1`, [viaje.id]);
+    if (viaje.chofer_id) {
+      // El viaje de "entrega" (creado al validar el pago o al programarlo a
+      // mano) recién se cierra acá, cuando termina el ciclo completo — si se
+      // completaba antes (al marcar "entregado"), el chofer dejaba de tener
+      // un viaje activo vinculado y el filtro de seguridad de
+      // elegirContenedor (solo contenedores de SU propio viaje activo) le
+      // ocultaba el contenedor a la hora de elegir "ya retiré".
+      await query(
+        `UPDATE viajes SET estado = 'completado'
+          WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')`,
+        [numero, viaje.chofer_id],
+      );
+    }
     await query(
       `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'confirmar_retiro' AND referencia_id = $1`,
       [numero],

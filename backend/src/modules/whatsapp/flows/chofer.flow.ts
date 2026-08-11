@@ -198,16 +198,6 @@ async function aplicarEstado(
       'INSERT INTO historial_contenedores (numero_contenedor, estado, chofer_id, nota) VALUES ($1,$2,$3,$4)',
       [numero, estado, choferId, 'registrado por chofer vía WhatsApp'],
     );
-    // El viaje de "entrega" (creado al validar el pago) quedaba en
-    // 'programado' para siempre — nada lo cerraba. Se completa acá, cuando
-    // el contenedor efectivamente llega al cliente.
-    if (estado === 'entregado') {
-      await query(
-        `UPDATE viajes SET estado = 'completado'
-          WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')`,
-        [numero, choferId],
-      );
-    }
     // Este cambio viene del webhook de WhatsApp, no de la API del panel, así
     // que no pasa por el middleware que avisa solo (broadcastCambios) — sin
     // esto, la pestaña Contenedores quedaba desactualizada hasta hacer F5.
