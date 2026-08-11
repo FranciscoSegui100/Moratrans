@@ -31,6 +31,9 @@ export function conectarSocket(): Socket {
       intentarRefresh();
     });
     socket.on('disconnect', (motivo) => console.warn('[socket] disconnect:', motivo));
+    // Confirma en la consola que la reconexión (manual o automática) anduvo,
+    // para no tener que inferirlo por si llegó o no una alerta.
+    socket.on('connect', () => console.info('[socket] conectado:', socket!.id));
 
     // El navegador puede meter la pestaña en el back-forward cache (bfcache)
     // y ahí mismo corta el WebSocket ("Page entered Back-Forward Cache") —
