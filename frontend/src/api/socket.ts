@@ -37,24 +37,20 @@ export function conectarSocket(): Socket {
 
     // El navegador puede meter la pestaña en el back-forward cache (bfcache)
     // y ahí mismo corta el WebSocket ("Page entered Back-Forward Cache") —
-    // y mientras la pestaña está congelada, TODO el JS se pausa, incluidos
-    // los timers de reintento de socket.io. Al restaurarse (pageshow con
-    // persisted=true) el reintento automático puede quedar colgado, así que
-    // forzamos la reconexión a mano en cuanto la pestaña vuelve a estar viva.
+    // socket.io ya reintenta conectar solo después (reconnection: true por
+    // defecto, para siempre, con backoff), así que NO hay que forzar
+    // `socket.connect()` a mano: llamarlo mientras ya hay un intento
+    // automático en curso los hace pisarse entre sí ("WebSocket is closed
+    // before the connection is established"). Lo único que puede hacer
+    // fallar ese reintento automático es una cookie de sesión vencida — eso
+    // sí lo renovamos apenas la pestaña vuelve a estar visible, para que el
+    // próximo intento automático (no uno nuestro) tenga con qué autenticarse.
     window.addEventListener('pageshow', (e) => {
-      if (e.persisted && socket && !socket.connected) {
-        intentarRefresh();
-        socket.connect();
-      }
+      if (e.persisted) intentarRefresh();
     });
-    // Red de seguridad general: cualquier otra causa por la que la pestaña
-    // haya quedado con el socket caído (no solo bfcache) se corrige apenas
-    // el operador vuelve a mirarla, en vez de esperar a que note el badge
-    // "Sin conexión en vivo" y recargue a mano.
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && socket && !socket.connected) {
         intentarRefresh();
-        socket.connect();
       }
     });
   } else if (!socket.connected) {
