@@ -103,4 +103,5 @@ BEGIN
 
   RETURN QUERY SELECT v_ticket, v_cont;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;

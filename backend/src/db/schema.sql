@@ -296,7 +296,8 @@ BEGIN
   NEW.actualizado_en := now();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 CREATE TRIGGER trg_validar_transicion_contenedor
   BEFORE UPDATE OF estado ON contenedores
@@ -312,7 +313,8 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 CREATE TRIGGER trg_auditar_contenedor
   AFTER INSERT OR UPDATE OF estado ON contenedores
@@ -322,7 +324,8 @@ CREATE TRIGGER trg_auditar_contenedor
 CREATE OR REPLACE FUNCTION fn_touch_actualizado()
 RETURNS TRIGGER AS $$
 BEGIN NEW.actualizado_en := now(); RETURN NEW; END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 CREATE TRIGGER trg_touch_pagos
   BEFORE UPDATE ON pagos
