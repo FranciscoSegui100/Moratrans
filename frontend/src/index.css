@@ -616,8 +616,8 @@ body {
 .asesoria-layout {
   display: flex;
   gap: 16px;
-  height: calc(100vh - 200px);
-  min-height: 420px;
+  height: calc(100vh - 140px);
+  min-height: 480px;
 }
 .asesoria-lista-col {
   width: 300px;
