@@ -15,12 +15,11 @@ INSERT INTO tarifas_departamento (departamento, precio, moneda) VALUES
   ('Maipú',          10000.00, 'ARS')
 ON CONFLICT (departamento) DO NOTHING;
 
--- Usuario admin inicial. El hash corresponde a "Admin1234!" (bcrypt).
+-- Usuario admin inicial. El hash corresponde a "Moratrans2026!" (bcrypt).
 -- Cámbialo en producción; nunca guardes credenciales en el repo.
--- Hash válido para la contraseña "Admin1234!" (cambiar en producción).
 INSERT INTO usuarios (nombre, email, password_hash, rol) VALUES
   ('Administrador', 'admin@empresa.com',
-   '$2b$10$8cumT3uw.LuGsZR7uORe9.QjekojMnoCoCjEyIMWoSCs1txxIs0m6', 'admin')
+   '$2a$10$WfVk5Som.phoggqcdqKZteO0mpT3MOzl4d9pbXp2v5yjbb3uPhRDq', 'admin')
 ON CONFLICT (email) DO NOTHING;
 
 -- NOTA: los contenedores NO se siembran acá a propósito — se cargan desde

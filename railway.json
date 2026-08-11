@@ -5,7 +5,7 @@
     "buildCommand": "(cd frontend && npm install --include=dev && npm run build) && (cd backend && npm install --include=dev && npm run build)"
   },
   "deploy": {
-    "startCommand": "cd backend && (node dist/db/seedChoferes.js; node dist/server.js)",
+    "startCommand": "cd backend && node dist/db/migrate.js && (node dist/db/seedChoferes.js; node dist/server.js)",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }

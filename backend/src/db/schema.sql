@@ -51,7 +51,8 @@ CREATE TYPE tipo_alerta AS ENUM (
   'stock_bajo',
   'solicita_asesor',
   'confirmar_retiro',
-  'factura_solicitada'
+  'factura_solicitada',
+  'envio_fallido'
 );
 
 -- Roles del panel (RBAC). Ver middleware/rbac.ts

@@ -116,9 +116,18 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
   // Contenedores en un estado desde el que la transición es válida.
   const origen =
     estado === 'en_camino' ? 'reservado' : estado === 'entregado' ? 'en_camino' : 'entregado';
+  // Solo contenedores con un viaje activo asignado a ESTE chofer — sin este
+  // filtro, cualquier chofer veía y podía tocar el contenedor de otro chofer
+  // si ambos tenían uno en el mismo estado a la vez.
   const conts = await query<{ numero: string }>(
-    'SELECT numero FROM contenedores WHERE estado = $1 ORDER BY actualizado_en LIMIT 10',
-    [origen],
+    `SELECT c.numero
+       FROM contenedores c
+       JOIN viajes v ON v.contenedor_numero = c.numero
+      WHERE c.estado = $1
+        AND v.chofer_id = $2
+        AND v.estado IN ('programado', 'en_curso')
+      ORDER BY c.actualizado_en LIMIT 10`,
+    [origen, choferId],
   );
   if (conts.length === 0) {
     await sendText(to, `🙁 No tengo contenedores en estado "${origen}" para pasar a "${estado.replace('_', ' ')}".`);

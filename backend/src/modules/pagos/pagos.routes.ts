@@ -9,6 +9,7 @@ import { encrypt, decrypt } from '../../services/crypto.service';
 import { enviarTicketPorWhatsApp } from '../../services/pdf.service';
 import { sendText, sendButtons, uploadMedia, sendDocument, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
+import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada } from '../../config/socket';
 
 export const pagosRouter = Router();
@@ -156,10 +157,16 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       );
 
       // Avisamos al chofer por WhatsApp: qué contenedor, a quién y adónde. No
-      // bloquea la respuesta del panel si falla el envío.
-      avisarChoferAsignacion(choferId, result.contenedor, info).catch((e) =>
-        console.error('Error avisando al chofer la asignación:', motivoErrorWa(e)),
-      );
+      // bloquea la respuesta del panel si falla el envío, pero si falla queda
+      // una alerta en el panel — si no, el chofer nunca se entera de la
+      // entrega y nadie lo nota hasta que pregunte por qué no salió.
+      avisarChoferAsignacion(choferId, result.contenedor, info).catch((e) => {
+        const motivo = motivoErrorWa(e);
+        console.error('Error avisando al chofer la asignación:', motivo);
+        notificarEnvioFallido(result.contenedor, `chofer de ${result.contenedor}`, 'aviso de entrega asignada', motivo).catch(
+          (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+        );
+      });
     }
     if (diasDemora != null) {
       sendText(
@@ -177,7 +184,13 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       moneda: info?.moneda ?? undefined,
       clienteTelefono: info.cliente_telefono,
       fecha: new Date(),
-    }).catch((e) => console.error('Error enviando ticket:', motivoErrorWa(e)));
+    }).catch((e) => {
+      const motivo = motivoErrorWa(e);
+      console.error('Error enviando ticket:', motivo);
+      notificarEnvioFallido(result.ticket_id, info.cliente_telefono, 'envío de ticket/comprobante de entrega', motivo).catch(
+        (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+      );
+    });
 
     // fn_validar_pago ya resolvió la alerta atómicamente en SQL; acá solo se
     // avisa por socket a los demás operadores (el que hizo la acción ya
@@ -281,7 +294,14 @@ pagosRouter.post(
       const mediaId = await uploadMedia(filePath, contentType);
       await sendDocument(pago.cliente_telefono, mediaId, `factura${ext}`, '🧾 ¡Acá tenés tu factura!');
     } catch (e) {
-      console.error('Error enviando factura por WhatsApp:', motivoErrorWa(e));
+      const motivo = motivoErrorWa(e);
+      console.error('Error enviando factura por WhatsApp:', motivo);
+      // Además del 502 al operador que la está cargando ahora, queda una
+      // alerta en el panel por si nadie ve esa respuesta (se cerró la
+      // pestaña, no se fijó) — que no se pierda que el cliente se quedó sin factura.
+      notificarEnvioFallido(req.params.id, pago.cliente_telefono, 'envío de factura', motivo).catch((e2) =>
+        console.error('Error registrando alerta de envío fallido:', e2),
+      );
       return res.status(502).json({ error: 'La factura se guardó pero no se pudo enviar por WhatsApp' });
     }
 

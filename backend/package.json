@@ -8,11 +8,12 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/db/migrations','dist/db/migrations',{recursive:true})\"",
     "start": "node dist/server.js",
     "db:schema": "psql \"$DATABASE_URL\" -f src/db/schema.sql",
     "db:seed": "psql \"$DATABASE_URL\" -f src/db/seed.sql",
-    "db:seed-choferes": "tsx src/db/seedChoferes.ts"
+    "db:seed-choferes": "tsx src/db/seedChoferes.ts",
+    "db:migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",
