@@ -246,6 +246,7 @@ CREATE TABLE viajes (
   contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
   cliente_telefono  TEXT,
   zona              TEXT,
+  destino_direccion TEXT,
   estado            estado_viaje NOT NULL DEFAULT 'programado',
   notas             TEXT,
   creado_en         TIMESTAMPTZ  NOT NULL DEFAULT now(),
