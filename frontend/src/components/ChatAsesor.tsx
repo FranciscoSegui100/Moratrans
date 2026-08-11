@@ -113,7 +113,7 @@ export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ven
       <div className="chat-asesor-hilo">
         {mensajes.length === 0 && <div className="text-muted">Todavía no hay mensajes.</div>}
         {agruparPorDia(mensajes).map((grupo) => (
-          <div key={grupo.etiqueta + grupo.mensajes[0].id}>
+          <div key={grupo.etiqueta + grupo.mensajes[0].id} className="chat-dia-grupo">
             <div className="chat-dia"><span>{grupo.etiqueta}</span></div>
             {grupo.mensajes.map((m) => {
               const { cuerpo, opciones } = parsearOpciones(m.texto);

@@ -765,6 +765,10 @@ body {
 .ventana-barra span { display: block; height: 100%; background: var(--accent); transition: width 60s linear; }
 
 /* ===== SEPARADOR DE DÍA EN EL HILO ===== */
+/* Tiene que ser flex para que el align-self de las burbujas de adentro
+   (izquierda/derecha) siga funcionando: si no, quedan como hijas de un
+   bloque normal y align-self no hace nada. */
+.chat-dia-grupo { display: flex; flex-direction: column; gap: 8px; }
 .chat-dia { display: flex; justify-content: center; margin: 4px 0; }
 .chat-dia span {
   background: var(--bg-card);
