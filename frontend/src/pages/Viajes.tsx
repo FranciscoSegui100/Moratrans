@@ -12,6 +12,7 @@ interface Viaje {
   estado: string;
   zona: string | null;
   contenedor_numero: string | null;
+  contenedor_estado: string | null;
   destino_direccion: string | null;
   cliente_telefono: string | null;
   chofer_nombre: string | null;
@@ -22,6 +23,13 @@ interface Tarifa { departamento: string; activo: boolean; }
 interface Chofer { id: string; nombre: string; activo: boolean; }
 
 const estados = ['programado', 'en_curso', 'completado', 'cancelado'];
+
+const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
+  disponible: 'Disponible',
+  alquilado: 'Alquilado',
+  para_retirar: 'Para retirar',
+  vencido: 'Vencido',
+};
 
 const formInicial = { tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', chofer_id: '', destino_direccion: '' };
 
@@ -168,6 +176,7 @@ export function Viajes() {
               <th>Tipo</th>
               <th>Zona</th>
               <th>Contenedor</th>
+              <th>Estado contenedor</th>
               <th>Chofer</th>
               <th>Estado</th>
               <th>Acciones</th>
@@ -184,6 +193,15 @@ export function Viajes() {
                 </td>
                 <td>{v.zona ?? '—'}</td>
                 <td className="mono">{v.contenedor_numero ?? '—'}</td>
+                <td>
+                  {v.contenedor_estado ? (
+                    <span className={`badge ${v.contenedor_estado}`}>
+                      {ETIQUETAS_ESTADO_CONTENEDOR[v.contenedor_estado] ?? v.contenedor_estado.replace('_', ' ')}
+                    </span>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                </td>
                 <td>{v.chofer_nombre ?? <span className="text-muted">Sin asignar</span>}</td>
                 <td>
                   <RoleGate roles={['admin', 'operador']}>
@@ -210,7 +228,7 @@ export function Viajes() {
             ))}
             {viajes.length === 0 && (
               <tr>
-                <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No hay viajes cargados
                 </td>
               </tr>

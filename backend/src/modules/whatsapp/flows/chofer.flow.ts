@@ -206,6 +206,9 @@ async function aplicarEstado(
     // que no pasa por el middleware que avisa solo (broadcastCambios) — sin
     // esto, la pestaña Contenedores quedaba desactualizada hasta hacer F5.
     emitRecursoActualizado('contenedores');
+    // La pestaña Viajes ahora muestra el estado del contenedor asociado
+    // (join en GET /api/viajes), así que también tiene que refrescarse sola.
+    emitRecursoActualizado('viajes');
     await clearSesion(to);
     await sendText(to, `✅ ¡Listo! Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*. 💪`);
   } catch (err: any) {

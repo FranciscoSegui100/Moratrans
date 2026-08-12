@@ -19,8 +19,21 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const rows = await query(
     `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
-            v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id
-       FROM viajes v LEFT JOIN choferes c ON c.id = v.chofer_id
+            v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id,
+            -- Misma vista "por contrato" que GET /api/contenedores (columna
+            -- estado_contrato) — expresión duplicada a propósito, mantener en sync.
+            CASE
+              WHEN EXISTS (
+                SELECT 1 FROM viajes v2
+                 WHERE v2.contenedor_numero = v.contenedor_numero AND v2.tipo = 'retiro' AND v2.estado IN ('programado', 'en_curso')
+              ) THEN 'para_retirar'
+              WHEN ct.estado = 'entregado' AND ct.vence_en IS NOT NULL AND ct.vence_en < now() THEN 'vencido'
+              WHEN ct.estado = 'entregado' THEN 'alquilado'
+              ELSE ct.estado
+            END AS contenedor_estado
+       FROM viajes v
+       LEFT JOIN choferes c ON c.id = v.chofer_id
+       LEFT JOIN contenedores ct ON ct.numero = v.contenedor_numero
        ${where}
        ORDER BY v.fecha, v.creado_en`,
     params,

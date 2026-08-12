@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { X } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -7,23 +8,45 @@ import { useToast } from '../components/Toast';
 interface Contenedor {
   numero: string;
   estado: string;
+  estado_contrato: string;
   cliente_id: string | null;
   vence_en: string | null;
   actualizado_por: string | null;
   actualizado_en: string;
 }
+interface HistorialItem {
+  id: string;
+  estado: string;
+  nota: string | null;
+  creado_en: string;
+  chofer_nombre: string | null;
+}
+
+const ETIQUETAS_ESTADO: Record<string, string> = {
+  disponible: 'Disponible',
+  alquilado: 'Alquilado',
+  para_retirar: 'Para retirar',
+  vencido: 'Vencido',
+};
 
 export function Contenedores() {
   const { show } = useToast();
   const queryClient = useQueryClient();
   const [form, setForm] = useState({ numero: '' });
   const [loading, setLoading] = useState(false);
+  const [historialNumero, setHistorialNumero] = useState<string | null>(null);
 
   const { data: contenedores = [] } = useQuery({
     queryKey: ['contenedores'],
     queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
   });
   const cargar = () => queryClient.invalidateQueries({ queryKey: ['contenedores'] });
+
+  const { data: historial = [], isLoading: cargandoHistorial } = useQuery({
+    queryKey: ['contenedores', historialNumero, 'historial'],
+    queryFn: () => api.get<HistorialItem[]>(`/api/contenedores/${historialNumero}/historial`).then((r) => r.data),
+    enabled: historialNumero !== null,
+  });
 
   async function crear(e: React.FormEvent) {
     e.preventDefault();
@@ -81,13 +104,13 @@ export function Contenedores() {
           </thead>
           <tbody>
             {contenedores.map((c) => (
-              <tr key={c.numero}>
+              <tr key={c.numero} onClick={() => setHistorialNumero(c.numero)} style={{ cursor: 'pointer' }}>
                 <td className="mono" style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
                   {c.numero}
                 </td>
                 <td>
-                  <span className={`badge ${c.estado}`}>
-                    {c.estado.replace('_', ' ')}
+                  <span className={`badge ${c.estado_contrato}`}>
+                    {ETIQUETAS_ESTADO[c.estado_contrato] ?? c.estado_contrato.replace('_', ' ')}
                   </span>
                 </td>
                 <td>
@@ -115,6 +138,49 @@ export function Contenedores() {
           </tbody>
         </table>
       </div>
+
+      {historialNumero && (
+        <div className="modal-overlay" onClick={() => setHistorialNumero(null)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="section-title" style={{ margin: 0 }}>
+                Historial · {historialNumero}
+              </div>
+              <button className="modal-close" onClick={() => setHistorialNumero(null)}>
+                <X size={18} strokeWidth={2} />
+              </button>
+            </div>
+            {cargandoHistorial && <p className="text-muted">Cargando historial…</p>}
+            {!cargandoHistorial && historial.length === 0 && (
+              <p className="text-muted">Sin movimientos registrados para este contenedor.</p>
+            )}
+            {!cargandoHistorial && historial.length > 0 && (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Estado</th>
+                    <th>Chofer</th>
+                    <th>Nota</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historial.map((h) => (
+                    <tr key={h.id}>
+                      <td className="text-muted">{new Date(h.creado_en).toLocaleString('es-UY')}</td>
+                      <td>
+                        <span className={`badge ${h.estado}`}>{h.estado.replace('_', ' ')}</span>
+                      </td>
+                      <td>{h.chofer_nombre ?? <span className="text-muted">—</span>}</td>
+                      <td>{h.nota ?? <span className="text-muted">—</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

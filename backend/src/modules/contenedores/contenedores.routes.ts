@@ -17,6 +17,18 @@ contenedoresRouter.use(requireAuth);
 contenedoresRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query(
     `SELECT c.numero, c.estado, c.cliente_id, c.vence_en, c.actualizado_en, c.creado_en,
+            -- Vista "por contrato" (Disponible/Alquilado/Para retirar/Vencido) derivada
+            -- del estado técnico de 6 valores, sin tocarlo — misma expresión duplicada
+            -- en viajes.routes.ts (columna contenedor_estado); mantener ambas en sync.
+            CASE
+              WHEN EXISTS (
+                SELECT 1 FROM viajes v
+                 WHERE v.contenedor_numero = c.numero AND v.tipo = 'retiro' AND v.estado IN ('programado', 'en_curso')
+              ) THEN 'para_retirar'
+              WHEN c.estado = 'entregado' AND c.vence_en IS NOT NULL AND c.vence_en < now() THEN 'vencido'
+              WHEN c.estado = 'entregado' THEN 'alquilado'
+              ELSE c.estado
+            END AS estado_contrato,
             CASE
               WHEN c.actualizado_por LIKE 'chofer:%'   THEN COALESCE(ch.nombre, 'Chofer eliminado')
               WHEN c.actualizado_por LIKE 'operador:%' THEN COALESCE(u.nombre, 'Usuario eliminado')
@@ -27,6 +39,19 @@ contenedoresRouter.get('/', async (req: Request, res: Response) => {
        LEFT JOIN choferes ch ON c.actualizado_por LIKE 'chofer:%' AND ch.id::text = substring(c.actualizado_por FROM 8)
        LEFT JOIN usuarios u  ON c.actualizado_por LIKE 'operador:%' AND u.id::text = substring(c.actualizado_por FROM 10)
       ORDER BY c.actualizado_en DESC`,
+  );
+  res.json(rows);
+});
+
+/** GET /api/contenedores/:numero/historial — historial completo de estados de una unidad. */
+contenedoresRouter.get('/:numero/historial', async (req: Request, res: Response) => {
+  const rows = await query(
+    `SELECT h.id, h.estado, h.nota, h.creado_en, ch.nombre AS chofer_nombre
+       FROM historial_contenedores h
+       LEFT JOIN choferes ch ON ch.id = h.chofer_id
+      WHERE h.numero_contenedor = $1
+      ORDER BY h.creado_en DESC`,
+    [req.params.numero],
   );
   res.json(rows);
 });
