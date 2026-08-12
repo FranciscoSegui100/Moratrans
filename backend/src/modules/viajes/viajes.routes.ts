@@ -29,7 +29,7 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
               ) THEN 'para_retirar'
               WHEN ct.estado = 'entregado' AND ct.vence_en IS NOT NULL AND ct.vence_en < now() THEN 'vencido'
               WHEN ct.estado = 'entregado' THEN 'alquilado'
-              ELSE ct.estado
+              ELSE ct.estado::text
             END AS contenedor_estado
        FROM viajes v
        LEFT JOIN choferes c ON c.id = v.chofer_id

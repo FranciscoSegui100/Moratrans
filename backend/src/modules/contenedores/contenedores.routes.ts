@@ -27,7 +27,7 @@ contenedoresRouter.get('/', async (req: Request, res: Response) => {
               ) THEN 'para_retirar'
               WHEN c.estado = 'entregado' AND c.vence_en IS NOT NULL AND c.vence_en < now() THEN 'vencido'
               WHEN c.estado = 'entregado' THEN 'alquilado'
-              ELSE c.estado
+              ELSE c.estado::text
             END AS estado_contrato,
             CASE
               WHEN c.actualizado_por LIKE 'chofer:%'   THEN COALESCE(ch.nombre, 'Chofer eliminado')
