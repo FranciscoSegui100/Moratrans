@@ -130,6 +130,10 @@ contenedoresRouter.post(
     // Contenedores tiene que verse "disponible" sin que nadie tenga que
     // refrescar la página.
     emitRecursoActualizado('contenedores');
+    // Este handler también cierra viajes (arriba), pero broadcastCambios solo
+    // ve '/api/contenedores/...' y avisa 'contenedores' — sin esto, la
+    // pestaña Viajes quedaba desactualizada hasta hacer F5.
+    emitRecursoActualizado('viajes');
 
     if (viaje.chofer_id) {
       const [chofer] = await query<{ telefono: string }>('SELECT telefono FROM choferes WHERE id = $1', [viaje.chofer_id]);

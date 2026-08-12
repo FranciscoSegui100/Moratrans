@@ -175,6 +175,10 @@ async function aplicarEstado(
         [numero, `${choferNombre} retiró el contenedor ${numero} del cliente. Confirmá cuando llegue a la empresa.`],
       );
       if (alerta) emitAlerta(alerta);
+      // Igual que con 'contenedores' más abajo: este INSERT en viajes viene
+      // del webhook de WhatsApp, no pasa por broadcastCambios, así que la
+      // pestaña Viajes quedaba desactualizada hasta hacer F5.
+      emitRecursoActualizado('viajes');
       await clearSesion(to);
       await sendText(
         to,
