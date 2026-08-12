@@ -197,11 +197,8 @@ async function aplicarEstado(
       'UPDATE contenedores SET estado = $1, actualizado_por = $2 WHERE numero = $3',
       [estado, `chofer:${choferId}`, numero],
     );
-    // Historial explícito con el chofer (el trigger también audita, pero sin chofer_id).
-    await query(
-      'INSERT INTO historial_contenedores (numero_contenedor, estado, chofer_id, nota) VALUES ($1,$2,$3,$4)',
-      [numero, estado, choferId, 'registrado por chofer vía WhatsApp'],
-    );
+    // El trigger fn_auditar_contenedor ya audita este cambio en historial_contenedores
+    // (con chofer_id resuelto desde actualizado_por) — no duplicar el insert acá.
     // Este cambio viene del webhook de WhatsApp, no de la API del panel, así
     // que no pasa por el middleware que avisa solo (broadcastCambios) — sin
     // esto, la pestaña Contenedores quedaba desactualizada hasta hacer F5.

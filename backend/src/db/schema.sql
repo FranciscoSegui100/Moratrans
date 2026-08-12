@@ -139,6 +139,7 @@ CREATE TABLE historial_contenedores (
   estado            estado_contenedor NOT NULL,
   chofer_id         UUID REFERENCES choferes(id) ON DELETE SET NULL,
   nota              TEXT,
+  actualizado_por   TEXT,                       -- mismo formato "chofer:<uuid>"/"operador:<uuid>" que contenedores.actualizado_por
   creado_en         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_hist_contenedor ON historial_contenedores(numero_contenedor);
@@ -303,13 +304,26 @@ CREATE TRIGGER trg_validar_transicion_contenedor
   BEFORE UPDATE OF estado ON contenedores
   FOR EACH ROW EXECUTE FUNCTION fn_validar_transicion_contenedor();
 
--- Auditoría automática: cada cambio de estado inserta una fila en historial.
+-- Auditoría automática: cada cambio de estado inserta una fila en historial,
+-- con quién lo hizo (mismo formato que contenedores.actualizado_por) para
+-- poder resolver el nombre después. Única fuente de historial — el código
+-- de la app no inserta filas manuales duplicadas (ver 0005_historial_actualizado_por.sql).
 CREATE OR REPLACE FUNCTION fn_auditar_contenedor()
 RETURNS TRIGGER AS $$
+DECLARE
+  v_chofer_id UUID;
 BEGIN
   IF TG_OP = 'INSERT' OR NEW.estado IS DISTINCT FROM OLD.estado THEN
-    INSERT INTO historial_contenedores (numero_contenedor, estado, nota)
-    VALUES (NEW.numero, NEW.estado, 'auto: ' || COALESCE(NEW.actualizado_por,'sistema'));
+    v_chofer_id := NULL;
+    IF NEW.actualizado_por LIKE 'chofer:%' THEN
+      BEGIN
+        v_chofer_id := substring(NEW.actualizado_por FROM 8)::uuid;
+      EXCEPTION WHEN invalid_text_representation THEN
+        v_chofer_id := NULL;
+      END;
+    END IF;
+    INSERT INTO historial_contenedores (numero_contenedor, estado, chofer_id, actualizado_por)
+    VALUES (NEW.numero, NEW.estado, v_chofer_id, NEW.actualizado_por);
   END IF;
   RETURN NEW;
 END;

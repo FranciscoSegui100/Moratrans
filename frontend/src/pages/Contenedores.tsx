@@ -17,9 +17,17 @@ interface Contenedor {
 interface HistorialItem {
   id: string;
   estado: string;
-  nota: string | null;
   creado_en: string;
-  chofer_nombre: string | null;
+  realizado_por: string;
+  ticket_id: string | null;
+  ticket_zona: string | null;
+  ticket_cliente_telefono: string | null;
+}
+interface GrupoHistorial {
+  ticket_id: string | null;
+  ticket_zona: string | null;
+  ticket_cliente_telefono: string | null;
+  items: HistorialItem[];
 }
 
 const ETIQUETAS_ESTADO: Record<string, string> = {
@@ -28,6 +36,21 @@ const ETIQUETAS_ESTADO: Record<string, string> = {
   para_retirar: 'Para retirar',
   vencido: 'Vencido',
 };
+
+/** El historial viene ordenado por fecha desc; se agrupa por ticket sin
+ * reordenar, así cada ciclo de alquiler queda junto en vez de mezclado. */
+function agruparPorTicket(historial: HistorialItem[]): GrupoHistorial[] {
+  const grupos: GrupoHistorial[] = [];
+  for (const h of historial) {
+    const ultimo = grupos[grupos.length - 1];
+    if (ultimo && ultimo.ticket_id === h.ticket_id) {
+      ultimo.items.push(h);
+    } else {
+      grupos.push({ ticket_id: h.ticket_id, ticket_zona: h.ticket_zona, ticket_cliente_telefono: h.ticket_cliente_telefono, items: [h] });
+    }
+  }
+  return grupos;
+}
 
 export function Contenedores() {
   const { show } = useToast();
@@ -154,30 +177,35 @@ export function Contenedores() {
             {!cargandoHistorial && historial.length === 0 && (
               <p className="text-muted">Sin movimientos registrados para este contenedor.</p>
             )}
-            {!cargandoHistorial && historial.length > 0 && (
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Estado</th>
-                    <th>Chofer</th>
-                    <th>Nota</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {historial.map((h) => (
-                    <tr key={h.id}>
-                      <td className="text-muted">{new Date(h.creado_en).toLocaleString('es-UY')}</td>
-                      <td>
-                        <span className={`badge ${h.estado}`}>{h.estado.replace('_', ' ')}</span>
-                      </td>
-                      <td>{h.chofer_nombre ?? <span className="text-muted">—</span>}</td>
-                      <td>{h.nota ?? <span className="text-muted">—</span>}</td>
+            {!cargandoHistorial && historial.length > 0 && agruparPorTicket(historial).map((grupo, i) => (
+              <div key={grupo.ticket_id ?? `sin-ticket-${i}`} style={{ marginBottom: 18 }}>
+                <div className="section-title" style={{ marginBottom: 6 }}>
+                  {grupo.ticket_id
+                    ? `Ticket ${grupo.ticket_id.slice(0, 8)}${grupo.ticket_zona ? ` · ${grupo.ticket_zona}` : ''}${grupo.ticket_cliente_telefono ? ` · ${grupo.ticket_cliente_telefono}` : ''}`
+                    : 'Sin ticket asociado'}
+                </div>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Estado</th>
+                      <th>Hecho por</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                  </thead>
+                  <tbody>
+                    {grupo.items.map((h) => (
+                      <tr key={h.id}>
+                        <td className="text-muted">{new Date(h.creado_en).toLocaleString('es-UY')}</td>
+                        <td>
+                          <span className={`badge ${h.estado}`}>{h.estado.replace('_', ' ')}</span>
+                        </td>
+                        <td>{h.realizado_por}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
           </div>
         </div>
       )}

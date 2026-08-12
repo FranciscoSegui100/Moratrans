@@ -43,12 +43,54 @@ contenedoresRouter.get('/', async (req: Request, res: Response) => {
   res.json(rows);
 });
 
-/** GET /api/contenedores/:numero/historial — historial completo de estados de una unidad. */
+/**
+ * GET /api/contenedores/:numero/historial — historial completo de estados
+ * de una unidad, con quién hizo cada cambio y agrupado por ticket (cada
+ * ciclo de alquiler: reserva → entrega → retiro → disponible).
+ *
+ * "Quién" se resuelve igual que en GET /api/contenedores (actualizado_por
+ * con formato "chofer:<uuid>"/"operador:<uuid>"). Para filas viejas,
+ * anteriores a que el trigger guardara actualizado_por en esta tabla, se
+ * lo reconstruye a partir de la nota automática vieja ("auto: chofer:...")
+ * o, en su defecto, del chofer_id que sí quedó guardado.
+ *
+ * El ticket se resuelve como "el más reciente abierto hasta ese momento"
+ * para ese contenedor (no hay ticket_id en esta tabla, y en la práctica
+ * los tickets nunca se marcan 'cerrado' al terminar el ciclo — ver POST
+ * /api/tickets/:id/cerrar, que es un paso manual aparte — así que no se
+ * puede confiar en el rango [creado_en, cerrado_en) para no solapar).
+ */
 contenedoresRouter.get('/:numero/historial', async (req: Request, res: Response) => {
   const rows = await query(
-    `SELECT h.id, h.estado, h.nota, h.creado_en, ch.nombre AS chofer_nombre
+    `SELECT h.id, h.estado, h.creado_en,
+            CASE
+              WHEN efectivo.actualizado_por LIKE 'chofer:%'   THEN COALESCE(ch.nombre, 'Chofer eliminado')
+              WHEN efectivo.actualizado_por LIKE 'operador:%' THEN COALESCE(u.nombre, 'Usuario eliminado')
+              WHEN efectivo.actualizado_por = 'validacion_pago' THEN 'Sistema (validación de pago)'
+              WHEN efectivo.actualizado_por = 'cierre_ticket'   THEN 'Sistema (cierre de ticket)'
+              WHEN efectivo.actualizado_por IS NULL OR efectivo.actualizado_por = 'sistema' THEN 'Sistema'
+              ELSE efectivo.actualizado_por
+            END AS realizado_por,
+            t.id AS ticket_id, pe.zona AS ticket_zona, p.cliente_telefono AS ticket_cliente_telefono
        FROM historial_contenedores h
-       LEFT JOIN choferes ch ON ch.id = h.chofer_id
+       CROSS JOIN LATERAL (
+         SELECT COALESCE(
+           h.actualizado_por,
+           CASE WHEN h.nota LIKE 'auto: %' THEN substring(h.nota FROM 7) END,
+           CASE WHEN h.chofer_id IS NOT NULL THEN 'chofer:' || h.chofer_id::text END
+         ) AS actualizado_por
+       ) efectivo
+       LEFT JOIN choferes ch ON efectivo.actualizado_por LIKE 'chofer:%'   AND ch.id::text = substring(efectivo.actualizado_por FROM 8)
+       LEFT JOIN usuarios u  ON efectivo.actualizado_por LIKE 'operador:%' AND u.id::text = substring(efectivo.actualizado_por FROM 10)
+       LEFT JOIN LATERAL (
+         SELECT tk.id, tk.pedido_id, tk.pago_id
+           FROM tickets tk
+          WHERE tk.contenedor_numero = h.numero_contenedor AND tk.creado_en <= h.creado_en
+          ORDER BY tk.creado_en DESC
+          LIMIT 1
+       ) t ON true
+       LEFT JOIN pedidos  pe ON pe.id = t.pedido_id
+       LEFT JOIN pagos    p  ON p.id  = t.pago_id
       WHERE h.numero_contenedor = $1
       ORDER BY h.creado_en DESC`,
     [req.params.numero],
@@ -126,11 +168,9 @@ contenedoresRouter.post(
       return res.status(409).json({ error: e.message });
     }
 
-    await query(
-      `INSERT INTO historial_contenedores (numero_contenedor, estado, chofer_id, nota)
-       VALUES ($1, 'retirado', $2, 'confirmado por operador vía panel')`,
-      [numero, viaje.chofer_id],
-    );
+    // El trigger fn_auditar_contenedor ya audita los dos UPDATE de arriba en
+    // historial_contenedores (con actualizado_por = 'operador:<uuid>') — no
+    // duplicar el insert acá.
     await query(`UPDATE viajes SET estado = 'completado' WHERE id = $1`, [viaje.id]);
     if (viaje.chofer_id) {
       // El viaje de "entrega" (creado al validar el pago o al programarlo a
