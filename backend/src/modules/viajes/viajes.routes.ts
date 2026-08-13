@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { query } from '../../config/db';
+import { query, withTx } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
@@ -89,12 +89,61 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
   const v = parsed.data;
   try {
-    const [row] = await query(
-      `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [v.tipo, v.fecha, v.chofer_id ?? null, v.contenedor_numero ?? null,
-       v.cliente_telefono ?? null, v.zona ?? null, v.destino_direccion ?? null, v.notas ?? null],
-    );
+    const row = await withTx(async (c) => {
+      // Entrega: a lo sumo una reserva activa por contenedor. Si está
+      // disponible, se reserva ya (misma transición que fn_validar_pago,
+      // disponible -> reservado). Si está ocupado (con otro cliente), se
+      // permite reservarlo igual pero solo para una fecha posterior a su
+      // vence_en (fecha de vuelta) — sin tocar su estado actual todavía; el
+      // contenedor pasa a "reservado" recién cuando efectivamente vuelve (ver
+      // POST /api/contenedores/:numero/confirmar-retiro).
+      if (v.tipo === 'entrega' && v.contenedor_numero) {
+        const { rows: contRows } = await c.query<{ estado: string; vence_en: string | null }>(
+          'SELECT estado, vence_en FROM contenedores WHERE numero = $1 FOR UPDATE',
+          [v.contenedor_numero],
+        );
+        const cont = contRows[0];
+        const fail = (msg: string): never => {
+          const err: any = new Error(msg);
+          err.status = 409;
+          throw err;
+        };
+        if (!cont) fail(`El contenedor ${v.contenedor_numero} no existe.`);
+
+        const { rows: activos } = await c.query(
+          `SELECT id FROM viajes WHERE contenedor_numero = $1 AND tipo = 'entrega' AND estado IN ('programado','en_curso')`,
+          [v.contenedor_numero],
+        );
+        if (activos.length > 0) {
+          fail(`El contenedor ${v.contenedor_numero} ya tiene una entrega reservada (actual o futura); no se puede reservar dos veces.`);
+        }
+
+        if (cont!.estado === 'disponible') {
+          await c.query(
+            `UPDATE contenedores SET estado = 'reservado', actualizado_por = $2
+               WHERE numero = $1 AND estado = 'disponible'`,
+            [v.contenedor_numero, `operador:${req.user!.id}`],
+          );
+        } else {
+          if (!cont!.vence_en) {
+            fail(`El contenedor ${v.contenedor_numero} está ${cont!.estado} y no tiene fecha de vuelta cargada; no se puede reservar a futuro.`);
+          }
+          const venceFecha = new Date(cont!.vence_en!).toISOString().slice(0, 10);
+          if (v.fecha < venceFecha) {
+            fail(`El contenedor ${v.contenedor_numero} vuelve el ${new Date(cont!.vence_en!).toLocaleDateString('es-AR')}; elegí esa fecha o una posterior.`);
+          }
+          // Sigue "ocupado" hasta que vuelva de verdad — no se toca su estado acá.
+        }
+      }
+
+      const { rows } = await c.query(
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [v.tipo, v.fecha, v.chofer_id ?? null, v.contenedor_numero ?? null,
+         v.cliente_telefono ?? null, v.zona ?? null, v.destino_direccion ?? null, v.notas ?? null],
+      );
+      return rows[0];
+    });
 
     if (v.chofer_id) {
       avisarChoferViaje(v.chofer_id, v.tipo, v.contenedor_numero ?? null, v.destino_direccion ?? null).catch((e) => {
@@ -108,7 +157,9 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
 
     res.status(201).json(row);
   } catch (error: any) {
-    if (error.code === '23503') { // Foreign key violation
+    if (error.status === 409) {
+      res.status(409).json({ error: error.message });
+    } else if (error.code === '23503') { // Foreign key violation
       res.status(400).json({ error: 'El contenedor o chofer especificado no existe.' });
     } else {
       console.error('Error al insertar viaje:', error);

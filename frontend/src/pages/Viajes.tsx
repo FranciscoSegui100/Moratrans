@@ -18,7 +18,7 @@ interface Viaje {
   chofer_nombre: string | null;
   notas: string | null;
 }
-interface Contenedor { numero: string; estado: string; }
+interface Contenedor { numero: string; estado: string; vence_en: string | null; }
 interface Tarifa { departamento: string; activo: boolean; }
 interface Chofer { id: string; nombre: string; activo: boolean; }
 
@@ -47,10 +47,32 @@ export function Viajes() {
     queryKey: ['contenedores'],
     queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
   });
-  // Entrega: se lleva un contenedor disponible. Retiro: se va a buscar uno
-  // que ya está entregado en lo del cliente (venció el alquiler).
-  const estadoElegible = form.tipo === 'retiro' ? 'entregado' : 'disponible';
-  const contenedoresElegibles = contenedores.filter((c) => c.estado === estadoElegible);
+  // Retiro: se va a buscar un contenedor que ya está entregado en lo del
+  // cliente (venció el alquiler). Entrega: se puede elegir cualquier
+  // contenedor que no tenga ya otra entrega reservada — si está ocupado, el
+  // combo lo deja elegir igual pero avisando desde cuándo vuelve, y el
+  // input de fecha se bloquea hasta ese día (ver minFecha más abajo).
+  const entregasActivas = new Set(
+    viajes.filter((v) => v.tipo === 'entrega' && (v.estado === 'programado' || v.estado === 'en_curso')).map((v) => v.contenedor_numero),
+  );
+  const contenedoresElegibles = form.tipo === 'retiro'
+    ? contenedores.filter((c) => c.estado === 'entregado')
+    : contenedores.filter((c) => !entregasActivas.has(c.numero));
+
+  const contenedorSeleccionado = contenedores.find((c) => c.numero === form.contenedor_numero);
+  // Si el contenedor elegido para una entrega está ocupado, no se puede
+  // programar para antes de que vuelva — este es el "calendario bloqueado
+  // hasta el día de vuelta".
+  const minFecha = form.tipo === 'entrega' && contenedorSeleccionado && contenedorSeleccionado.estado !== 'disponible' && contenedorSeleccionado.vence_en
+    ? new Date(contenedorSeleccionado.vence_en).toISOString().slice(0, 10)
+    : undefined;
+
+  function etiquetaContenedor(c: Contenedor): { texto: string; disabled: boolean } {
+    if (form.tipo === 'retiro' || c.estado === 'disponible') return { texto: c.numero, disabled: false };
+    if (!c.vence_en) return { texto: `${c.numero} — ${c.estado}, sin fecha de vuelta cargada`, disabled: true };
+    const fecha = new Date(c.vence_en).toLocaleDateString('es-AR');
+    return { texto: `${c.numero} — vuelve el ${fecha}`, disabled: false };
+  }
   const { data: zonas = [] } = useQuery({
     queryKey: ['tarifas', 'activas'],
     queryFn: () => api.get<Tarifa[]>('/api/tarifas').then((r) => r.data.filter((t) => t.activo)),
@@ -127,7 +149,17 @@ export function Viajes() {
             </div>
             <div className="form-group">
               <label className="form-label">Fecha</label>
-              <input type="date" className="form-input" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} required />
+              <input
+                type="date"
+                className="form-input"
+                value={form.fecha}
+                min={minFecha}
+                onChange={(e) => setForm({ ...form, fecha: e.target.value })}
+                required
+              />
+              {minFecha && (
+                <small className="text-muted">Contenedor ocupado: recién se puede elegir desde el {new Date(minFecha).toLocaleDateString('es-AR')}</small>
+              )}
             </div>
             <div className="form-group">
               <label className="form-label">Zona</label>
@@ -138,11 +170,25 @@ export function Viajes() {
             </div>
             <div className="form-group">
               <label className="form-label">Contenedor</label>
-              <select className="form-select" value={form.contenedor_numero} onChange={(e) => setForm({ ...form, contenedor_numero: e.target.value })}>
+              <select
+                className="form-select"
+                value={form.contenedor_numero}
+                onChange={(e) => {
+                  const numero = e.target.value;
+                  const c = contenedores.find((x) => x.numero === numero);
+                  const nuevoMin = form.tipo === 'entrega' && c && c.estado !== 'disponible' && c.vence_en
+                    ? new Date(c.vence_en).toISOString().slice(0, 10)
+                    : undefined;
+                  setForm((f) => ({ ...f, contenedor_numero: numero, fecha: nuevoMin && f.fecha < nuevoMin ? nuevoMin : f.fecha }));
+                }}
+              >
                 <option value="">
-                  {form.tipo === 'retiro' ? '— Elegir contenedor entregado —' : '— Elegir contenedor disponible —'}
+                  {form.tipo === 'retiro' ? '— Elegir contenedor entregado —' : '— Elegir contenedor —'}
                 </option>
-                {contenedoresElegibles.map((c) => <option key={c.numero} value={c.numero}>{c.numero}</option>)}
+                {contenedoresElegibles.map((c) => {
+                  const { texto, disabled } = etiquetaContenedor(c);
+                  return <option key={c.numero} value={c.numero} disabled={disabled}>{texto}</option>;
+                })}
               </select>
             </div>
             <div className="form-group">

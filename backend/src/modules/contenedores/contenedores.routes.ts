@@ -185,6 +185,33 @@ contenedoresRouter.post(
         [numero, viaje.chofer_id],
       );
     }
+    // Si había una entrega reservada a futuro para este contenedor (ver POST
+    // /api/viajes: se permite reservar un contenedor ocupado para una fecha
+    // posterior a su vuelta), ahora que efectivamente volvió pasa directo a
+    // "reservado" — no queda una ventana en "disponible" donde otro pedido
+    // se lo podría llevar primero.
+    const [futura] = await query<{ id: string; chofer_id: string | null }>(
+      `SELECT id, chofer_id FROM viajes
+        WHERE contenedor_numero = $1 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
+        ORDER BY fecha LIMIT 1`,
+      [numero],
+    );
+    if (futura) {
+      await query(
+        `UPDATE contenedores SET estado = 'reservado', actualizado_por = $2 WHERE numero = $1`,
+        [numero, `operador:${req.user!.id}`],
+      );
+      if (futura.chofer_id) {
+        const [choferFutura] = await query<{ telefono: string }>('SELECT telefono FROM choferes WHERE id = $1', [futura.chofer_id]);
+        if (choferFutura?.telefono) {
+          sendText(
+            choferFutura.telefono,
+            `📦 El contenedor *${numero}* que tenías reservado ya volvió y quedó a tu nombre. Coordinemos la entrega.`,
+          ).catch((e) => console.error('Error avisando reserva futura lista:', motivoErrorWa(e)));
+        }
+      }
+    }
+
     await query(
       `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'confirmar_retiro' AND referencia_id = $1`,
       [numero],
