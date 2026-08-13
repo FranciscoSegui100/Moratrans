@@ -42,6 +42,31 @@ export function decrypt(ciphertext: string | null | undefined): string {
 }
 
 /**
+ * Cifra un buffer binario (contenido de archivo: comprobante/factura) ->
+ * [iv(12)][tag(16)][ciphertext]. A diferencia de `encrypt()`, esto no cifra
+ * la referencia/ruta del archivo sino el contenido en sí antes de subirlo al
+ * storage de terceros — así el bucket nunca guarda el binario en claro,
+ * aunque su configuración de privacidad falle o cambie (sección 9).
+ */
+export function encryptBuffer(data: Buffer): Buffer {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(ALGO, KEY, iv);
+  const enc = Buffer.concat([cipher.update(data), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, enc]);
+}
+
+/** Descifra un buffer cifrado con `encryptBuffer()`. */
+export function decryptBuffer(data: Buffer): Buffer {
+  const iv = data.subarray(0, 12);
+  const tag = data.subarray(12, 28);
+  const enc = data.subarray(28);
+  const decipher = crypto.createDecipheriv(ALGO, KEY, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(enc), decipher.final()]);
+}
+
+/**
  * Blind index determinístico (HMAC-SHA256) para búsquedas por igualdad.
  * Deriva su propia subclave desde ENCRYPTION_KEY para no reutilizar la clave AES.
  */

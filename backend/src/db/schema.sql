@@ -99,11 +99,14 @@ CREATE TABLE choferes (
   id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nombre    TEXT    NOT NULL,
   -- DNI cifrado en reposo (AES-256-GCM en la app). El texto plano nunca toca la DB.
-  dni_enc   TEXT    NOT NULL,                 -- ciphertext base64 (iv:tag:data)
+  -- NULL = anonimizado (retención: 365 días desde desactivado_en, ver limpieza.cron.ts).
+  dni_enc   TEXT,                              -- ciphertext base64 (iv:tag:data)
   -- Blind index (HMAC determinístico) para poder buscar por DNI sin descifrar.
-  dni_hash  TEXT    NOT NULL UNIQUE,
+  dni_hash  TEXT    UNIQUE,
   telefono  TEXT,                             -- se usa para autoidentificar en WA; NULL = desvinculado
   activo    BOOLEAN NOT NULL DEFAULT TRUE,
+  -- Desde cuándo activo=false; usado para contar los 365 días de retención del DNI.
+  desactivado_en TIMESTAMPTZ,
   creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- Único cuando hay teléfono: dos choferes desvinculados (NULL) no chocan entre sí.

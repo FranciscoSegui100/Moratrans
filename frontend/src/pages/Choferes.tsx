@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 
-interface Chofer { id: string; nombre: string; dni: string; telefono: string | null; activo: boolean; }
+interface Chofer { id: string; nombre: string; dni: string | null; telefono: string | null; activo: boolean; }
 
 function initials(name: string) {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -44,7 +44,7 @@ export function Choferes() {
 
   function empezarEdicion(c: Chofer) {
     setEditando(c.id);
-    setEdit({ nombre: c.nombre, dni: c.dni === '••••••' ? '' : c.dni, telefono: c.telefono ?? '' });
+    setEdit({ nombre: c.nombre, dni: c.dni && c.dni !== '••••••' ? c.dni : '', telefono: c.telefono ?? '' });
   }
 
   async function guardarEdicion(id: string) {
@@ -162,12 +162,16 @@ export function Choferes() {
                     {enEdicion ? (
                       <input
                         className="form-input"
-                        placeholder={c.dni === '••••••' ? '(sin cambios)' : c.dni}
+                        placeholder={c.dni === '••••••' ? '(sin cambios)' : c.dni ?? '(anonimizado — cargar uno nuevo si corresponde)'}
                         value={edit.dni}
                         onChange={(e) => setEdit({ ...edit, dni: e.target.value })}
                       />
-                    ) : (
+                    ) : c.dni ? (
                       c.dni
+                    ) : (
+                      <span className="text-muted" title="Se anonimizó automáticamente por retención de datos (chofer inactivo hace más de un año)">
+                        Anonimizado
+                      </span>
                     )}
                   </td>
                   <td>

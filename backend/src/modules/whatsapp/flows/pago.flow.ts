@@ -3,7 +3,7 @@ import { sendText, sendButtons } from '../graphApi';
 import { downloadMedia } from '../graphApi';
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
-import { encrypt } from '../../../services/crypto.service';
+import { encrypt, encryptBuffer } from '../../../services/crypto.service';
 import { subirArchivo } from '../../../services/storage.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
@@ -44,11 +44,14 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   try {
     // 1) Descargar el media desde la Graph API y guardarlo en Supabase Storage
     // (no en disco: el filesystem de Railway es efímero y se pierde en cada redeploy).
+    // El contenido se cifra ANTES de subirlo (sección 9): el bucket de un
+    // tercero nunca guarda el binario en claro, ni siquiera si su config de
+    // privacidad fallara — solo la referencia cifrada vive en la DB (abajo).
     const { buffer, mime } = await downloadMedia(m.mediaId!);
     const ext = mime.includes('pdf') ? 'pdf' : mime.split('/')[1] || 'jpg';
     const filename = `${to}_${Date.now()}.${ext}`;
     const rutaStorage = `comprobantes/${filename}`;
-    await subirArchivo(buffer, rutaStorage, mime);
+    await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
 
     // 2) Vincular al último pedido cotizado/confirmado del cliente (si existe)
     const pedido = await query<{ id: string; zona: string; precio: string; moneda: string | null }>(

@@ -3,7 +3,7 @@ import path from 'path';
 import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol, puedeVerComprobante } from '../../middleware/rbac';
-import { encrypt, decrypt } from '../../services/crypto.service';
+import { encrypt, decrypt, encryptBuffer, decryptBuffer } from '../../services/crypto.service';
 import { enviarTicketPorWhatsApp } from '../../services/pdf.service';
 import { subirArchivo, descargarArchivo } from '../../services/storage.service';
 import { sendText, sendButtons, uploadMedia, sendDocument, motivoErrorWa } from '../whatsapp/graphApi';
@@ -61,7 +61,8 @@ pagosRouter.get('/:id/comprobante', requireRol('admin', 'finanzas'), async (req:
   // basename() evita path traversal aunque el valor descifrado sea de confianza (defensa en profundidad).
   const filename = path.basename(decrypt(pago.url_comprobante));
   try {
-    const buffer = await descargarArchivo(`comprobantes/${filename}`);
+    // El binario se guarda cifrado en el bucket (ver pago.flow.ts); se descifra recién acá, en memoria.
+    const buffer = decryptBuffer(await descargarArchivo(`comprobantes/${filename}`));
     res.setHeader('Content-Type', mimeDeExtension(path.extname(filename)));
     res.send(buffer);
   } catch (e) {
@@ -93,7 +94,7 @@ pagosRouter.get('/:id/adjuntos/:adjuntoId', requireRol('admin', 'finanzas'), asy
 
   const filename = path.basename(decrypt(adjunto.url_comprobante));
   try {
-    const buffer = await descargarArchivo(`comprobantes/${filename}`);
+    const buffer = decryptBuffer(await descargarArchivo(`comprobantes/${filename}`));
     res.setHeader('Content-Type', mimeDeExtension(path.extname(filename)));
     res.send(buffer);
   } catch (e) {
@@ -322,7 +323,10 @@ pagosRouter.post(
 
     const filename = `${req.params.id}_${Date.now()}${ext}`;
     const rutaStorage = `facturas/${filename}`;
-    await subirArchivo(buffer, rutaStorage, contentType);
+    // Cifrado igual que los comprobantes (sección 9): el bucket de terceros
+    // nunca guarda el binario en claro. `buffer` sin cifrar se sigue usando
+    // abajo para reenviarla por WhatsApp.
+    await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
 
     await query('UPDATE pagos SET factura_url = $2 WHERE id = $1', [
       req.params.id,

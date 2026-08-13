@@ -9,13 +9,14 @@ export const choferesRouter = Router();
 choferesRouter.use(requireAuth);
 
 // Presenta un chofer: descifra el DNI solo si el rol tiene permiso; si no, lo enmascara.
+// dni_enc puede ser NULL: se anonimiza a los 365 días de inactivo (sección 9, ver limpieza.cron.ts).
 function presentar(row: any, rol: Rol) {
   return {
     id: row.id,
     nombre: row.nombre,
     telefono: row.telefono,
     activo: row.activo,
-    dni: puedeVerDni(rol) ? decrypt(row.dni_enc) : '••••••',
+    dni: row.dni_enc ? (puedeVerDni(rol) ? decrypt(row.dni_enc) : '••••••') : null,
   };
 }
 
@@ -67,6 +68,13 @@ choferesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Reques
   for (const [k, val] of Object.entries(resto)) {
     params.push(k === 'telefono' ? normalizarTelefonoAR(val as string) : val);
     sets.push(`${k} = $${params.length}`);
+  }
+  // Retención de DNI (sección 9): desactivado_en marca desde cuándo cuenta
+  // el plazo de anonimización (limpieza.cron.ts); se limpia si se reactiva.
+  if (resto.activo === false) {
+    sets.push('desactivado_en = now()');
+  } else if (resto.activo === true) {
+    sets.push('desactivado_en = NULL');
   }
   // El DNI no es una columna directa: se guarda cifrado + su blind index de búsqueda.
   if (dni) {

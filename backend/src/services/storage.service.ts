@@ -30,3 +30,9 @@ export async function descargarArchivo(ruta: string): Promise<Buffer> {
   if (error) throw error;
   return Buffer.from(await data.arrayBuffer());
 }
+
+/** Borra un archivo del bucket (retención de comprobantes, ver limpieza.cron.ts). */
+export async function borrarArchivo(ruta: string): Promise<void> {
+  const { error } = await getClient().storage.from(env.SUPABASE_STORAGE_BUCKET).remove([ruta]);
+  if (error) throw error;
+}

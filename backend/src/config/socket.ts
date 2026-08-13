@@ -11,6 +11,14 @@ let io: IOServer | null = null;
 export function initSocket(server: HttpServer): IOServer {
   io = new IOServer(server, {
     cors: { origin: env.CORS_ORIGIN, credentials: true },
+    // Default (20s) es muy corto: con la pestaña en segundo plano el browser
+    // throttlea los timers y puede no llegar a responder el pong a tiempo,
+    // así que el server la desconecta ("ping timeout") sin que la conexión
+    // esté realmente muerta. Chrome limita esos timers a 1 vez por minuto
+    // pasados ~5 min en background, así que 120s da margen de sobra sin
+    // tardar mucho más en detectar una desconexión real.
+    pingInterval: 25000,
+    pingTimeout: 120000,
   });
 
   // Autenticación del socket con el access token del panel: ya no viaja en
