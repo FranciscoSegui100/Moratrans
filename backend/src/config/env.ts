@@ -50,6 +50,14 @@ const schema = z.object({
 
   // Clave de cifrado en reposo: 64 caracteres hex (32 bytes) para AES-256-GCM.
   ENCRYPTION_KEY: z.string().regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY debe ser 64 hex (32 bytes)'),
+
+  // Cuenta a la que el cliente transfiere para pagar (se muestra en el chat,
+  // ver pago.flow.ts / cotizacion.flow.ts). Los defaults son de ejemplo — NO
+  // son datos reales, hay que pisarlos en Railway antes de ir a producción
+  // (ver el warning en el arranque, más abajo).
+  PAGO_CBU: z.string().default('0000003100000000000001'),
+  PAGO_ALIAS: z.string().default('MORATRANS.PAGOS'),
+  PAGO_TITULAR_CUENTA: z.string().default('Moratrans SA'),
 }).superRefine((val, ctx) => {
   // En producción el secreto del webhook es obligatorio: sin él, verifySignature
   // quedaría en modo "permitir todo" y cualquiera podría spoofear mensajes de WhatsApp.
@@ -80,3 +88,20 @@ if (!parsed.success) {
 
 export const env = parsed.data;
 export const isProd = env.NODE_ENV === 'production';
+
+// Los datos bancarios de ejemplo son EXACTAMENTE los defaults de arriba: si
+// en producción no se pisó ni uno, el bot le estaría mostrando al cliente un
+// CBU/alias inventado para que transfiera plata ahí. No bloquea el arranque
+// (a diferencia de WA_APP_SECRET) porque no es un problema de seguridad del
+// backend en sí, pero no puede pasar desapercibido.
+if (
+  isProd &&
+  env.PAGO_CBU === '0000003100000000000001' &&
+  env.PAGO_ALIAS === 'MORATRANS.PAGOS' &&
+  env.PAGO_TITULAR_CUENTA === 'Moratrans SA'
+) {
+  console.warn(
+    '⚠ PAGO_CBU / PAGO_ALIAS / PAGO_TITULAR_CUENTA siguen en el valor de EJEMPLO en producción — ' +
+      'el bot le va a mostrar datos de pago inventados a los clientes. Configuralas en Railway.',
+  );
+}

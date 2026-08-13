@@ -176,6 +176,7 @@ CREATE TABLE pagos (
   url_comprobante  TEXT,                        -- ruta/URL del media descargado de Meta
   media_id         TEXT,                        -- id original del media en Graph API
   factura_url      TEXT,                        -- ruta cifrada de la factura cargada por un operador
+  titular_transferencia TEXT,                   -- a nombre de quién hizo la transferencia (lo pide el bot, ver pago.flow.ts)
   estado           estado_pago NOT NULL DEFAULT 'pendiente',
   validado_por     UUID REFERENCES usuarios(id) ON DELETE SET NULL,
   motivo_rechazo   TEXT,

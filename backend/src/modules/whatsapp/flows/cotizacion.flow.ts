@@ -1,6 +1,7 @@
 import { query } from '../../../config/db';
 import { sendText, sendList, sendButtons, sendLocationRequest } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
+import { datosBancarios } from './pago.flow';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -164,7 +165,9 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       `📦 *Cotización — ${departamento}*\n` +
         `Precio del flete: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
         `Entrega en: ${destinoDireccion ?? `📍 ubicación compartida (${destinoLat}, ${destinoLng})`}\n\n` +
-        `Para reservar, hacé el pago y enviános el comprobante por este chat 📎\n` +
+        `Para reservar, hacé el pago con estos datos:\n\n` +
+        `${datosBancarios()}\n\n` +
+        `Y enviános el comprobante por este chat 📎\n` +
         `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +
         `_Escribí *menú* para volver al inicio en cualquier momento._`,
     );

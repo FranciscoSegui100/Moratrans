@@ -19,6 +19,7 @@ interface Pago {
   moneda: string | null;
   creado_en: string;
   adjuntos_count: number;
+  titular_transferencia: string | null;
 }
 
 interface Chofer { id: string; nombre: string; activo: boolean; }
@@ -154,6 +155,9 @@ export function Pagos() {
                     {p.precio ? `${p.moneda ?? ''} ${Number(p.precio).toLocaleString('es-AR')}`.trim() : 'Sin monto'} ·{' '}
                     {new Date(p.creado_en).toLocaleString('es-UY')}
                   </div>
+                  {p.titular_transferencia && (
+                    <div className="pago-detail">Transferencia a nombre de: <strong>{p.titular_transferencia}</strong></div>
+                  )}
                   <RoleGate roles={['admin', 'finanzas']}>
                     {p.url_comprobante ? (
                       <ComprobanteViewer pagoId={p.id} />

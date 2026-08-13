@@ -5,8 +5,25 @@ import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { encrypt, encryptBuffer } from '../../../services/crypto.service';
 import { subirArchivo } from '../../../services/storage.service';
+import { env } from '../../../config/env';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
+
+/**
+ * Datos de la cuenta a la que el cliente tiene que transferir, para
+ * mostrarlos ANTES de pedirle el comprobante (nunca después de que ya lo
+ * mandó). Vienen de env (PAGO_CBU/PAGO_ALIAS/PAGO_TITULAR_CUENTA, ver
+ * env.ts) — así se pueden cambiar sin tocar código. Se usa acá y en
+ * cotizacion.flow.ts.
+ */
+export function datosBancarios(): string {
+  return (
+    `🏦 *Datos para transferir*\n` +
+    `CBU: ${env.PAGO_CBU}\n` +
+    `Alias: ${env.PAGO_ALIAS}\n` +
+    `Titular: ${env.PAGO_TITULAR_CUENTA}`
+  );
+}
 
 /**
  * Flujo de pago:
@@ -14,23 +31,32 @@ import type { Sesion } from '../session.store';
  *    y se registra el pago como 'pendiente'.
  *  - IMPORTANTE: NO se crea ticket ni se reserva contenedor. Eso ocurre
  *    únicamente cuando un operador valida el pago en el panel (fn_validar_pago).
- *  - Tras registrar el comprobante, se le pregunta al cliente si necesita
- *    factura; si dice que sí, se avisa al panel para que un operador la cargue.
+ *  - Tras registrar el comprobante, se pregunta a nombre de quién es la
+ *    transferencia (para poder conciliarla) y si necesita factura; si dice
+ *    que sí, se avisa al panel para que un operador la cargue.
  */
 export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
+
+  // Respuesta a "¿A nombre de quién es la transferencia?"
+  if (sesion.paso === 'esperando_titular') {
+    return manejarTitular(m, sesion);
+  }
 
   // Respuesta a "¿Necesitás factura?"
   if (sesion.paso === 'preguntar_factura') {
     return manejarRespuestaFactura(m, sesion);
   }
 
-  // Si el usuario escribió "Ya pagué" sin adjuntar nada aún:
+  // Si el usuario escribió "Ya pagué" (o "pago"/"pagar"/etc, ver messageRouter)
+  // sin adjuntar nada aún: mostrarle los datos para transferir ANTES de
+  // pedirle el comprobante.
   if (m.tipo === 'text') {
     await setSesion({ ...sesion, flujo: 'pago', paso: 'esperando_comprobante', contexto: {} });
     await sendText(
       to,
-      '💸 ¡Genial! Enviame la *foto o PDF* del comprobante de transferencia y lo registro para validación.\n\n' +
+      `${datosBancarios()}\n\n` +
+        '💸 Transferí y mandame por acá la *foto o PDF* del comprobante (o escribí *Ya pagué* cuando lo hayas hecho, si preferís avisarme antes).\n\n' +
         '_Escribí *menú* si te arrepentiste y querés volver al inicio._',
     );
     return;
@@ -140,16 +166,48 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
           '_Si en un rato no tenés novedades, escribí *asesor*._',
     );
 
-    // 6) Preguntar si necesita factura (la carga un operador desde el panel).
-    await setSesion({ telefono: to, flujo: 'pago', paso: 'preguntar_factura', contexto: { pagoId } });
-    await sendButtons(to, '🧾 ¿Necesitás que te mandemos la factura?', [
-      { id: 'factura_si', title: '🧾 Sí, quiero' },
-      { id: 'factura_no', title: '👍 No, gracias' },
-    ]);
+    // 6) A nombre de quién es la transferencia (para poder conciliarla) —
+    //    solo se pregunta una vez por solicitud: si es un adjunto de una
+    //    solicitud que ya pasó por acá, se salta directo a la pregunta de
+    //    factura en vez de repetirla.
+    if (esAdjunto) {
+      await preguntarFactura(to, pagoId);
+    } else {
+      await setSesion({ telefono: to, flujo: 'pago', paso: 'esperando_titular', contexto: { pagoId } });
+      await sendText(to, '🙋 ¿A nombre de quién es la transferencia?');
+    }
   } catch (err) {
     console.error('Error en flujo de pago:', err);
     await sendText(to, '⚠️ Tuvimos un problema al procesar el comprobante. Probá reenviarlo en unos minutos.');
   }
+}
+
+/** Maneja la respuesta a "¿A nombre de quién es la transferencia?". */
+async function manejarTitular(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const pagoId = sesion.contexto?.pagoId as string | undefined;
+  if (!pagoId) {
+    await clearSesion(to);
+    return;
+  }
+
+  const titular = (m.texto ?? '').trim();
+  if (m.tipo !== 'text' || titular.length < 2) {
+    await sendText(to, '🙋 Decime el nombre (persona o empresa) a nombre de quién hiciste la transferencia.');
+    return;
+  }
+
+  await query('UPDATE pagos SET titular_transferencia = $1 WHERE id = $2', [titular, pagoId]);
+  await preguntarFactura(to, pagoId);
+}
+
+/** Pregunta si necesita factura (la carga un operador desde el panel). */
+async function preguntarFactura(to: string, pagoId: string): Promise<void> {
+  await setSesion({ telefono: to, flujo: 'pago', paso: 'preguntar_factura', contexto: { pagoId } });
+  await sendButtons(to, '🧾 ¿Necesitás que te mandemos la factura?', [
+    { id: 'factura_si', title: '🧾 Sí, quiero' },
+    { id: 'factura_no', title: '👍 No, gracias' },
+  ]);
 }
 
 /** Maneja la respuesta a "¿Necesitás factura?" tras registrar el comprobante. */

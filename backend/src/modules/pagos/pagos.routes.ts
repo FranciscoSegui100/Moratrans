@@ -28,6 +28,7 @@ pagosRouter.get('/', async (req: Request, res: Response) => {
   const estado = (req.query.estado as string) || 'pendiente';
   const rows = await query(
     `SELECT p.id, p.cliente_telefono, p.monto, p.url_comprobante, p.estado, p.creado_en,
+            p.titular_transferencia,
             pe.zona, pe.precio, td.moneda,
             (SELECT COUNT(*) FROM pagos_adjuntos pa WHERE pa.pago_id = p.id)::int AS adjuntos_count
        FROM pagos p
