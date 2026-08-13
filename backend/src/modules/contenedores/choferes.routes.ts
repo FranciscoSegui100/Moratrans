@@ -91,6 +91,22 @@ choferesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Reques
   }
 });
 
+/**
+ * POST /api/choferes/:id/desvincular — libera el número de WhatsApp del
+ * chofer (solo admin/operador). Paso explícito requerido antes de poder
+ * vincular ese número a otro chofer: sin esto, la única forma de "liberarlo"
+ * era pisar el campo `telefono` a mano con cualquier otro valor desde el
+ * PATCH genérico (sección 23 del documento maestro).
+ */
+choferesRouter.post('/:id/desvincular', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const [row] = await query(
+    `UPDATE choferes SET telefono = NULL WHERE id = $1 RETURNING id, nombre, dni_enc, telefono, activo`,
+    [req.params.id],
+  );
+  if (!row) return res.status(404).json({ error: 'Chofer inexistente' });
+  res.json(presentar(row, req.user!.rol));
+});
+
 /** DELETE /api/choferes/:id — borrar un chofer (solo admin/operador). */
 choferesRouter.delete('/:id', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   try {

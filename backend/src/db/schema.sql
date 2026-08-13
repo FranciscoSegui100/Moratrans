@@ -102,10 +102,12 @@ CREATE TABLE choferes (
   dni_enc   TEXT    NOT NULL,                 -- ciphertext base64 (iv:tag:data)
   -- Blind index (HMAC determinístico) para poder buscar por DNI sin descifrar.
   dni_hash  TEXT    NOT NULL UNIQUE,
-  telefono  TEXT    NOT NULL UNIQUE,          -- se usa para autoidentificar en WA
+  telefono  TEXT,                             -- se usa para autoidentificar en WA; NULL = desvinculado
   activo    BOOLEAN NOT NULL DEFAULT TRUE,
   creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Único cuando hay teléfono: dos choferes desvinculados (NULL) no chocan entre sí.
+CREATE UNIQUE INDEX choferes_telefono_key ON choferes(telefono) WHERE telefono IS NOT NULL;
 
 -- ---------------------------------------------------------------------
 -- 4. TARIFAS (consultadas por el bot, NUNCA hardcodeadas)
@@ -179,6 +181,18 @@ CREATE TABLE pagos (
 );
 CREATE INDEX idx_pagos_estado   ON pagos(estado);
 CREATE INDEX idx_pagos_telefono ON pagos(cliente_telefono);
+
+-- Comprobantes adicionales de un pago que ya está pendiente de validar (ej.
+-- llega un segundo comprobante para la misma cotización): se cuelgan acá en
+-- vez de crear un pago/alerta duplicados (ver pago.flow.ts).
+CREATE TABLE pagos_adjuntos (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  pago_id         UUID NOT NULL REFERENCES pagos(id) ON DELETE CASCADE,
+  url_comprobante TEXT NOT NULL,
+  media_id        TEXT,
+  creado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_pagos_adjuntos_pago ON pagos_adjuntos(pago_id);
 
 -- El ticket + la reserva SÓLO se crean cuando un operador valida el pago.
 CREATE TABLE tickets (
@@ -430,6 +444,7 @@ ALTER TABLE contenedores           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE historial_contenedores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pedidos                ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pagos                  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pagos_adjuntos         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tickets                ENABLE ROW LEVEL SECURITY;
 ALTER TABLE alertas                ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sesiones_chat          ENABLE ROW LEVEL SECURITY;

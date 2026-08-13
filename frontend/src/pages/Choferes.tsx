@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Pencil, Trash2 } from 'lucide-react';
+import { Check, Pencil, Trash2, Unlink } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 
-interface Chofer { id: string; nombre: string; dni: string; telefono: string; activo: boolean; }
+interface Chofer { id: string; nombre: string; dni: string; telefono: string | null; activo: boolean; }
 
 function initials(name: string) {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -44,7 +44,7 @@ export function Choferes() {
 
   function empezarEdicion(c: Chofer) {
     setEditando(c.id);
-    setEdit({ nombre: c.nombre, dni: c.dni === '••••••' ? '' : c.dni, telefono: c.telefono });
+    setEdit({ nombre: c.nombre, dni: c.dni === '••••••' ? '' : c.dni, telefono: c.telefono ?? '' });
   }
 
   async function guardarEdicion(id: string) {
@@ -68,6 +68,17 @@ export function Choferes() {
       cargar();
     } catch {
       show('error', 'No se pudo cambiar el estado');
+    }
+  }
+
+  async function desvincular(id: string, nombre: string) {
+    if (!confirm(`¿Desvincular el número de WhatsApp de ${nombre}? Podrá vincularse a otro chofer recién después de esto.`)) return;
+    try {
+      await api.post(`/api/choferes/${id}/desvincular`);
+      cargar();
+      show('info', 'Número desvinculado', nombre);
+    } catch {
+      show('error', 'No se pudo desvincular el número');
     }
   }
 
@@ -166,8 +177,10 @@ export function Choferes() {
                         value={edit.telefono}
                         onChange={(e) => setEdit({ ...edit, telefono: e.target.value })}
                       />
-                    ) : (
+                    ) : c.telefono ? (
                       c.telefono
+                    ) : (
+                      <span className="text-muted">Sin vincular</span>
                     )}
                   </td>
                   <td>
@@ -191,6 +204,15 @@ export function Choferes() {
                           <button onClick={() => empezarEdicion(c)} className="btn btn-ghost btn-sm">
                             <Pencil strokeWidth={1.75} /> Editar
                           </button>
+                          {c.telefono && (
+                            <button
+                              onClick={() => desvincular(c.id, c.nombre)}
+                              className="btn btn-ghost btn-sm"
+                              title="Libera el número para poder vincularlo a otro chofer"
+                            >
+                              <Unlink strokeWidth={1.75} /> Desvincular
+                            </button>
+                          )}
                           <button onClick={() => toggleActivo(c)} className="btn btn-ghost btn-sm">
                             {c.activo ? 'Desactivar' : 'Activar'}
                           </button>

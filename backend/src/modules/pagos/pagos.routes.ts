@@ -28,7 +28,8 @@ pagosRouter.get('/', async (req: Request, res: Response) => {
   const estado = (req.query.estado as string) || 'pendiente';
   const rows = await query(
     `SELECT p.id, p.cliente_telefono, p.monto, p.url_comprobante, p.estado, p.creado_en,
-            pe.zona, pe.precio, td.moneda
+            pe.zona, pe.precio, td.moneda,
+            (SELECT COUNT(*) FROM pagos_adjuntos pa WHERE pa.pago_id = p.id)::int AS adjuntos_count
        FROM pagos p
        LEFT JOIN pedidos pe ON pe.id = p.pedido_id
        LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
@@ -65,6 +66,38 @@ pagosRouter.get('/:id/comprobante', requireRol('admin', 'finanzas'), async (req:
     res.send(buffer);
   } catch (e) {
     console.error('Error descargando comprobante de Supabase Storage:', e);
+    res.status(404).json({ error: 'Archivo no encontrado en el storage' });
+  }
+});
+
+/**
+ * GET /api/pagos/:id/adjuntos — comprobantes adicionales de un pago (llegaron
+ * después del primero, ver pago.flow.ts). Mismo criterio de acceso que el
+ * comprobante principal (admin/finanzas).
+ */
+pagosRouter.get('/:id/adjuntos', requireRol('admin', 'finanzas'), async (req: Request, res: Response) => {
+  const rows = await query<{ id: string; creado_en: string }>(
+    'SELECT id, creado_en FROM pagos_adjuntos WHERE pago_id = $1 ORDER BY creado_en',
+    [req.params.id],
+  );
+  res.json(rows);
+});
+
+/** GET /api/pagos/:id/adjuntos/:adjuntoId — sirve el archivo de un comprobante adicional. */
+pagosRouter.get('/:id/adjuntos/:adjuntoId', requireRol('admin', 'finanzas'), async (req: Request, res: Response) => {
+  const [adjunto] = await query<{ url_comprobante: string }>(
+    'SELECT url_comprobante FROM pagos_adjuntos WHERE id = $1 AND pago_id = $2',
+    [req.params.adjuntoId, req.params.id],
+  );
+  if (!adjunto) return res.status(404).json({ error: 'Adjunto no encontrado' });
+
+  const filename = path.basename(decrypt(adjunto.url_comprobante));
+  try {
+    const buffer = await descargarArchivo(`comprobantes/${filename}`);
+    res.setHeader('Content-Type', mimeDeExtension(path.extname(filename)));
+    res.send(buffer);
+  } catch (e) {
+    console.error('Error descargando adjunto de Supabase Storage:', e);
     res.status(404).json({ error: 'Archivo no encontrado en el storage' });
   }
 });

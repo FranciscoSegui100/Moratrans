@@ -2,7 +2,7 @@ import { query } from '../../../config/db';
 import { sendText, sendButtons } from '../graphApi';
 import { downloadMedia } from '../graphApi';
 import { clearSesion, setSesion } from '../session.store';
-import { emitAlerta } from '../../../config/socket';
+import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { encrypt } from '../../../services/crypto.service';
 import { subirArchivo } from '../../../services/storage.service';
 import type { MensajeEntrante } from '../messageRouter';
@@ -62,15 +62,47 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
 
     // 3) Registrar el pago como PENDIENTE (no se crea ticket).
     //    La ruta del comprobante se guarda CIFRADA en reposo.
+    //    Si ya hay un pago pendiente para el mismo pedido, este comprobante
+    //    se agrega como adjunto de esa misma solicitud en vez de duplicar el
+    //    registro y la alerta de validación (sección 23, caso borde de
+    //    comprobante duplicado).
+    const pedidoId = pedido[0]?.id ?? null;
     const rutaCifrada = encrypt(rutaStorage);
-    const [pago] = await query<{ id: string }>(
-      `INSERT INTO pagos (cliente_telefono, pedido_id, url_comprobante, media_id, estado)
-       VALUES ($1,$2,$3,$4,'pendiente')
-       RETURNING id`,
-      [to, pedido[0]?.id ?? null, rutaCifrada, m.mediaId],
-    );
 
-    // 4) Alerta para el panel + push en tiempo real.
+    let pendienteId: string | null = null;
+    if (pedidoId) {
+      const [pendiente] = await query<{ id: string }>(
+        `SELECT id FROM pagos WHERE pedido_id = $1 AND estado = 'pendiente' ORDER BY creado_en DESC LIMIT 1`,
+        [pedidoId],
+      );
+      pendienteId = pendiente?.id ?? null;
+    }
+    const esAdjunto = pendienteId !== null;
+
+    let pagoId: string;
+    if (esAdjunto) {
+      pagoId = pendienteId as string;
+      await query(
+        `INSERT INTO pagos_adjuntos (pago_id, url_comprobante, media_id) VALUES ($1,$2,$3)`,
+        [pagoId, rutaCifrada, m.mediaId],
+      );
+      // Este INSERT viene del webhook, no de la API del panel: no pasa por
+      // broadcastCambios, así que la pestaña Pagos quedaba desactualizada
+      // hasta hacer F5 (igual criterio que chofer.flow.ts).
+      emitRecursoActualizado('pagos');
+    } else {
+      const [pago] = await query<{ id: string }>(
+        `INSERT INTO pagos (cliente_telefono, pedido_id, url_comprobante, media_id, estado)
+         VALUES ($1,$2,$3,$4,'pendiente')
+         RETURNING id`,
+        [to, pedidoId, rutaCifrada, m.mediaId],
+      );
+      pagoId = pago.id;
+    }
+
+    // 4) Alerta para el panel + push en tiempo real. Si es un adjunto de un
+    //    pago que ya tenía alerta abierta, el ON CONFLICT la deja como está
+    //    (mismo pagoId = misma referencia_id) en vez de duplicarla.
     //    Se enriquece con los datos del pago/pedido para que el operador pueda
     //    ver el comprobante y decidir (validar/rechazar) sin salir de la bandeja.
     const [alerta] = await query(
@@ -78,7 +110,7 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
        VALUES ('pago_pendiente_validacion', $1, $2)
        ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
        RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [pago.id, `Nuevo comprobante de ${to} pendiente de validar`],
+      [pagoId, `Nuevo comprobante de ${to} pendiente de validar`],
     );
     if (alerta) {
       emitAlerta({
@@ -96,13 +128,17 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     // 5) Confirmar al cliente (sin prometer reserva automática)
     await sendText(
       to,
-      '✅ ¡Recibido! Tu comprobante quedó *pendiente de validación* por un operador.\n' +
-        'En cuanto lo confirmemos te mandamos el *ticket* con el contenedor asignado. 📦\n\n' +
-        '_Si en un rato no tenés novedades, escribí *asesor*._',
+      esAdjunto
+        ? '✅ ¡Recibido! Sumamos este comprobante a tu solicitud que ya estaba *pendiente de validación*.\n' +
+          'En cuanto la confirmemos te mandamos el *ticket* con el contenedor asignado. 📦\n\n' +
+          '_Si en un rato no tenés novedades, escribí *asesor*._'
+        : '✅ ¡Recibido! Tu comprobante quedó *pendiente de validación* por un operador.\n' +
+          'En cuanto lo confirmemos te mandamos el *ticket* con el contenedor asignado. 📦\n\n' +
+          '_Si en un rato no tenés novedades, escribí *asesor*._',
     );
 
     // 6) Preguntar si necesita factura (la carga un operador desde el panel).
-    await setSesion({ telefono: to, flujo: 'pago', paso: 'preguntar_factura', contexto: { pagoId: pago.id } });
+    await setSesion({ telefono: to, flujo: 'pago', paso: 'preguntar_factura', contexto: { pagoId } });
     await sendButtons(to, '🧾 ¿Necesitás que te mandemos la factura?', [
       { id: 'factura_si', title: '🧾 Sí, quiero' },
       { id: 'factura_no', title: '👍 No, gracias' },

@@ -18,10 +18,34 @@ interface Pago {
   precio: string | null;
   moneda: string | null;
   creado_en: string;
+  adjuntos_count: number;
 }
 
 interface Chofer { id: string; nombre: string; activo: boolean; }
 interface Contenedor { numero: string; estado: string; }
+interface Adjunto { id: string; creado_en: string; }
+
+/**
+ * Comprobantes adicionales de un pago (llegaron después del primero porque
+ * el cliente reenvió el pago de la misma cotización — sección 23, caso
+ * borde de comprobante duplicado). Se cargan aparte para no pedirlos si no
+ * hay ninguno.
+ */
+function AdjuntosPago({ pagoId }: { pagoId: string }) {
+  const { data: adjuntos = [] } = useQuery({
+    queryKey: ['pagos', pagoId, 'adjuntos'],
+    queryFn: () => api.get<Adjunto[]>(`/api/pagos/${pagoId}/adjuntos`).then((r) => r.data),
+  });
+  if (adjuntos.length === 0) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
+      <span className="text-muted">Comprobantes adicionales de esta solicitud:</span>
+      {adjuntos.map((a) => (
+        <ComprobanteViewer key={a.id} pagoId={pagoId} adjuntoId={a.id} />
+      ))}
+    </div>
+  );
+}
 
 export function Pagos() {
   const { show } = useToast();
@@ -136,6 +160,7 @@ export function Pagos() {
                     ) : (
                       <span className="text-muted">Sin comprobante</span>
                     )}
+                    {p.adjuntos_count > 0 && <AdjuntosPago pagoId={p.id} />}
                   </RoleGate>
                 </div>
 

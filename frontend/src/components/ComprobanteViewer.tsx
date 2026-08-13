@@ -2,8 +2,12 @@ import { useEffect, useState } from 'react';
 import { FileText } from 'lucide-react';
 import { api } from '../api/client';
 
-/** Descarga el comprobante autenticado (Bearer) y lo muestra como imagen o link a PDF. */
-export function ComprobanteViewer({ pagoId }: { pagoId: string }) {
+/**
+ * Descarga el comprobante autenticado (Bearer) y lo muestra como imagen o
+ * link a PDF. Si se pasa `adjuntoId`, descarga un comprobante adicional del
+ * mismo pago (ver pagos_adjuntos) en vez del principal.
+ */
+export function ComprobanteViewer({ pagoId, adjuntoId }: { pagoId: string; adjuntoId?: string }) {
   const [url, setUrl] = useState<string | null>(null);
   const [esPdf, setEsPdf] = useState(false);
   const [error, setError] = useState(false);
@@ -11,9 +15,12 @@ export function ComprobanteViewer({ pagoId }: { pagoId: string }) {
   useEffect(() => {
     let objectUrl: string | null = null;
     let cancelado = false;
+    const endpoint = adjuntoId
+      ? `/api/pagos/${pagoId}/adjuntos/${adjuntoId}`
+      : `/api/pagos/${pagoId}/comprobante`;
 
     api
-      .get(`/api/pagos/${pagoId}/comprobante`, { responseType: 'blob' })
+      .get(endpoint, { responseType: 'blob' })
       .then((r) => {
         if (cancelado) return;
         objectUrl = URL.createObjectURL(r.data);
@@ -26,7 +33,7 @@ export function ComprobanteViewer({ pagoId }: { pagoId: string }) {
       cancelado = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [pagoId]);
+  }, [pagoId, adjuntoId]);
 
   if (error) return <div className="comprobante-error">No se pudo cargar el comprobante</div>;
   if (!url) return <div className="comprobante-loading">Cargando comprobante…</div>;
