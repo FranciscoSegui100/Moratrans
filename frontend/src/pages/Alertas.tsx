@@ -10,7 +10,7 @@ import { api } from '../api/client';
 import { tipoLabel } from '../lib/alertLabels';
 
 interface Chofer { id: string; nombre: string; activo: boolean; }
-interface Contenedor { numero: string; estado: string; }
+interface Contenedor { numero: string; estado: string; vence_en: string | null; }
 
 export function Alertas() {
   const { alertas: todasLasAlertas, resolver, validarPago, rechazarPago, confirmarRetiro, enviarFactura } = useAlertas();
@@ -26,9 +26,9 @@ export function Alertas() {
     queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data.filter((c) => c.activo)),
   });
 
-  const { data: contenedoresDisponibles = [] } = useQuery({
-    queryKey: ['contenedores', 'disponibles'],
-    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data.filter((c) => c.estado === 'disponible')),
+  const { data: contenedores = [] } = useQuery({
+    queryKey: ['contenedores'],
+    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
   });
 
   async function onValidar(pagoId: string, payload: ValidarPagoPayload) {
@@ -36,7 +36,13 @@ export function Alertas() {
     try {
       const data = await validarPago(pagoId, payload);
       setValidandoId(null);
-      show('success', 'Pago validado', `Ticket ${data.ticket_id} — contenedor ${data.contenedor}`);
+      show(
+        'success',
+        'Pago validado',
+        data.reservado_ahora
+          ? `Ticket ${data.ticket_id} — contenedor ${data.contenedor}`
+          : `Ticket ${data.ticket_id} — contenedor ${data.contenedor} reservado a futuro, todavía está ocupado`,
+      );
     } catch (e: any) {
       show('error', 'Error al validar', e.response?.data?.error || 'Error desconocido');
     } finally {
@@ -226,7 +232,7 @@ export function Alertas() {
                 {expandida && (
                   <ValidarPagoForm
                     choferes={choferes}
-                    contenedoresDisponibles={contenedoresDisponibles}
+                    contenedores={contenedores}
                     procesando={procesando === a.referencia_id}
                     onConfirm={(payload) => onValidar(a.referencia_id, payload)}
                     onCancel={() => setValidandoId(null)}

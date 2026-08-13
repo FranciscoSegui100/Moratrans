@@ -73,7 +73,7 @@ export function useAlertas() {
   async function validarPago(pagoId: string, payload: ValidarPagoPayload = {}) {
     const { data } = await api.post(`/api/pagos/${pagoId}/validar`, payload);
     quitarAlerta('pago_pendiente_validacion', pagoId);
-    return data as { ticket_id: string; contenedor: string };
+    return data as { ticket_id: string; contenedor: string; reservado_ahora: boolean };
   }
 
   /** Rechaza el pago (el backend resuelve la alerta y avisa al cliente por WhatsApp). */

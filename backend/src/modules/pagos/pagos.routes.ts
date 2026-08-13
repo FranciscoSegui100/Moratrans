@@ -109,6 +109,9 @@ const validarSchema = z.object({
   choferId: z.string().uuid().optional(),
   venceEn: z.string().optional(), // fecha (YYYY-MM-DD) en la que vence/hay que retirar el contenedor
   contenedorNumero: z.string().optional(), // si no se manda, fn_validar_pago toma el primero disponible
+  // Requerida solo si el contenedor elegido está ocupado: para qué fecha se
+  // arma la entrega (no puede ser antes de que ese contenedor vuelva).
+  fechaEntrega: z.string().optional(),
 });
 
 /**
@@ -155,6 +158,23 @@ async function avisarChoferAsignacion(
 }
 
 /**
+ * Aviso liviano (sin el menú de botones de avisarChoferAsignacion, que es
+ * para una entrega ya en marcha) cuando el contenedor asignado todavía está
+ * ocupado con otro cliente: el chofer se entera de que tiene una entrega
+ * reservada para más adelante, pero recién puede actuar cuando el
+ * contenedor vuelva (ahí se le vuelve a avisar, ver confirmar-retiro).
+ */
+async function avisarChoferReservaFutura(choferId: string, contenedor: string, fechaEntrega: string): Promise<void> {
+  const [chofer] = await query<{ telefono: string | null }>('SELECT telefono FROM choferes WHERE id = $1', [choferId]);
+  if (!chofer?.telefono) return;
+  await sendText(
+    chofer.telefono,
+    `📦 Te quedó reservada una entrega del contenedor *${contenedor}*, pero todavía está con otro cliente.\n` +
+      `Prevista para el ${new Date(fechaEntrega).toLocaleDateString('es-AR')} — te avisamos apenas esté listo para salir.`,
+  );
+}
+
+/**
  * POST /api/pagos/:id/validar — SÓLO operador/admin/finanzas.
  * Llama a fn_validar_pago (atómico): reserva contenedor + crea ticket.
  * Opcionalmente, el operador indica cuántos días va a demorar el retiro,
@@ -166,12 +186,35 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
   const pagoId = req.params.id;
   const parsed = validarSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const { diasDemora, choferId, venceEn, contenedorNumero } = parsed.data;
+  const { diasDemora, choferId, venceEn, contenedorNumero, fechaEntrega } = parsed.data;
+  const contenedorNorm = contenedorNumero?.trim().toUpperCase() || null;
 
   try {
-    const [result] = await query<{ ticket_id: string; contenedor: string }>(
+    // Pre-chequeo liviano: si el contenedor elegido ya está ocupado, la
+    // fecha de entrega es obligatoria y no puede ser anterior a su vuelta.
+    // La comprobación definitiva (con lock de fila) la hace fn_validar_pago
+    // más abajo — esto solo evita validar el pago y quedarnos sin poder
+    // crear el viaje futuro después por un dato faltante.
+    if (contenedorNorm) {
+      const [contPrevio] = await query<{ estado: string; vence_en: string | null }>(
+        'SELECT estado, vence_en FROM contenedores WHERE numero = $1',
+        [contenedorNorm],
+      );
+      if (contPrevio && contPrevio.estado !== 'disponible') {
+        if (!fechaEntrega) {
+          return res.status(400).json({ error: 'Ese contenedor está ocupado: indicá la fecha de entrega (no puede ser antes de que vuelva).' });
+        }
+        if (contPrevio.vence_en && fechaEntrega < new Date(contPrevio.vence_en).toISOString().slice(0, 10)) {
+          return res.status(400).json({
+            error: `Ese contenedor vuelve el ${new Date(contPrevio.vence_en).toLocaleDateString('es-AR')}; elegí esa fecha o una posterior.`,
+          });
+        }
+      }
+    }
+
+    const [result] = await query<{ ticket_id: string; contenedor: string; reservado_ahora: boolean }>(
       'SELECT * FROM fn_validar_pago($1, $2, $3)',
-      [pagoId, req.user!.id, contenedorNumero?.trim().toUpperCase() || null],
+      [pagoId, req.user!.id, contenedorNorm],
     );
 
     // Datos para el ticket + para avisarle al chofer adónde tiene que llevar el contenedor.
@@ -194,33 +237,53 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       [pagoId],
     );
 
-    if (venceEn) {
-      await query('UPDATE contenedores SET vence_en = $1 WHERE numero = $2', [venceEn, result.contenedor]);
-    }
-    if (choferId) {
+    if (result.reservado_ahora) {
+      if (venceEn) {
+        await query('UPDATE contenedores SET vence_en = $1 WHERE numero = $2', [venceEn, result.contenedor]);
+      }
+      if (choferId) {
+        await query(
+          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas)
+           VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', 'Asignado al validar el pago')`,
+          [venceEn ?? null, choferId, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null],
+        );
+
+        // Avisamos al chofer por WhatsApp: qué contenedor, a quién y adónde. No
+        // bloquea la respuesta del panel si falla el envío, pero si falla queda
+        // una alerta en el panel — si no, el chofer nunca se entera de la
+        // entrega y nadie lo nota hasta que pregunte por qué no salió.
+        avisarChoferAsignacion(choferId, result.contenedor, info).catch((e) => {
+          const motivo = motivoErrorWa(e);
+          console.error('Error avisando al chofer la asignación:', motivo);
+          notificarEnvioFallido(result.contenedor, `chofer de ${result.contenedor}`, 'aviso de entrega asignada', motivo).catch(
+            (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+          );
+        });
+      }
+      if (diasDemora != null) {
+        sendText(
+          info.cliente_telefono,
+          `📅 Tu contenedor se pasará a recoger en *${diasDemora} día${diasDemora === 1 ? '' : 's'}* desde la entrega del mismo.`,
+        ).catch((e) => console.error('Error avisando plazo de retiro:', motivoErrorWa(e)));
+      }
+    } else {
+      // Contenedor todavía ocupado: dejamos el viaje futuro registrado (con o
+      // sin chofer) para que quede "tomado" — fn_validar_pago ya comprobó que
+      // nadie más lo tiene reservado. No se manda el aviso de entrega en
+      // firme (avisarChoferAsignacion) ni el plazo de retiro al cliente
+      // todavía: ninguno de los dos aplica hasta que el contenedor vuelva de
+      // verdad (ver POST /api/contenedores/:numero/confirmar-retiro, que
+      // promueve el contenedor a 'reservado' en ese momento).
       await query(
         `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas)
-         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', 'Asignado al validar el pago')`,
-        [venceEn ?? null, choferId, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null],
+         VALUES ('entrega', $1, $2, $3, $4, $5, 'programado', 'Reservado al validar el pago; contenedor ocupado, pendiente de que vuelva')`,
+        [fechaEntrega, choferId ?? null, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null],
       );
-
-      // Avisamos al chofer por WhatsApp: qué contenedor, a quién y adónde. No
-      // bloquea la respuesta del panel si falla el envío, pero si falla queda
-      // una alerta en el panel — si no, el chofer nunca se entera de la
-      // entrega y nadie lo nota hasta que pregunte por qué no salió.
-      avisarChoferAsignacion(choferId, result.contenedor, info).catch((e) => {
-        const motivo = motivoErrorWa(e);
-        console.error('Error avisando al chofer la asignación:', motivo);
-        notificarEnvioFallido(result.contenedor, `chofer de ${result.contenedor}`, 'aviso de entrega asignada', motivo).catch(
-          (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+      if (choferId && fechaEntrega) {
+        avisarChoferReservaFutura(choferId, result.contenedor, fechaEntrega).catch((e) =>
+          console.error('Error avisando reserva futura al chofer:', motivoErrorWa(e)),
         );
-      });
-    }
-    if (diasDemora != null) {
-      sendText(
-        info.cliente_telefono,
-        `📅 Tu contenedor se pasará a recoger en *${diasDemora} día${diasDemora === 1 ? '' : 's'}* desde la entrega del mismo.`,
-      ).catch((e) => console.error('Error avisando plazo de retiro:', motivoErrorWa(e)));
+      }
     }
 
     // Envío del PDF (no bloqueante para la respuesta HTTP)
@@ -245,7 +308,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
     // actualizó su propia pantalla de forma optimista).
     emitAlertaActualizada({ tipo: 'pago_pendiente_validacion', referencia_id: pagoId, estado: 'resuelta' });
 
-    res.json({ ok: true, ticket_id: result.ticket_id, contenedor: result.contenedor });
+    res.json({ ok: true, ticket_id: result.ticket_id, contenedor: result.contenedor, reservado_ahora: result.reservado_ahora });
   } catch (e: any) {
     // p.ej. "No hay contenedores disponibles" -> genera alerta de stock
     if (String(e.message).includes('No hay contenedores')) {

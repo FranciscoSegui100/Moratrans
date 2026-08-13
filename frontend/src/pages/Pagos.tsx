@@ -23,7 +23,7 @@ interface Pago {
 }
 
 interface Chofer { id: string; nombre: string; activo: boolean; }
-interface Contenedor { numero: string; estado: string; }
+interface Contenedor { numero: string; estado: string; vence_en: string | null; }
 interface Adjunto { id: string; creado_en: string; }
 
 /**
@@ -62,9 +62,9 @@ export function Pagos() {
     queryKey: ['choferes', 'activos'],
     queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data.filter((c) => c.activo)),
   });
-  const { data: contenedoresDisponibles = [] } = useQuery({
-    queryKey: ['contenedores', 'disponibles'],
-    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data.filter((c) => c.estado === 'disponible')),
+  const { data: contenedores = [] } = useQuery({
+    queryKey: ['contenedores'],
+    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
   });
 
   const cargar = () => queryClient.invalidateQueries({ queryKey: ['pagos', 'pendiente'] });
@@ -86,7 +86,13 @@ export function Pagos() {
     setProcesando(id);
     try {
       const { data } = await api.post(`/api/pagos/${id}/validar`, payload);
-      show('success', 'Pago validado', `Ticket ${data.ticket_id} — contenedor ${data.contenedor}`);
+      show(
+        'success',
+        'Pago validado',
+        data.reservado_ahora
+          ? `Ticket ${data.ticket_id} — contenedor ${data.contenedor}`
+          : `Ticket ${data.ticket_id} — contenedor ${data.contenedor} reservado a futuro, todavía está ocupado`,
+      );
       setValidandoId(null);
       cargar();
     } catch (e: any) {
@@ -201,7 +207,7 @@ export function Pagos() {
               {validandoId === p.id && (
                 <ValidarPagoForm
                   choferes={choferes}
-                  contenedoresDisponibles={contenedoresDisponibles}
+                  contenedores={contenedores}
                   procesando={procesando === p.id}
                   onConfirm={(payload) => validar(p.id, payload)}
                   onCancel={() => setValidandoId(null)}
