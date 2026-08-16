@@ -236,11 +236,69 @@ async function aplicarVaciado(to: string, choferId: string, choferNombre: string
 }
 
 /**
- * El chofer eligió CON QUÉ contenedor vacío completa su recambio: en un solo
- * paso se asigna ese vacío, se marca entregado, Y el lleno pareja pasa a
- * retirado (yendo a vaciar) — antes eran 3 acciones sueltas del chofer
- * (elegir vacío, marcar "ya entregué", marcar "ya retiré" del lleno), lo que
- * generaba confusión y errores porque en la práctica es UNA sola visita.
+ * Si `numero` es parte de un recambio (grupo_id) y su pareja (el otro
+ * contenedor del mismo recambio) ya está lista para transicionar, la marca
+ * en el mismo momento. Se llama SIEMPRE que un contenedor pasa a 'entregado'
+ * o 'retirado' — así no importa si el vacío se asignó desde el panel o por
+ * WhatsApp, ni cuál de los dos lados toca el chofer primero: el otro sigue
+ * solo. Devuelve un texto para sumar al mensaje de confirmación, o '' si no
+ * había pareja o todavía no estaba lista (ej. el vacío aún no se asignó).
+ */
+async function cascadearParejaRecambio(numero: string, choferId: string, choferNombre: string): Promise<string> {
+  const [propio] = await query<{ tipo: string; grupo_id: string | null }>(
+    `SELECT tipo, grupo_id FROM viajes
+      WHERE contenedor_numero = $1 AND chofer_id = $2 AND grupo_id IS NOT NULL AND estado IN ('programado', 'en_curso')
+      ORDER BY creado_en DESC LIMIT 1`,
+    [numero, choferId],
+  );
+  if (!propio?.grupo_id) return '';
+
+  const parejaTipo = propio.tipo === 'retiro' ? 'entrega' : 'retiro';
+  const [pareja] = await query<{ id: string; contenedor_numero: string | null }>(
+    `SELECT id, contenedor_numero FROM viajes
+      WHERE grupo_id = $1 AND tipo = $2 AND estado IN ('programado', 'en_curso')
+      ORDER BY creado_en DESC LIMIT 1`,
+    [propio.grupo_id, parejaTipo],
+  );
+  if (!pareja?.contenedor_numero) return ''; // el vacío todavía no se asignó — nada para cascadear
+
+  const [cont] = await query<{ estado: string }>('SELECT estado FROM contenedores WHERE numero = $1', [pareja.contenedor_numero]);
+
+  if (parejaTipo === 'entrega') {
+    // La pareja es el vacío: se entrega si está 'reservado' (ya asignado, esperando salir).
+    if (cont?.estado !== 'reservado') return '';
+    await query(`UPDATE contenedores SET estado = 'entregado', actualizado_por = $2 WHERE numero = $1`, [pareja.contenedor_numero, `chofer:${choferId}`]);
+    return ` y entregaste *${pareja.contenedor_numero}*`;
+  }
+
+  // La pareja es el lleno: se retira (yendo a vaciar) si está 'entregado'.
+  if (cont?.estado !== 'entregado') return '';
+  const vaciadero = await resolverUbicacion('vaciadero');
+  await query(
+    `UPDATE viajes SET estado = 'en_curso',
+            ubicacion_id = COALESCE(ubicacion_id, $2), ubicacion_direccion = COALESCE(ubicacion_direccion, $3)
+      WHERE id = $1`,
+    [pareja.id, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+  );
+  await query(`UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`, [pareja.contenedor_numero, `chofer:${choferId}`]);
+  const [alerta] = await query(
+    `INSERT INTO alertas (tipo, referencia_id, mensaje)
+     VALUES ('confirmar_retiro', $1, $2)
+     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+    [pareja.contenedor_numero, `${choferNombre} completó el recambio: retiró ${pareja.contenedor_numero}, va camino al vaciadero.`],
+  );
+  if (alerta) emitAlerta(alerta);
+  return ` y retiraste *${pareja.contenedor_numero}* (yendo a vaciar)`;
+}
+
+/**
+ * El chofer eligió CON QUÉ contenedor vacío completa su recambio: lo asigna,
+ * lo marca entregado, y de yapa cascadearParejaRecambio se encarga de pasar
+ * el lleno pareja a retirado si ya está listo — antes eran 3 acciones
+ * sueltas del chofer (elegir vacío, marcar "ya entregué", marcar "ya retiré"
+ * del lleno), lo que generaba confusión y errores porque en la práctica es
+ * UNA sola visita.
  */
 async function aplicarVacioRecambio(
   to: string,
@@ -264,55 +322,30 @@ async function aplicarVacioRecambio(
       await sendText(to, `🙁 El contenedor ${numero} ya no está disponible — alguien lo tomó justo antes. Probá con otro.`);
       return menuChofer(to, choferNombre);
     }
-    // 'reservado' -> 'entregado' directo (mismo trigger que usa cualquier
-    // entrega): el chofer ya se lo está dejando al cliente en este momento.
-    await query(`UPDATE contenedores SET estado = 'entregado', actualizado_por = $2 WHERE numero = $1`, [numero, `chofer:${choferId}`]);
 
     const [choferRow] = await query<{ patente: string | null }>('SELECT patente FROM choferes WHERE id = $1', [choferId]);
-    await query(
+    const [viajeEntrega] = await query<{ fecha: string }>(
       `UPDATE viajes SET contenedor_numero = $1, chofer_id = $2, patente = $3
-        WHERE id = $4 AND contenedor_numero IS NULL`,
+        WHERE id = $4 AND contenedor_numero IS NULL RETURNING fecha`,
       [numero, choferId, choferRow?.patente ?? null, entregaId],
     );
 
-    // El lleno pareja (mismo grupo_id) pasa a retirado/yendo a vaciar en el
-    // mismo momento — es la misma visita física.
-    const [pareja] = await query<{ retiro_id: string; lleno_numero: string; destino_direccion: string | null; zona: string | null }>(
-      `SELECT r.id AS retiro_id, r.contenedor_numero AS lleno_numero, r.destino_direccion, r.zona
-         FROM viajes e JOIN viajes r ON r.grupo_id = e.grupo_id AND r.tipo = 'retiro'
-        WHERE e.id = $1 AND r.contenedor_numero IS NOT NULL`,
-      [entregaId],
-    );
-
-    let mensajeLleno = '';
-    if (pareja) {
-      const vaciadero = await resolverUbicacion('vaciadero');
-      await query(
-        `UPDATE viajes SET estado = 'en_curso',
-                ubicacion_id = COALESCE(ubicacion_id, $2), ubicacion_direccion = COALESCE(ubicacion_direccion, $3)
-          WHERE id = $1`,
-        [pareja.retiro_id, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
-      );
-      await query(
-        `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
-        [pareja.lleno_numero, `chofer:${choferId}`],
-      );
-      const [alerta] = await query(
-        `INSERT INTO alertas (tipo, referencia_id, mensaje)
-         VALUES ('confirmar_retiro', $1, $2)
-         ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-         RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-        [pareja.lleno_numero, `${choferNombre} completó el recambio: entregó ${numero} y retiró ${pareja.lleno_numero}, va camino al vaciadero.`],
-      );
-      if (alerta) emitAlerta(alerta);
-      mensajeLleno = ` y retiraste *${pareja.lleno_numero}* (yendo a vaciar)`;
+    // 'reservado' -> 'entregado' directo (mismo trigger que usa cualquier
+    // entrega): el chofer ya se lo está dejando al cliente en este momento.
+    await query(`UPDATE contenedores SET estado = 'entregado', actualizado_por = $2 WHERE numero = $1`, [numero, `chofer:${choferId}`]);
+    // La fecha de la entrega ES el vencimiento: cuándo se espera que este
+    // vacío vuelva una vez alquilado.
+    if (viajeEntrega) {
+      await query(`UPDATE contenedores SET vence_en = $2::date WHERE numero = $1`, [numero, viajeEntrega.fecha]);
     }
+
+    const mensajeLleno = await cascadearParejaRecambio(numero, choferId, choferNombre);
 
     emitRecursoActualizado('contenedores');
     emitRecursoActualizado('viajes');
     await sendText(
       to,
-      `✅ ¡Recambio completado! Dejaste *${numero}*${mensajeLleno}. ${pareja ? 'Avisame por acá cuando lo vacíes (🗑️ en el menú). ' : ''}¡Gracias por tu trabajo! 🙌`,
+      `✅ ¡Recambio completado! Dejaste *${numero}*${mensajeLleno}. ${mensajeLleno ? 'Avisame por acá cuando vacíes el lleno (🗑️ en el menú). ' : ''}¡Gracias por tu trabajo! 🙌`,
     );
   } catch (err: any) {
     await sendText(to, `⚠️ No pudimos completar el recambio con ${numero}. Probá de nuevo.`);
@@ -451,12 +484,16 @@ async function aplicarEstado(
         [numero, `${choferNombre} retiró el contenedor ${numero} del cliente, va camino al vaciadero.`],
       );
       if (alerta) emitAlerta(alerta);
+      // Si este lleno es parte de un recambio y el vacío pareja ya está
+      // asignado y en 'reservado', se entrega en el mismo momento — así no
+      // importa si el chofer marca primero el lleno o el vacío.
+      const extraVacio = await cascadearParejaRecambio(numero, choferId, choferNombre);
       emitRecursoActualizado('contenedores');
       emitRecursoActualizado('viajes');
       await clearSesion(to);
       await sendText(
         to,
-        `📥 ¡Anotado! Contenedor *${numero}* marcado como retirado. Avisame por acá cuando lo vacíes (🗑️ en el menú). ¡Gracias por tu trabajo! 🙌`,
+        `📥 ¡Anotado! Contenedor *${numero}* marcado como retirado${extraVacio}. Avisame por acá cuando lo vacíes (🗑️ en el menú). ¡Gracias por tu trabajo! 🙌`,
       );
     } catch (err: any) {
       await sendText(to, `⚠️ No pudimos registrar el retiro de ${numero}. Probá de nuevo.`);
@@ -480,8 +517,12 @@ async function aplicarEstado(
     // La pestaña Viajes ahora muestra el estado del contenedor asociado
     // (join en GET /api/viajes), así que también tiene que refrescarse sola.
     emitRecursoActualizado('viajes');
+    // Si esto es el vacío de un recambio y el lleno pareja ya está listo
+    // (entregado), se retira en el mismo momento (yendo a vaciar) — así no
+    // importa si el chofer marca primero el vacío o el lleno.
+    const extra = await cascadearParejaRecambio(numero, choferId, choferNombre);
     await clearSesion(to);
-    await sendText(to, `✅ ¡Listo! Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*. 💪`);
+    await sendText(to, `✅ ¡Listo! Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
   } catch (err: any) {
     // Error de transición inválida u otro
     await sendText(

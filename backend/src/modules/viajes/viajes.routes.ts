@@ -214,10 +214,13 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
         }
 
         if (cont!.estado === 'disponible') {
+          // La fecha de la entrega ES el vencimiento: cuándo se espera que
+          // este contenedor vuelva una vez alquilado (no al programar el
+          // retiro — para entonces la alerta de "por vencer" ya llegaría tarde).
           await c.query(
-            `UPDATE contenedores SET estado = 'reservado', actualizado_por = $2
+            `UPDATE contenedores SET estado = 'reservado', vence_en = $2::date, actualizado_por = $3
                WHERE numero = $1 AND estado = 'disponible'`,
-            [numero, `operador:${req.user!.id}`],
+            [numero, fecha, `operador:${req.user!.id}`],
           );
         } else {
           if (!cont!.vence_en) {
@@ -372,6 +375,15 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
       params,
     );
     if (!row) return res.status(404).json({ error: 'Viaje inexistente' });
+
+    // Se acaba de asignar el contenedor a una entrega (sobre todo el vacío
+    // de un recambio, ver comentario de contenedor_numero en patchSchema) —
+    // la fecha del viaje ES el vencimiento: cuándo se espera que vuelva una
+    // vez alquilado.
+    if ('contenedor_numero' in parsed.data && row.contenedor_numero && row.tipo === 'entrega') {
+      await query(`UPDATE contenedores SET vence_en = $2::date WHERE numero = $1`, [row.contenedor_numero, row.fecha]);
+    }
+
     res.json(row);
 
     // Se completó (o reasignó) recién ahora el contenedor de la pata
