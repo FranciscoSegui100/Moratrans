@@ -360,6 +360,15 @@ export function Viajes() {
                           <option key={c.numero} value={c.numero}>{c.numero}</option>
                         ))}
                       </select>
+                      <select
+                        className="form-select"
+                        style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                        value={asignarForm.chofer_id}
+                        onChange={(e) => setAsignarForm({ ...asignarForm, chofer_id: e.target.value })}
+                      >
+                        <option value="">— Sin chofer —</option>
+                        {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                      </select>
                       <button className="btn btn-success btn-sm" onClick={() => asignarContenedor(v.id)}>OK</button>
                       <button className="btn btn-ghost btn-sm" onClick={() => setAsignando(null)}>✕</button>
                     </div>

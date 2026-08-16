@@ -147,34 +147,38 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
 
 /**
  * Identifica al cliente por su teléfono (ver clientes.service.ts) y, si
- * tiene cuenta corriente aprobada, lo saluda por su nombre — el menú es el
- * mismo para todos (se suma la opción "Pedir entrega", no lo reemplaza),
- * pero así el cliente sabe que ya lo reconocimos como cuenta corriente.
+ * tiene cuenta corriente aprobada, lo saluda por su nombre y le suma la
+ * opción "Pedir entrega" (pedir un contenedor sin pagar antes) — eso es
+ * exclusivo de cuenta corriente, un cliente ocasional no la ve; retiro y
+ * recambio siguen disponibles para cualquiera.
  */
 async function enviarMenuPrincipal(to: string): Promise<void> {
   const [cliente] = await query<{ nombre: string; cuenta_corriente_estado: string }>(
     'SELECT nombre, cuenta_corriente_estado FROM clientes WHERE telefono = $1',
     [to],
   );
-  const saludo = cliente?.cuenta_corriente_estado === 'aprobada'
-    ? `👋 ¡Hola, ${cliente.nombre}!`
-    : '👋 ¡Hola!';
-  const bajada = cliente?.cuenta_corriente_estado === 'aprobada'
+  const esCuentaCorriente = cliente?.cuenta_corriente_estado === 'aprobada';
+  const saludo = esCuentaCorriente ? `👋 ¡Hola, ${cliente.nombre}!` : '👋 ¡Hola!';
+  const bajada = esCuentaCorriente
     ? 'Soy el asistente de *MoraTrans* 🚚. Tenés *cuenta corriente activa* — ¿en qué te ayudo hoy?\n\n'
     : 'Soy el asistente de *MoraTrans* 🚚. ¿En qué te ayudo hoy?\n\n';
+
+  const opciones = [
+    { id: 'opt_cotizar', title: '🧮 Cotizar', description: 'Precio del flete por departamento' },
+    { id: 'opt_pagar', title: '💸 Ya pagué', description: 'Quiero enviar mi comprobante de pago' },
+    ...(esCuentaCorriente
+      ? [{ id: 'opt_pedir_entrega', title: '📦 Pedir entrega', description: 'Cuenta corriente: pedir un contenedor sin pagar antes' }]
+      : []),
+    { id: 'opt_pedir_retiro', title: '📥 Pedir retiro', description: 'Se llenó antes de tiempo: que lo pasen a buscar' },
+    { id: 'opt_recambio', title: '🔄 Pedir recambio', description: 'Cambiar el contenedor lleno por uno vacío' },
+    { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
+  ];
 
   await sendList(
     to,
     saludo,
     bajada + '_Escribí *menú* cuando quieras volver acá, y *asesor* si preferís hablar con una persona._',
     'Ver opciones',
-    [
-      { id: 'opt_cotizar', title: '🧮 Cotizar', description: 'Precio del flete por departamento' },
-      { id: 'opt_pagar', title: '💸 Ya pagué', description: 'Quiero enviar mi comprobante de pago' },
-      { id: 'opt_pedir_entrega', title: '📦 Pedir entrega', description: 'Cuenta corriente: pedir un contenedor sin pagar antes' },
-      { id: 'opt_pedir_retiro', title: '📥 Pedir retiro', description: 'Se llenó antes de tiempo: que lo pasen a buscar' },
-      { id: 'opt_recambio', title: '🔄 Pedir recambio', description: 'Cambiar el contenedor lleno por uno vacío' },
-      { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
-    ],
+    opciones,
   );
 }

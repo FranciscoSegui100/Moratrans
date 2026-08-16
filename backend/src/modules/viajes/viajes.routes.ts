@@ -107,6 +107,47 @@ async function avisarChoferViaje(
   await menuChofer(chofer.telefono, chofer.nombre);
 }
 
+/**
+ * Aviso específico para un recambio: a diferencia de avisarChoferViaje (que
+ * solo hablaría del "retiro" del lleno), acá se le aclara al chofer que es
+ * un recambio y qué contenedor vacío le corresponde dejar — y de qué
+ * ubicación sale ese vacío, si ya se sabe.
+ */
+async function avisarChoferRecambio(
+  choferId: string,
+  llenoNumero: string,
+  vacioNumero: string | null,
+  vacioUbicacionId: string | null,
+  destinoDireccion: string | null,
+): Promise<void> {
+  const [chofer] = await query<{ telefono: string | null; nombre: string }>(
+    'SELECT telefono, nombre FROM choferes WHERE id = $1',
+    [choferId],
+  );
+  if (!chofer?.telefono) return;
+
+  let ubicacionNombre: string | null = null;
+  if (vacioUbicacionId) {
+    const [u] = await query<{ nombre: string }>('SELECT nombre FROM ubicaciones WHERE id = $1', [vacioUbicacionId]);
+    ubicacionNombre = u?.nombre ?? null;
+  }
+
+  const destino = destinoDireccion
+    ? `${destinoDireccion}\nhttps://www.google.com/maps?q=${encodeURIComponent(destinoDireccion)}`
+    : 'Sin ubicación registrada, coordiná con el cliente.';
+
+  const lineaVacio = vacioNumero
+    ? `Se asignó el contenedor *${vacioNumero}* para el recambio del contenedor *${llenoNumero}*` +
+      (ubicacionNombre ? `, de la ubicación: *${ubicacionNombre}*` : '') + '.\n'
+    : `Retirás el contenedor *${llenoNumero}* — el vacío que dejás todavía no está asignado.\n`;
+
+  await sendText(
+    chofer.telefono,
+    `🔄 *Recambio*\n\n${lineaVacio}📍 Ubicación:\n${destino}`,
+  );
+  await menuChofer(chofer.telefono, chofer.nombre);
+}
+
 /** POST /api/viajes — programar un viaje, o un recambio (par retiro+entrega) (admin/operador). */
 viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = nuevoSchema.safeParse(req.body);
@@ -240,7 +281,16 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
     });
 
     if (v.chofer_id) {
-      avisarChoferViaje(v.chofer_id, resultado.principal.tipo, resultado.principal.contenedor_numero ?? null, v.destino_direccion ?? null).catch((e) => {
+      const avisoRecambioOChofer = v.tipo === 'recambio'
+        ? avisarChoferRecambio(
+            v.chofer_id,
+            resultado.principal.contenedor_numero!,
+            resultado.secundario?.contenedor_numero ?? null,
+            resultado.secundario?.ubicacion_id ?? null,
+            v.destino_direccion ?? null,
+          )
+        : avisarChoferViaje(v.chofer_id, resultado.principal.tipo, resultado.principal.contenedor_numero ?? null, v.destino_direccion ?? null);
+      avisoRecambioOChofer.catch((e) => {
         const motivo = motivoErrorWa(e);
         console.error('Error avisando al chofer el viaje programado:', motivo);
         notificarEnvioFallido(resultado.principal.id, `chofer del viaje ${resultado.principal.id}`, 'aviso de viaje programado', motivo).catch(
@@ -319,6 +369,26 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
     );
     if (!row) return res.status(404).json({ error: 'Viaje inexistente' });
     res.json(row);
+
+    // Se completó (o reasignó) recién ahora el contenedor de la pata
+    // 'entrega' de un recambio (ver comentario de contenedor_numero en
+    // patchSchema, arriba) — avisamos al chofer con el mensaje específico
+    // de recambio, no el genérico que usa POST /api/viajes.
+    if ('contenedor_numero' in parsed.data && row.contenedor_numero && row.tipo === 'entrega' && row.grupo_id && row.chofer_id) {
+      query<{ contenedor_numero: string | null }>(
+        `SELECT contenedor_numero FROM viajes WHERE grupo_id = $1 AND tipo = 'retiro' LIMIT 1`,
+        [row.grupo_id],
+      ).then(([retiro]) => {
+        if (!retiro?.contenedor_numero) return;
+        return avisarChoferRecambio(row.chofer_id, retiro.contenedor_numero, row.contenedor_numero, row.ubicacion_id, row.destino_direccion);
+      }).catch((e) => {
+        const motivo = motivoErrorWa(e);
+        console.error('Error avisando al chofer la asignación de recambio:', motivo);
+        notificarEnvioFallido(row.id, `chofer del viaje ${row.id}`, 'aviso de recambio asignado', motivo).catch(
+          (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+        );
+      });
+    }
   } catch (error: any) {
     if (error.code === '23503') { // Foreign key violation
       res.status(400).json({ error: 'El chofer especificado no existe.' });
