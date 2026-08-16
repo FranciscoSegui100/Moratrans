@@ -15,6 +15,7 @@ function presentar(row: any, rol: Rol) {
     id: row.id,
     nombre: row.nombre,
     telefono: row.telefono,
+    patente: row.patente,
     activo: row.activo,
     dni: row.dni_enc ? (puedeVerDni(rol) ? decrypt(row.dni_enc) : '••••••') : null,
   };
@@ -22,7 +23,7 @@ function presentar(row: any, rol: Rol) {
 
 /** GET /api/choferes — DNI descifrado solo para admin/operador. */
 choferesRouter.get('/', async (req: Request, res: Response) => {
-  const rows = await query('SELECT id, nombre, dni_enc, telefono, activo FROM choferes ORDER BY nombre');
+  const rows = await query('SELECT id, nombre, dni_enc, telefono, patente, activo FROM choferes ORDER BY nombre');
   res.json(rows.map((r) => presentar(r, req.user!.rol)));
 });
 
@@ -30,18 +31,19 @@ const nuevoSchema = z.object({
   nombre: z.string().min(2),
   dni: z.string().min(4),
   telefono: z.string().min(6),
+  patente: z.string().min(1).optional(),
 });
 
 /** POST /api/choferes — alta con DNI cifrado (solo admin/operador). */
 choferesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = nuevoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const { nombre, dni, telefono } = parsed.data;
+  const { nombre, dni, telefono, patente } = parsed.data;
   try {
     const [row] = await query(
-      `INSERT INTO choferes (nombre, dni_enc, dni_hash, telefono)
-       VALUES ($1,$2,$3,$4) RETURNING id, nombre, dni_enc, telefono, activo`,
-      [nombre, encrypt(dni), blindIndex(dni), normalizarTelefonoAR(telefono)],
+      `INSERT INTO choferes (nombre, dni_enc, dni_hash, telefono, patente)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id, nombre, dni_enc, telefono, patente, activo`,
+      [nombre, encrypt(dni), blindIndex(dni), normalizarTelefonoAR(telefono), patente?.toUpperCase() ?? null],
     );
     res.status(201).json(presentar(row, req.user!.rol));
   } catch (e: any) {
@@ -53,6 +55,7 @@ const patchSchema = z.object({
   nombre: z.string().min(2).optional(),
   telefono: z.string().min(6).optional(),
   dni: z.string().min(4).optional(),
+  patente: z.string().min(1).nullable().optional(),
   activo: z.boolean().optional(),
 });
 

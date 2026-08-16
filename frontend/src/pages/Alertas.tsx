@@ -127,7 +127,7 @@ export function Alertas() {
       ) : (
         <div className="space-y">
           {alertas.map((a) => {
-            const esPago = a.tipo === 'pago_pendiente_validacion';
+            const esPago = a.tipo === 'pago_pendiente_validacion' || a.tipo === 'cuenta_corriente_solicitada';
             const esRetiro = a.tipo === 'confirmar_retiro';
             const esFactura = a.tipo === 'factura_solicitada';
             const expandida = esPago && validandoId === a.referencia_id;
@@ -192,6 +192,8 @@ export function Alertas() {
                       <RoleGate roles={['admin', 'finanzas']}>
                         {a.tiene_comprobante ? (
                           <ComprobanteViewer pagoId={a.referencia_id} />
+                        ) : a.tipo === 'cuenta_corriente_solicitada' ? (
+                          <span className="text-muted">📋 Pago a cuenta corriente — sin comprobante</span>
                         ) : (
                           <span className="text-muted">Sin comprobante adjunto</span>
                         )}

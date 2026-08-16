@@ -28,7 +28,7 @@ pagosRouter.get('/', async (req: Request, res: Response) => {
   const estado = (req.query.estado as string) || 'pendiente';
   const rows = await query(
     `SELECT p.id, p.cliente_telefono, p.monto, p.url_comprobante, p.estado, p.creado_en,
-            p.titular_transferencia,
+            p.titular_transferencia, p.es_cuenta_corriente,
             pe.zona, pe.precio, td.moneda,
             (SELECT COUNT(*) FROM pagos_adjuntos pa WHERE pa.pago_id = p.id)::int AS adjuntos_count
        FROM pagos p
@@ -227,15 +227,27 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       destino_lat: string | null;
       destino_lng: string | null;
       destino_direccion: string | null;
+      es_cuenta_corriente: boolean;
     }>(
       `SELECT p.cliente_telefono, pe.cliente_nombre, pe.zona, pe.precio, td.moneda,
-              pe.destino_lat, pe.destino_lng, pe.destino_direccion
+              pe.destino_lat, pe.destino_lng, pe.destino_direccion, p.es_cuenta_corriente
          FROM pagos p
          LEFT JOIN pedidos pe ON pe.id = p.pedido_id
          LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
         WHERE p.id = $1`,
       [pagoId],
     );
+
+    // Primera vez que se le valida un pago a cuenta corriente: queda
+    // aprobado para las próximas veces sin que el cliente tenga que
+    // volver a pedirlo (sigue pasando por esta misma validación manual).
+    if (info?.es_cuenta_corriente) {
+      await query(
+        `UPDATE clientes SET cuenta_corriente_estado = 'aprobada'
+          WHERE telefono = $1 AND cuenta_corriente_estado <> 'aprobada'`,
+        [info.cliente_telefono],
+      );
+    }
 
     if (result.reservado_ahora) {
       if (venceEn) {
@@ -303,10 +315,15 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       );
     });
 
-    // fn_validar_pago ya resolvió la alerta atómicamente en SQL; acá solo se
-    // avisa por socket a los demás operadores (el que hizo la acción ya
-    // actualizó su propia pantalla de forma optimista).
-    emitAlertaActualizada({ tipo: 'pago_pendiente_validacion', referencia_id: pagoId, estado: 'resuelta' });
+    // fn_validar_pago ya resolvió la alerta atómicamente en SQL (transferencia
+    // o cuenta corriente, ver migración 0013); acá solo se avisa por socket a
+    // los demás operadores (el que hizo la acción ya actualizó su propia
+    // pantalla de forma optimista).
+    emitAlertaActualizada({
+      tipo: info?.es_cuenta_corriente ? 'cuenta_corriente_solicitada' : 'pago_pendiente_validacion',
+      referencia_id: pagoId,
+      estado: 'resuelta',
+    });
 
     res.json({ ok: true, ticket_id: result.ticket_id, contenedor: result.contenedor, reservado_ahora: result.reservado_ahora });
   } catch (e: any) {
@@ -328,16 +345,20 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
 /** POST /api/pagos/:id/rechazar — marca rechazado y avisa al cliente. */
 pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const motivo = (req.body?.motivo as string) || 'Comprobante no válido';
-  const [pago] = await query<{ cliente_telefono: string }>(
+  const [pago] = await query<{ cliente_telefono: string; es_cuenta_corriente: boolean }>(
     `UPDATE pagos SET estado = 'rechazado', motivo_rechazo = $2, validado_por = $3
-      WHERE id = $1 AND estado = 'pendiente' RETURNING cliente_telefono`,
+      WHERE id = $1 AND estado = 'pendiente' RETURNING cliente_telefono, es_cuenta_corriente`,
     [req.params.id, motivo, req.user!.id],
   );
   if (!pago) return res.status(409).json({ error: 'Pago inexistente o ya procesado' });
 
+  // Comparte referencia_id (= pago.id) con la alerta de transferencia, pero
+  // es un tipo distinto (ver migración 0013) — hay que resolver la que
+  // corresponda según cómo se pidió pagar.
+  const tipoAlerta = pago.es_cuenta_corriente ? 'cuenta_corriente_solicitada' : 'pago_pendiente_validacion';
   await query(`UPDATE alertas SET estado = 'resuelta'
-               WHERE tipo = 'pago_pendiente_validacion' AND referencia_id = $1`, [req.params.id]);
-  emitAlertaActualizada({ tipo: 'pago_pendiente_validacion', referencia_id: req.params.id, estado: 'resuelta' });
+               WHERE tipo = $2 AND referencia_id = $1`, [req.params.id, tipoAlerta]);
+  emitAlertaActualizada({ tipo: tipoAlerta, referencia_id: req.params.id, estado: 'resuelta' });
 
   sendButtons(
     pago.cliente_telefono,

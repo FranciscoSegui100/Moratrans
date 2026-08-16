@@ -5,6 +5,7 @@ import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { encrypt, encryptBuffer } from '../../../services/crypto.service';
 import { subirArchivo } from '../../../services/storage.service';
+import { obtenerOCrearCliente } from '../../../services/clientes.service';
 import { env } from '../../../config/env';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
@@ -44,9 +45,19 @@ export function datosBancarios(): string {
 export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
 
+  // Respuesta a "¿Cómo vas a pagar?"
+  if (sesion.paso === 'elegir_metodo_pago') {
+    return manejarMetodoPago(m, sesion);
+  }
+
   // Respuesta a "¿Para cuál cotización es este comprobante?"
   if (sesion.paso === 'elegir_pedido') {
     return manejarEleccionPedido(m, sesion);
+  }
+
+  // Respuesta a "¿Para cuál cotización es este pago a cuenta corriente?"
+  if (sesion.paso === 'elegir_pedido_cc') {
+    return manejarEleccionPedidoCC(m, sesion);
   }
 
   // Respuesta a "¿A nombre de quién es la transferencia?"
@@ -60,16 +71,15 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   }
 
   // Si el usuario escribió "Ya pagué" (o "pago"/"pagar"/etc, ver messageRouter)
-  // sin adjuntar nada aún: mostrarle los datos para transferir ANTES de
-  // pedirle el comprobante.
+  // sin adjuntar nada aún: antes de pedirle el comprobante, preguntamos cómo
+  // va a pagar (algunos clientes tienen cuenta corriente con nosotros y no
+  // transfieren en el momento — ver iniciarCuentaCorriente).
   if (m.tipo === 'text') {
-    await setSesion({ ...sesion, flujo: 'pago', paso: 'esperando_comprobante', contexto: {} });
-    await sendText(
-      to,
-      `${datosBancarios()}\n\n` +
-        '💸 Transferí y mandame por acá la *foto o PDF* del comprobante (o escribí *Ya pagué* cuando lo hayas hecho, si preferís avisarme antes).\n\n' +
-        '_Escribí *menú* si te arrepentiste y querés volver al inicio._',
-    );
+    await setSesion({ ...sesion, flujo: 'pago', paso: 'elegir_metodo_pago', contexto: {} });
+    await sendButtons(to, '💳 ¿Cómo vas a pagar?', [
+      { id: 'metodo_transferencia', title: '💸 Transferencia' },
+      { id: 'metodo_cuenta_corriente', title: '📋 Cuenta corriente' },
+    ]);
     return;
   }
 
@@ -96,14 +106,7 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     // abierta a la vez, no lo podemos asumir por orden cronológico solo —
     // se lo preguntamos y recién ahí seguimos (el comprobante ya está subido,
     // solo falta decidir a qué pedido atarlo).
-    const pedidos = await query<PedidoCandidato>(
-      `SELECT pe.id, pe.zona, pe.precio, td.moneda
-         FROM pedidos pe
-         LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
-        WHERE pe.cliente_telefono = $1 AND pe.estado IN ('cotizado','confirmado')
-        ORDER BY pe.creado_en DESC LIMIT 10`,
-      [to],
-    );
+    const pedidos = await pedidosAbiertos(to);
 
     if (pedidos.length > 1) {
       await setSesion({
@@ -131,6 +134,149 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     console.error('Error en flujo de pago:', err);
     await sendText(to, '⚠️ Tuvimos un problema al procesar el comprobante. Probá reenviarlo en unos minutos.');
   }
+}
+
+/** Pedidos abiertos (cotizados o confirmados) de un teléfono, más recientes primero. */
+async function pedidosAbiertos(telefono: string): Promise<PedidoCandidato[]> {
+  return query<PedidoCandidato>(
+    `SELECT pe.id, pe.zona, pe.precio, td.moneda
+       FROM pedidos pe
+       LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
+      WHERE pe.cliente_telefono = $1 AND pe.estado IN ('cotizado','confirmado')
+      ORDER BY pe.creado_en DESC LIMIT 10`,
+    [telefono],
+  );
+}
+
+/** Maneja la respuesta a "¿Cómo vas a pagar?". */
+async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+
+  if (m.seleccionId === 'metodo_cuenta_corriente') {
+    return iniciarCuentaCorriente(m);
+  }
+
+  if (m.seleccionId === 'metodo_transferencia') {
+    await setSesion({ ...sesion, flujo: 'pago', paso: 'esperando_comprobante', contexto: {} });
+    await sendText(
+      to,
+      `${datosBancarios()}\n\n` +
+        '💸 Transferí y mandame por acá la *foto o PDF* del comprobante.\n\n' +
+        '_Escribí *menú* si te arrepentiste y querés volver al inicio._',
+    );
+    return;
+  }
+
+  await sendButtons(to, 'Elegí una de las dos opciones de abajo. 👇', [
+    { id: 'metodo_transferencia', title: '💸 Transferencia' },
+    { id: 'metodo_cuenta_corriente', title: '📋 Cuenta corriente' },
+  ]);
+}
+
+/**
+ * El cliente eligió pagar contra su cuenta corriente. Igual que con un
+ * comprobante, primero hay que saber a qué cotización corresponde (si tiene
+ * más de una abierta se le pregunta). No se le exige nada más: la confianza
+ * (aprobar o no la cuenta corriente) la resuelve un operador desde el panel,
+ * ver POST /api/pagos/:id/validar.
+ */
+async function iniciarCuentaCorriente(m: MensajeEntrante): Promise<void> {
+  const to = m.from;
+  await obtenerOCrearCliente(to, m.nombrePerfil).catch((e) => console.error('Error dando de alta al cliente:', e));
+
+  const pedidos = await pedidosAbiertos(to);
+  if (pedidos.length > 1) {
+    await setSesion({ telefono: to, flujo: 'pago', paso: 'elegir_pedido_cc', contexto: {} });
+    await sendList(
+      to,
+      '¿Para cuál es este pago a cuenta corriente?',
+      'Tenés más de una cotización activa — decime a cuál corresponde:',
+      'Ver cotizaciones',
+      pedidos.map((p) => ({
+        id: `pedido:${p.id}`,
+        title: p.zona,
+        description: `${p.moneda ?? ''} ${Number(p.precio).toLocaleString('es-AR')}`.trim(),
+      })),
+    );
+    return;
+  }
+
+  await registrarCuentaCorriente(to, pedidos[0]);
+}
+
+/** Maneja la respuesta a "¿Para cuál cotización es este pago a cuenta corriente?". */
+async function manejarEleccionPedidoCC(m: MensajeEntrante, _sesion: Sesion): Promise<void> {
+  const to = m.from;
+  if (m.tipo !== 'interactive_list' || !m.seleccionId?.startsWith('pedido:')) {
+    await sendText(to, 'Por favor, elegí una de las cotizaciones de la lista de arriba. 👆');
+    return;
+  }
+  const pedidoId = m.seleccionId.replace('pedido:', '');
+  const [pedido] = await query<PedidoCandidato>(
+    `SELECT pe.id, pe.zona, pe.precio, td.moneda
+       FROM pedidos pe
+       LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
+      WHERE pe.id = $1 AND pe.cliente_telefono = $2`,
+    [pedidoId, to],
+  );
+  if (!pedido) {
+    await clearSesion(to);
+    await sendText(to, '🙁 Esa cotización ya no está disponible. Escribí *menú* para volver a empezar.');
+    return;
+  }
+  await registrarCuentaCorriente(to, pedido);
+}
+
+/**
+ * Registra el pago a cuenta corriente (sin comprobante) y alerta al panel.
+ * Levanta 'cuenta_corriente_solicitada' en vez de 'pago_pendiente_validacion'
+ * — es una decisión de confianza distinta a revisar un comprobante — pero
+ * comparte referencia_id = pago.id, así que ambas las resuelve
+ * fn_validar_pago al validar (ver migración 0013).
+ */
+async function registrarCuentaCorriente(to: string, pedido: PedidoCandidato | undefined): Promise<void> {
+  const [pago] = await query<{ id: string }>(
+    `INSERT INTO pagos (cliente_telefono, pedido_id, estado, es_cuenta_corriente)
+     VALUES ($1,$2,'pendiente',TRUE) RETURNING id`,
+    [to, pedido?.id ?? null],
+  );
+
+  const [cliente] = await query<{ cuenta_corriente_estado: string }>(
+    'SELECT cuenta_corriente_estado FROM clientes WHERE telefono = $1',
+    [to],
+  );
+  if (cliente?.cuenta_corriente_estado === 'sin_pedir') {
+    await query(`UPDATE clientes SET cuenta_corriente_estado = 'pendiente' WHERE telefono = $1`, [to]);
+  }
+
+  const [alerta] = await query(
+    `INSERT INTO alertas (tipo, referencia_id, mensaje)
+     VALUES ('cuenta_corriente_solicitada', $1, $2)
+     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+    [pago.id, `${to} pidió pagar a cuenta corriente`],
+  );
+  if (alerta) {
+    emitAlerta({
+      ...alerta,
+      cliente_telefono: to,
+      monto: null,
+      pago_estado: 'pendiente',
+      tiene_comprobante: false,
+      zona: pedido?.zona ?? null,
+      precio: pedido?.precio ?? null,
+      moneda: pedido?.moneda ?? null,
+    });
+  }
+
+  await clearSesion(to);
+  await sendText(
+    to,
+    cliente?.cuenta_corriente_estado === 'aprobada'
+      ? '✅ ¡Listo! Quedó registrado a tu cuenta corriente. En cuanto lo confirmemos te mandamos el *ticket* con el contenedor asignado. 📦'
+      : '📋 Anotado. Tu cuenta corriente todavía tiene que aprobarla un operador — en cuanto la revisen seguimos con tu pedido.\n\n' +
+        '_Si en un rato no tenés novedades, escribí *asesor*._',
+  );
 }
 
 /** Maneja la respuesta a "¿Para cuál cotización es este comprobante?". */

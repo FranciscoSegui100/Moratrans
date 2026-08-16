@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpFromLine, ArrowDownToLine } from 'lucide-react';
+import { ArrowUpFromLine, ArrowDownToLine, RefreshCw } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -16,6 +16,9 @@ interface Viaje {
   destino_direccion: string | null;
   cliente_telefono: string | null;
   chofer_nombre: string | null;
+  chofer_id: string | null;
+  patente: string | null;
+  grupo_id: string | null;
   notas: string | null;
 }
 interface Contenedor { numero: string; estado: string; vence_en: string | null; }
@@ -38,6 +41,8 @@ export function Viajes() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(formInicial);
   const [loading, setLoading] = useState(false);
+  const [asignando, setAsignando] = useState<string | null>(null);
+  const [asignarForm, setAsignarForm] = useState({ contenedor_numero: '', chofer_id: '' });
 
   const { data: viajes = [] } = useQuery({
     queryKey: ['viajes'],
@@ -111,6 +116,23 @@ export function Viajes() {
       cargar();
     } catch {
       show('error', 'No se pudo cambiar el estado');
+    }
+  }
+
+  /** Completa la fila 'entrega' de un recambio (se crea sin contenedor, ver recambio.flow.ts). */
+  async function asignarContenedor(id: string) {
+    if (!asignarForm.contenedor_numero) return;
+    try {
+      await api.patch(`/api/viajes/${id}`, {
+        contenedor_numero: asignarForm.contenedor_numero,
+        chofer_id: asignarForm.chofer_id || undefined,
+      });
+      setAsignando(null);
+      setAsignarForm({ contenedor_numero: '', chofer_id: '' });
+      cargar();
+      show('success', 'Contenedor asignado');
+    } catch (err: any) {
+      show('error', 'No se pudo asignar', err.response?.data?.error);
     }
   }
 
@@ -224,6 +246,7 @@ export function Viajes() {
               <th>Contenedor</th>
               <th>Estado contenedor</th>
               <th>Chofer</th>
+              <th>Patente</th>
               <th>Estado</th>
               <th>Acciones</th>
             </tr>
@@ -236,9 +259,43 @@ export function Viajes() {
                   <span className={`badge ${v.tipo === 'entrega' ? 'reservado' : 'retirado'}`}>
                     {v.tipo === 'entrega' ? <ArrowUpFromLine size={11} strokeWidth={2} /> : <ArrowDownToLine size={11} strokeWidth={2} />} {v.tipo}
                   </span>
+                  {v.grupo_id && (
+                    <span title="Es parte de un recambio: entrega de vacío + retiro de lleno en la misma visita" style={{ marginLeft: '6px' }}>
+                      <RefreshCw size={11} strokeWidth={2} style={{ color: 'var(--accent)' }} />
+                    </span>
+                  )}
                 </td>
                 <td>{v.zona ?? '—'}</td>
-                <td className="mono">{v.contenedor_numero ?? '—'}</td>
+                <td className="mono">
+                  {v.contenedor_numero ? (
+                    v.contenedor_numero
+                  ) : asignando === v.id ? (
+                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                      <select
+                        className="form-select"
+                        style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                        value={asignarForm.contenedor_numero}
+                        onChange={(e) => setAsignarForm({ ...asignarForm, contenedor_numero: e.target.value })}
+                      >
+                        <option value="">— Vacío —</option>
+                        {contenedores.filter((c) => c.estado === 'disponible').map((c) => (
+                          <option key={c.numero} value={c.numero}>{c.numero}</option>
+                        ))}
+                      </select>
+                      <button className="btn btn-success btn-sm" onClick={() => asignarContenedor(v.id)}>OK</button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setAsignando(null)}>✕</button>
+                    </div>
+                  ) : (
+                    <RoleGate roles={['admin', 'operador']}>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => { setAsignando(v.id); setAsignarForm({ contenedor_numero: '', chofer_id: v.chofer_id ?? '' }); }}
+                      >
+                        Asignar
+                      </button>
+                    </RoleGate>
+                  )}
+                </td>
                 <td>
                   {v.contenedor_estado ? (
                     <span className={`badge ${v.contenedor_estado}`}>
@@ -249,6 +306,7 @@ export function Viajes() {
                   )}
                 </td>
                 <td>{v.chofer_nombre ?? <span className="text-muted">Sin asignar</span>}</td>
+                <td className="mono">{v.patente ?? <span className="text-muted">—</span>}</td>
                 <td>
                   <RoleGate roles={['admin', 'operador']}>
                     <select
@@ -274,7 +332,7 @@ export function Viajes() {
             ))}
             {viajes.length === 0 && (
               <tr>
-                <td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={9} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No hay viajes cargados
                 </td>
               </tr>

@@ -69,17 +69,25 @@ export function useAlertas() {
       prev.filter((a) => !(a.tipo === tipo && a.referencia_id === referenciaId)));
   }
 
+  // Un pago levanta 'pago_pendiente_validacion' (transferencia) o
+  // 'cuenta_corriente_solicitada' (ver migración 0013) — no sabemos cuál sin
+  // consultar, así que se sacan las dos por referencia_id.
+  function quitarAlertaPago(pagoId: string) {
+    queryClient.setQueryData<Alerta[]>(ALERTAS_KEY, (prev = []) =>
+      prev.filter((a) => a.referencia_id !== pagoId || (a.tipo !== 'pago_pendiente_validacion' && a.tipo !== 'cuenta_corriente_solicitada')));
+  }
+
   /** Valida el pago (el backend resuelve la alerta de forma atómica junto con la reserva). */
   async function validarPago(pagoId: string, payload: ValidarPagoPayload = {}) {
     const { data } = await api.post(`/api/pagos/${pagoId}/validar`, payload);
-    quitarAlerta('pago_pendiente_validacion', pagoId);
+    quitarAlertaPago(pagoId);
     return data as { ticket_id: string; contenedor: string; reservado_ahora: boolean };
   }
 
   /** Rechaza el pago (el backend resuelve la alerta y avisa al cliente por WhatsApp). */
   async function rechazarPago(pagoId: string, motivo: string) {
     await api.post(`/api/pagos/${pagoId}/rechazar`, { motivo });
-    quitarAlerta('pago_pendiente_validacion', pagoId);
+    quitarAlertaPago(pagoId);
   }
 
   /** El operador confirma que el contenedor retirado por un chofer llegó a la empresa. */

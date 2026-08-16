@@ -19,7 +19,7 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const rows = await query(
     `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
-            v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id,
+            v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id, v.patente, v.grupo_id,
             -- Misma vista "por contrato" que GET /api/contenedores (columna
             -- estado_contrato) — expresión duplicada a propósito, mantener en sync.
             CASE
@@ -136,11 +136,22 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
         }
       }
 
+      // Foto de la patente del chofer al momento de crear el viaje (ver
+      // comentario de viajes.patente en schema.sql).
+      let patente: string | null = null;
+      if (v.chofer_id) {
+        const { rows: choferRows } = await c.query<{ patente: string | null }>(
+          'SELECT patente FROM choferes WHERE id = $1',
+          [v.chofer_id],
+        );
+        patente = choferRows[0]?.patente ?? null;
+      }
+
       const { rows } = await c.query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
         [v.tipo, v.fecha, v.chofer_id ?? null, v.contenedor_numero ?? null,
-         v.cliente_telefono ?? null, v.zona ?? null, v.destino_direccion ?? null, v.notas ?? null],
+         v.cliente_telefono ?? null, v.zona ?? null, v.destino_direccion ?? null, v.notas ?? null, patente],
       );
       return rows[0];
     });
@@ -171,9 +182,13 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
 const patchSchema = z.object({
   estado: z.enum(['programado', 'en_curso', 'completado', 'cancelado']).optional(),
   chofer_id: z.string().uuid().nullable().optional(),
+  // Sobre todo para completar la fila 'entrega' de un recambio (ver
+  // recambio.flow.ts): se crea sin contenedor porque el bot no elige cuál
+  // vacío sale — el operador lo asigna acá, como cualquier entrega nueva.
+  contenedor_numero: z.string().min(1).nullable().optional(),
 });
 
-/** PATCH /api/viajes/:id — cambiar estado o reasignar chofer (admin/operador). */
+/** PATCH /api/viajes/:id — cambiar estado, reasignar chofer o contenedor (admin/operador). */
 viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = patchSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
@@ -183,6 +198,15 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
     params.push(val); sets.push(`${k} = $${params.length}`);
   }
   if (sets.length === 0) return res.status(400).json({ error: 'Nada para actualizar' });
+  // Reasignar chofer también actualiza la foto de patente del viaje (ver
+  // comentario de viajes.patente en schema.sql).
+  if ('chofer_id' in parsed.data) {
+    const nuevoChoferId = parsed.data.chofer_id;
+    const patente = nuevoChoferId
+      ? (await query<{ patente: string | null }>('SELECT patente FROM choferes WHERE id = $1', [nuevoChoferId]))[0]?.patente ?? null
+      : null;
+    params.push(patente); sets.push(`patente = $${params.length}`);
+  }
   params.push(req.params.id);
   try {
     const [row] = await query(

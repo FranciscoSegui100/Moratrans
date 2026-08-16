@@ -52,8 +52,15 @@ CREATE TYPE tipo_alerta AS ENUM (
   'solicita_asesor',
   'confirmar_retiro',
   'factura_solicitada',
-  'envio_fallido'
+  'envio_fallido',
+  'cuenta_corriente_solicitada',
+  'recambio_solicitado',
+  'retiro_solicitado'
 );
+
+-- Cuenta corriente: clientes que pagan a fin de mes o cuando se juntan
+-- varios retiros, en vez de transferir antes de cada uno (ver pago.flow.ts).
+CREATE TYPE estado_cuenta_corriente AS ENUM ('sin_pedir', 'pendiente', 'aprobada', 'rechazada');
 
 -- Roles del panel (RBAC). Ver middleware/rbac.ts
 CREATE TYPE rol_usuario AS ENUM ('admin', 'operador', 'finanzas', 'lectura');
@@ -92,6 +99,9 @@ CREATE TABLE clientes (
   nombre    TEXT NOT NULL,
   telefono  TEXT NOT NULL UNIQUE,             -- E.164, clave natural en chat
   direccion TEXT,
+  -- Se pide desde el bot (ver pago.flow.ts); 'aprobada' la deja poner un
+  -- operador tras la primera validación manual de un pago con este flag.
+  cuenta_corriente_estado estado_cuenta_corriente NOT NULL DEFAULT 'sin_pedir',
   creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -104,6 +114,9 @@ CREATE TABLE choferes (
   -- Blind index (HMAC determinístico) para poder buscar por DNI sin descifrar.
   dni_hash  TEXT    UNIQUE,
   telefono  TEXT,                             -- se usa para autoidentificar en WA; NULL = desvinculado
+  -- Patente del camión que maneja habitualmente. No es UNIQUE: un camión puede
+  -- rotar entre choferes en distintos turnos/períodos.
+  patente   TEXT,
   activo    BOOLEAN NOT NULL DEFAULT TRUE,
   -- Desde cuándo activo=false; usado para contar los 365 días de retención del DNI.
   desactivado_en TIMESTAMPTZ,
@@ -177,6 +190,10 @@ CREATE TABLE pagos (
   media_id         TEXT,                        -- id original del media en Graph API
   factura_url      TEXT,                        -- ruta cifrada de la factura cargada por un operador
   titular_transferencia TEXT,                   -- a nombre de quién hizo la transferencia (lo pide el bot, ver pago.flow.ts)
+  -- El cliente eligió pagar contra su cuenta corriente en vez de transferir:
+  -- no tiene url_comprobante, pero igual pasa por la misma validación manual
+  -- (fn_validar_pago) antes de reservar contenedor y crear el ticket.
+  es_cuenta_corriente BOOLEAN NOT NULL DEFAULT FALSE,
   estado           estado_pago NOT NULL DEFAULT 'pendiente',
   validado_por     UUID REFERENCES usuarios(id) ON DELETE SET NULL,
   motivo_rechazo   TEXT,
@@ -264,15 +281,23 @@ CREATE TABLE viajes (
   chofer_id         UUID REFERENCES choferes(id)   ON DELETE SET NULL,
   contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
   cliente_telefono  TEXT,
+  -- Foto de la patente del chofer al momento de crear el viaje (se copia de
+  -- choferes.patente): si el chofer cambia de camión después, este viaje ya
+  -- programado/cerrado conserva la patente con la que realmente salió.
+  patente           TEXT,
   zona              TEXT,
   destino_direccion TEXT,
   estado            estado_viaje NOT NULL DEFAULT 'programado',
+  -- Recambio: une la fila 'entrega' (vacío que deja) con la 'retiro' (lleno
+  -- que se lleva) de una misma visita. NULL en un viaje normal.
+  grupo_id          UUID,
   notas             TEXT,
   creado_en         TIMESTAMPTZ  NOT NULL DEFAULT now(),
   actualizado_en    TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_viajes_fecha  ON viajes(fecha);
 CREATE INDEX idx_viajes_estado ON viajes(estado);
+CREATE INDEX idx_viajes_grupo  ON viajes(grupo_id) WHERE grupo_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------
 -- 8.c IDEMPOTENCIA DEL WEBHOOK (dedupe por message_id de Meta)

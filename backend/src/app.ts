@@ -17,6 +17,7 @@ import { pagosRouter } from './modules/pagos/pagos.routes';
 import { alertasRouter } from './modules/alertas/alertas.routes';
 import { syncRouter } from './modules/sync/sync.routes';
 import { choferesRouter } from './modules/contenedores/choferes.routes';
+import { clientesRouter } from './modules/clientes/clientes.routes';
 import { contenedoresRouter } from './modules/contenedores/contenedores.routes';
 import { ticketsRouter } from './modules/tickets/tickets.routes';
 import { viajesRouter } from './modules/viajes/viajes.routes';
@@ -82,6 +83,7 @@ export function crearApp() {
   app.use('/api/pagos', pagosRouter);
   app.use('/api/alertas', alertasRouter);
   app.use('/api/choferes', choferesRouter);
+  app.use('/api/clientes', clientesRouter);
   app.use('/api/contenedores', contenedoresRouter);
   app.use('/api/tickets', ticketsRouter);
   app.use('/api/viajes', viajesRouter);

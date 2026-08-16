@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 
-interface Chofer { id: string; nombre: string; dni: string | null; telefono: string | null; activo: boolean; }
+interface Chofer { id: string; nombre: string; dni: string | null; telefono: string | null; patente: string | null; activo: boolean; }
 
 function initials(name: string) {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -14,10 +14,10 @@ function initials(name: string) {
 export function Choferes() {
   const { show } = useToast();
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ nombre: '', dni: '', telefono: '' });
+  const [form, setForm] = useState({ nombre: '', dni: '', telefono: '', patente: '' });
   const [loading, setLoading] = useState(false);
   const [editando, setEditando] = useState<string | null>(null);
-  const [edit, setEdit] = useState({ nombre: '', dni: '', telefono: '' });
+  const [edit, setEdit] = useState({ nombre: '', dni: '', telefono: '', patente: '' });
 
   const { data: choferes = [] } = useQuery({
     queryKey: ['choferes'],
@@ -31,8 +31,8 @@ export function Choferes() {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.post('/api/choferes', form);
-      setForm({ nombre: '', dni: '', telefono: '' });
+      await api.post('/api/choferes', { ...form, patente: form.patente || undefined });
+      setForm({ nombre: '', dni: '', telefono: '', patente: '' });
       cargar();
       show('success', 'Chofer creado', form.nombre);
     } catch (err: any) {
@@ -44,14 +44,14 @@ export function Choferes() {
 
   function empezarEdicion(c: Chofer) {
     setEditando(c.id);
-    setEdit({ nombre: c.nombre, dni: c.dni && c.dni !== '••••••' ? c.dni : '', telefono: c.telefono ?? '' });
+    setEdit({ nombre: c.nombre, dni: c.dni && c.dni !== '••••••' ? c.dni : '', telefono: c.telefono ?? '', patente: c.patente ?? '' });
   }
 
   async function guardarEdicion(id: string) {
     try {
       // Si el DNI está enmascarado (rol sin permiso) o no se tocó, no lo mandamos.
-      const { nombre, telefono, dni } = edit;
-      const payload: Record<string, string> = { nombre, telefono };
+      const { nombre, telefono, dni, patente } = edit;
+      const payload: Record<string, string | null> = { nombre, telefono, patente: patente || null };
       if (dni) payload.dni = dni;
       await api.patch(`/api/choferes/${id}`, payload);
       setEditando(null);
@@ -119,6 +119,11 @@ export function Choferes() {
               <input className="form-input" placeholder="Ej. 0261 15-206-2258 (cualquier formato sirve)" value={form.telefono} required
                 onChange={(e) => setForm({ ...form, telefono: e.target.value })} />
             </div>
+            <div className="form-group">
+              <label className="form-label">Patente (opcional)</label>
+              <input className="form-input" placeholder="Ej. AF469SO" value={form.patente}
+                onChange={(e) => setForm({ ...form, patente: e.target.value.toUpperCase() })} />
+            </div>
             <button type="submit" className="btn btn-primary" disabled={loading}>
               {loading ? 'Guardando...' : 'Agregar chofer'}
             </button>
@@ -133,6 +138,7 @@ export function Choferes() {
               <th>Chofer</th>
               <th>DNI</th>
               <th>Teléfono</th>
+              <th>Patente</th>
               <th>Estado</th>
               <th>Acciones</th>
             </tr>
@@ -187,6 +193,19 @@ export function Choferes() {
                       <span className="text-muted">Sin vincular</span>
                     )}
                   </td>
+                  <td className="mono">
+                    {enEdicion ? (
+                      <input
+                        className="form-input"
+                        value={edit.patente}
+                        onChange={(e) => setEdit({ ...edit, patente: e.target.value.toUpperCase() })}
+                      />
+                    ) : c.patente ? (
+                      c.patente
+                    ) : (
+                      <span className="text-muted">Sin patente</span>
+                    )}
+                  </td>
                   <td>
                     <span className={`badge ${c.activo ? 'disponible' : 'cancelado'}`}>
                       {c.activo ? '● Activo' : '● Inactivo'}
@@ -232,7 +251,7 @@ export function Choferes() {
             })}
             {choferes.length === 0 && (
               <tr>
-                <td colSpan={5} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={6} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No hay choferes registrados
                 </td>
               </tr>

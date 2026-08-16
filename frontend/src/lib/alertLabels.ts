@@ -10,4 +10,7 @@ export const tipoLabel: Record<string, string> = {
   confirmar_retiro:           'Confirmar llegada de contenedor',
   factura_solicitada:         'Pide factura',
   envio_fallido:              'No se pudo enviar un WhatsApp',
+  cuenta_corriente_solicitada: 'Pago a cuenta corriente',
+  recambio_solicitado:        'Pide un recambio',
+  retiro_solicitado:          'Pide que retiren un contenedor',
 };

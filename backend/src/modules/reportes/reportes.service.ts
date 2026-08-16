@@ -21,6 +21,55 @@ export async function excelContenedores(): Promise<Buffer> {
 }
 
 /**
+ * Genera un Excel (buffer) con los viajes de todos los clientes, seccionado
+ * en una hoja por mes (a menos que se pida un mes puntual, que queda en una
+ * sola hoja). El "cliente" de un viaje se referencia por teléfono (igual que
+ * en el resto del sistema, ver clientes.service.ts); si todavía no está en
+ * el padrón `clientes` se muestra el teléfono en su lugar.
+ */
+export async function excelClientes(mes?: string): Promise<Buffer> {
+  const rows = await query<{
+    cliente_nombre: string;
+    cliente_telefono: string;
+    tipo: string;
+    fecha: string;
+    estado: string;
+    zona: string | null;
+    contenedor_numero: string | null;
+    mes: string;
+  }>(
+    `SELECT COALESCE(cl.nombre, v.cliente_telefono) AS cliente_nombre, v.cliente_telefono,
+            v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero,
+            to_char(v.fecha, 'YYYY-MM') AS mes
+       FROM viajes v
+       LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
+      WHERE v.cliente_telefono IS NOT NULL
+        AND ($1::text IS NULL OR to_char(v.fecha, 'YYYY-MM') = $1)
+      ORDER BY v.fecha`,
+    [mes ?? null],
+  );
+
+  const wb = new ExcelJS.Workbook();
+  const meses = [...new Set(rows.map((r) => r.mes))].sort();
+  const columnas = [
+    { header: 'Cliente', key: 'cliente_nombre', width: 26 },
+    { header: 'Teléfono', key: 'cliente_telefono', width: 18 },
+    { header: 'Tipo', key: 'tipo', width: 12 },
+    { header: 'Fecha', key: 'fecha', width: 14 },
+    { header: 'Estado', key: 'estado', width: 14 },
+    { header: 'Zona', key: 'zona', width: 18 },
+    { header: 'Contenedor', key: 'contenedor_numero', width: 18 },
+  ];
+  for (const m of meses.length ? meses : [mes ?? 'sin_datos']) {
+    const ws = wb.addWorksheet(m);
+    ws.columns = columnas;
+    ws.getRow(1).font = { bold: true };
+    rows.filter((r) => r.mes === m).forEach((r) => ws.addRow(r));
+  }
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+/**
  * Genera un PDF (buffer) con un resumen de pagos.
  * `verComprobante` controla, según el rol, si se listan las referencias sensibles.
  */

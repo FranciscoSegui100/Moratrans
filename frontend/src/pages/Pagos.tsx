@@ -20,6 +20,7 @@ interface Pago {
   creado_en: string;
   adjuntos_count: number;
   titular_transferencia: string | null;
+  es_cuenta_corriente: boolean;
 }
 
 interface Chofer { id: string; nombre: string; activo: boolean; }
@@ -75,7 +76,7 @@ export function Pagos() {
   useEffect(() => {
     const socket = conectarSocket();
     const onAlertaActualizada = (p: { tipo: string; estado: string }) => {
-      if (p.tipo === 'pago_pendiente_validacion' && p.estado === 'resuelta') cargar();
+      if ((p.tipo === 'pago_pendiente_validacion' || p.tipo === 'cuenta_corriente_solicitada') && p.estado === 'resuelta') cargar();
     };
     socket.on('alerta_actualizada', onAlertaActualizada);
     return () => { socket.off('alerta_actualizada', onAlertaActualizada); };
@@ -167,6 +168,8 @@ export function Pagos() {
                   <RoleGate roles={['admin', 'finanzas']}>
                     {p.url_comprobante ? (
                       <ComprobanteViewer pagoId={p.id} />
+                    ) : p.es_cuenta_corriente ? (
+                      <span className="badge pendiente">📋 Cuenta corriente — sin comprobante</span>
                     ) : (
                       <span className="text-muted">Sin comprobante</span>
                     )}

@@ -2,6 +2,7 @@ import { query } from '../../../config/db';
 import { sendText, sendList, sendButtons, sendLocationRequest } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
 import { datosBancarios } from './pago.flow';
+import { obtenerOCrearCliente } from '../../../services/clientes.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -159,6 +160,10 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
        VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7)`,
       [to, m.nombrePerfil ?? null, departamento, precio, destinoLat, destinoLng, destinoDireccion],
     );
+    // Alta/actualización en el padrón de clientes (ver clientes.service.ts) —
+    // así la pantalla Clientes del panel refleja a todo el que cotizó, no
+    // solo a quien pidió cuenta corriente.
+    obtenerOCrearCliente(to, m.nombrePerfil).catch((e) => console.error('Error dando de alta al cliente:', e));
 
     await sendText(
       to,
