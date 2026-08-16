@@ -3,6 +3,8 @@ import { sendText, sendList, sendButtons } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { blindIndex } from '../../../services/crypto.service';
+import { finalizarRetiro } from '../../../services/retiro.service';
+import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -83,12 +85,23 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
 
-  // 2) Chofer reconocido: manejar cambio de estado (botones) y elección de contenedor (lista).
+  // 2) Chofer reconocido: manejar cambio de estado (botones), elección de
+  // contenedor (lista), y las dos acciones self-service nuevas (vaciado y
+  // autoasignación del vacío de un recambio).
   if (m.tipo === 'interactive_button' && m.seleccionId?.startsWith('estado:')) {
     return elegirContenedor(to, chofer[0].id, m.seleccionId.replace('estado:', ''), sesion);
   }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('cont:')) {
     return aplicarEstado(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('cont:', ''), sesion);
+  }
+  if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('vaciado:')) {
+    return aplicarVaciado(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('vaciado:', ''));
+  }
+  if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recgrupo:')) {
+    return elegirVacioRecambio(to, chofer[0].id, m.seleccionId.replace('recgrupo:', ''));
+  }
+  if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recvacio:') && sesion.paso === 'elegir_vacio_recambio') {
+    return aplicarVacioRecambio(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('recvacio:', ''), sesion);
   }
 
   return menuChofer(to, chofer[0].nombre);
@@ -98,6 +111,11 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
  * Menú principal del chofer: 3 botones pegados al mensaje (un solo toque),
  * en vez de una lista desplegable — más rápido para alguien manejando.
  * Se manda después de cada acción para que nunca tenga que escribir "menú".
+ *
+ * Si además el chofer tiene contenedores propios en "retirado" esperando
+ * confirmar el vaciado, o un recambio propio esperando que le asigne el
+ * vacío, se mandan listas aparte con esas acciones — WhatsApp permite un
+ * máximo de 3 botones por mensaje, por eso no se pueden agregar ahí mismo.
  */
 export async function menuChofer(to: string, nombre?: string): Promise<void> {
   await sendButtons(
@@ -105,6 +123,154 @@ export async function menuChofer(to: string, nombre?: string): Promise<void> {
     nombre ? `🚚 ¡Hola, ${nombre}! ¿Qué querés registrar?` : '🚚 Panel del chofer. ¿Qué querés registrar?',
     ESTADOS_CHOFER.map((e) => ({ id: `estado:${e}`, title: LABEL_ESTADO[e] })),
   );
+
+  const [chofer] = await query<{ id: string }>(
+    'SELECT id FROM choferes WHERE telefono = $1 AND activo = TRUE',
+    [to],
+  );
+  if (!chofer) return; // no debería pasar (ya se validó identidad antes de llegar acá)
+  await ofrecerVaciadosPendientes(to, chofer.id);
+  await ofrecerRecambioPendiente(to, chofer.id);
+}
+
+/** Contenedores propios ya retirados del cliente, esperando que confirme que los vació. */
+async function ofrecerVaciadosPendientes(to: string, choferId: string): Promise<void> {
+  const pendientes = await query<{ contenedor_numero: string }>(
+    `SELECT contenedor_numero FROM viajes
+      WHERE chofer_id = $1 AND tipo = 'retiro' AND estado = 'en_curso' AND contenedor_numero IS NOT NULL
+      ORDER BY creado_en`,
+    [choferId],
+  );
+  if (pendientes.length === 0) return;
+  await sendList(
+    to,
+    '🗑️ Vaciado',
+    '¿Ya vaciaste alguno de estos contenedores?',
+    'Ver contenedores',
+    pendientes.map((p) => ({ id: `vaciado:${p.contenedor_numero}`, title: p.contenedor_numero })),
+  );
+}
+
+/** Recambios propios (ya tiene asignado el retiro del lleno) esperando que diga con qué vacío completa la entrega. */
+async function ofrecerRecambioPendiente(to: string, choferId: string): Promise<void> {
+  const pendientes = await query<{ entrega_id: string; lleno_numero: string }>(
+    `SELECT e.id AS entrega_id, r.contenedor_numero AS lleno_numero
+       FROM viajes r
+       JOIN viajes e ON e.grupo_id = r.grupo_id AND e.tipo = 'entrega' AND e.contenedor_numero IS NULL
+        AND e.estado IN ('programado', 'en_curso')
+      WHERE r.chofer_id = $1 AND r.tipo = 'retiro' AND r.grupo_id IS NOT NULL
+        AND r.estado IN ('programado', 'en_curso')
+      ORDER BY r.creado_en`,
+    [choferId],
+  );
+  if (pendientes.length === 0) return;
+
+  const disponibles = await contenedoresDisponibles();
+  if (disponibles.length === 0) return; // nada para ofrecer todavía — no hay ningún vacío en stock
+
+  if (pendientes.length === 1) {
+    return enviarListaVacios(to, pendientes[0].entrega_id, pendientes[0].lleno_numero, disponibles);
+  }
+  await sendList(
+    to,
+    '🔄 Recambio pendiente',
+    'Tenés más de un recambio asignado — ¿para cuál tenés el vacío?',
+    'Ver recambios',
+    pendientes.map((p) => ({ id: `recgrupo:${p.entrega_id}`, title: `Lleno ${p.lleno_numero}` })),
+  );
+}
+
+async function contenedoresDisponibles(): Promise<{ numero: string }[]> {
+  return query<{ numero: string }>(`SELECT numero FROM contenedores WHERE estado = 'disponible' ORDER BY creado_en LIMIT 10`);
+}
+
+async function enviarListaVacios(
+  to: string,
+  entregaId: string,
+  llenoNumero: string,
+  disponibles: { numero: string }[],
+): Promise<void> {
+  await setSesion({ telefono: to, flujo: 'chofer', paso: 'elegir_vacio_recambio', contexto: { entregaId } });
+  await sendList(
+    to,
+    '📦 Tengo el vacío',
+    `¿Cuál contenedor vacío llevás para completar el recambio del lleno *${llenoNumero}*?`,
+    'Ver contenedores',
+    disponibles.map((d) => ({ id: `recvacio:${d.numero}`, title: d.numero })),
+  );
+}
+
+/** El chofer eligió CUÁL de sus recambios pendientes completar (sólo aparece cuando tiene más de uno). */
+async function elegirVacioRecambio(to: string, choferId: string, entregaId: string): Promise<void> {
+  const [pendiente] = await query<{ contenedor_numero: string }>(
+    `SELECT r.contenedor_numero
+       FROM viajes e JOIN viajes r ON r.grupo_id = e.grupo_id AND r.tipo = 'retiro'
+      WHERE e.id = $1 AND e.tipo = 'entrega' AND e.contenedor_numero IS NULL AND r.chofer_id = $2`,
+    [entregaId, choferId],
+  );
+  if (!pendiente) {
+    await sendText(to, '🙁 Ese recambio ya no está disponible. Escribí *menú* para volver a empezar.');
+    return;
+  }
+  const disponibles = await contenedoresDisponibles();
+  if (disponibles.length === 0) {
+    await sendText(to, '🙁 No hay ningún contenedor vacío disponible ahora mismo.');
+    return;
+  }
+  await enviarListaVacios(to, entregaId, pendiente.contenedor_numero, disponibles);
+}
+
+/**
+ * El chofer confirma que vació uno de sus contenedores retirados: reemplaza
+ * la confirmación manual que antes hacía un operador desde el panel (ver
+ * retiro.service.ts, que ya se encarga de avisarle a él mismo el resultado
+ * — por eso acá no se manda una segunda confirmación además del error).
+ */
+async function aplicarVaciado(to: string, choferId: string, choferNombre: string, numero: string): Promise<void> {
+  const resultado = await finalizarRetiro(numero, `chofer:${choferId}`, choferId);
+  if ('error' in resultado) {
+    await sendText(to, `⚠️ No pudimos registrar el vaciado de ${numero}: ${resultado.error}`);
+  }
+  return menuChofer(to, choferNombre);
+}
+
+/** El chofer eligió CON QUÉ contenedor vacío completa su recambio pendiente. */
+async function aplicarVacioRecambio(
+  to: string,
+  choferId: string,
+  choferNombre: string,
+  numero: string,
+  sesion: Sesion,
+): Promise<void> {
+  const entregaId = sesion.contexto.entregaId as string;
+  await clearSesion(to);
+
+  try {
+    // Guard WHERE estado='disponible': si otro operador/chofer se lo llevó
+    // justo antes, no lo pisamos — el chofer elige otro.
+    const [contenedor] = await query<{ numero: string }>(
+      `UPDATE contenedores SET estado = 'reservado', actualizado_por = $2
+        WHERE numero = $1 AND estado = 'disponible' RETURNING numero`,
+      [numero, `chofer:${choferId}`],
+    );
+    if (!contenedor) {
+      await sendText(to, `🙁 El contenedor ${numero} ya no está disponible — alguien lo tomó justo antes. Probá con otro.`);
+      return menuChofer(to, choferNombre);
+    }
+    const [choferRow] = await query<{ patente: string | null }>('SELECT patente FROM choferes WHERE id = $1', [choferId]);
+    await query(
+      `UPDATE viajes SET contenedor_numero = $1, chofer_id = $2, patente = $3
+        WHERE id = $4 AND contenedor_numero IS NULL`,
+      [numero, choferId, choferRow?.patente ?? null, entregaId],
+    );
+    emitRecursoActualizado('contenedores');
+    emitRecursoActualizado('viajes');
+    await sendText(to, `✅ ¡Listo! Contenedor *${numero}* asignado como el vacío del recambio. 💪`);
+  } catch (err: any) {
+    await sendText(to, `⚠️ No pudimos asignar el contenedor ${numero}. Probá de nuevo.`);
+    console.error('Error en aplicarVacioRecambio:', err.message);
+  }
+  return menuChofer(to, choferNombre);
 }
 
 /** Tras elegir estado, listar contenedores candidatos. */
@@ -158,31 +324,52 @@ async function aplicarEstado(
     return menuChofer(to, choferNombre);
   }
 
-  // "Retirado" no se aplica al toque: queda pendiente hasta que un operador
-  // confirme desde el panel que el contenedor llegó físicamente a la empresa.
+  // El chofer retiró el lleno del cliente: pasa el contenedor a "retirado" ya
+  // mismo (transición entregado -> retirado, permitida por el trigger) y
+  // deja un viaje 'retiro' en curso — a diferencia de antes, ya no espera a
+  // que un operador confirme la llegada a la empresa; eso ahora lo hace el
+  // propio chofer con "🗑️ Ya vacié" (ver aplicarVaciado más abajo).
   if (estado === 'retirado') {
     try {
-      await query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, estado, notas)
-         VALUES ('retiro', CURRENT_DATE, $1, $2, 'en_curso', 'Retirado del cliente por WhatsApp, pendiente de confirmar llegada a la empresa')`,
-        [choferId, numero],
+      // Dirección/zona del cliente: se copian de la entrega activa de este
+      // contenedor con este chofer (elegirContenedor ya exige que exista, es
+      // de donde sale el filtro `v.chofer_id = choferId` más arriba) — ese
+      // viaje es el origen físico real de este retiro.
+      const [entrega] = await query<{ destino_direccion: string | null; zona: string | null }>(
+        `SELECT destino_direccion, zona FROM viajes
+          WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
+          ORDER BY creado_en DESC LIMIT 1`,
+        [numero, choferId],
       );
+      // Vaciadero adonde se lleva el lleno (si hay uno solo activo cargado;
+      // si hay varios, se completa después desde el panel).
+      const vaciadero = await resolverUbicacion('vaciadero');
+
+      await query(
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, destino_direccion, zona, estado, notas, ubicacion_id, ubicacion_direccion)
+         VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'en_curso', 'Retirado del cliente por WhatsApp', $5, $6)`,
+        [choferId, numero, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+      );
+      await query(
+        `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
+        [numero, `chofer:${choferId}`],
+      );
+      // Visibilidad para el panel (ya no bloquea nada — se resuelve sola
+      // cuando el chofer marca "vaciado", ver retiro.service.ts).
       const [alerta] = await query(
         `INSERT INTO alertas (tipo, referencia_id, mensaje)
          VALUES ('confirmar_retiro', $1, $2)
          ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
          RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-        [numero, `${choferNombre} retiró el contenedor ${numero} del cliente. Confirmá cuando llegue a la empresa.`],
+        [numero, `${choferNombre} retiró el contenedor ${numero} del cliente, va camino al vaciadero.`],
       );
       if (alerta) emitAlerta(alerta);
-      // Igual que con 'contenedores' más abajo: este INSERT en viajes viene
-      // del webhook de WhatsApp, no pasa por broadcastCambios, así que la
-      // pestaña Viajes quedaba desactualizada hasta hacer F5.
+      emitRecursoActualizado('contenedores');
       emitRecursoActualizado('viajes');
       await clearSesion(to);
       await sendText(
         to,
-        `📥 ¡Anotado! En cuanto el contenedor *${numero}* llegue a la empresa, un operador lo confirma y te avisamos por acá. ¡Gracias por tu trabajo! 🙌`,
+        `📥 ¡Anotado! Contenedor *${numero}* marcado como retirado. Avisame por acá cuando lo vacíes (🗑️ en el menú). ¡Gracias por tu trabajo! 🙌`,
       );
     } catch (err: any) {
       await sendText(to, `⚠️ No pudimos registrar el retiro de ${numero}. Probá de nuevo.`);

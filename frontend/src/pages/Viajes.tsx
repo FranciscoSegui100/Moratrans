@@ -22,10 +22,15 @@ interface Viaje {
   remito: string | null;
   importe: string | null;
   notas: string | null;
+  ubicacion_id: string | null;
+  ubicacion_direccion: string | null;
+  origen_direccion: string | null;
+  destino_final_direccion: string | null;
 }
 interface Contenedor { numero: string; estado: string; vence_en: string | null; }
 interface Tarifa { departamento: string; activo: boolean; }
 interface Chofer { id: string; nombre: string; activo: boolean; }
+interface Ubicacion { id: string; tipo: 'deposito' | 'vaciadero'; nombre: string; direccion: string; activo: boolean; }
 
 const estados = ['programado', 'en_curso', 'completado', 'cancelado'];
 
@@ -36,7 +41,7 @@ const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
   vencido: 'Vencido',
 };
 
-const formInicial = { tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', chofer_id: '', destino_direccion: '', remito: '', importe: '' };
+const formInicial = { tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', chofer_id: '', destino_direccion: '', remito: '', importe: '', ubicacion_id: '' };
 
 export function Viajes() {
   const { show } = useToast();
@@ -88,6 +93,14 @@ export function Viajes() {
     queryKey: ['choferes', 'activos'],
     queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data.filter((c) => c.activo)),
   });
+  const { data: ubicaciones = [] } = useQuery({
+    queryKey: ['ubicaciones'],
+    queryFn: () => api.get<Ubicacion[]>('/api/ubicaciones').then((r) => r.data.filter((u) => u.activo)),
+  });
+  // Depósito para una entrega, vaciadero para un retiro. Si hay una sola
+  // activa de ese tipo no hace falta elegir: el backend la autoasigna sola.
+  const tipoUbicacion = form.tipo === 'entrega' ? 'deposito' : 'vaciadero';
+  const ubicacionesElegibles = ubicaciones.filter((u) => u.tipo === tipoUbicacion);
   const cargar = () => queryClient.invalidateQueries({ queryKey: ['viajes'] });
 
   async function crear(e: React.FormEvent) {
@@ -103,6 +116,7 @@ export function Viajes() {
         destino_direccion: form.destino_direccion || undefined,
         remito: form.remito || undefined,
         importe: form.importe || undefined,
+        ubicacion_id: form.ubicacion_id || undefined,
       });
       setForm(formInicial);
       cargar();
@@ -167,12 +181,26 @@ export function Viajes() {
               <select
                 className="form-select"
                 value={form.tipo}
-                onChange={(e) => setForm({ ...form, tipo: e.target.value, contenedor_numero: '' })}
+                onChange={(e) => setForm({ ...form, tipo: e.target.value, contenedor_numero: '', ubicacion_id: '' })}
               >
                 <option value="entrega">Entrega</option>
                 <option value="retiro">Retiro</option>
               </select>
             </div>
+            {ubicacionesElegibles.length > 1 && (
+              <div className="form-group">
+                <label className="form-label">{form.tipo === 'entrega' ? 'Depósito' : 'Vaciadero'}</label>
+                <select
+                  className="form-select"
+                  value={form.ubicacion_id}
+                  onChange={(e) => setForm({ ...form, ubicacion_id: e.target.value })}
+                  required
+                >
+                  <option value="">— Elegir —</option>
+                  {ubicacionesElegibles.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+                </select>
+              </div>
+            )}
             <div className="form-group">
               <label className="form-label">Fecha</label>
               <input
@@ -266,6 +294,8 @@ export function Viajes() {
               <th>Fecha</th>
               <th>Tipo</th>
               <th>Zona</th>
+              <th>Origen</th>
+              <th>Destino</th>
               <th>Contenedor</th>
               <th>Estado contenedor</th>
               <th>Chofer</th>
@@ -291,6 +321,8 @@ export function Viajes() {
                   )}
                 </td>
                 <td>{v.zona ?? '—'}</td>
+                <td style={{ maxWidth: '160px', whiteSpace: 'normal' }}>{v.origen_direccion ?? <span className="text-muted">—</span>}</td>
+                <td style={{ maxWidth: '160px', whiteSpace: 'normal' }}>{v.destino_final_direccion ?? <span className="text-muted">—</span>}</td>
                 <td className="mono">
                   {v.contenedor_numero ? (
                     v.contenedor_numero
@@ -359,7 +391,7 @@ export function Viajes() {
             ))}
             {viajes.length === 0 && (
               <tr>
-                <td colSpan={11} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={13} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No hay viajes cargados
                 </td>
               </tr>

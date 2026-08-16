@@ -2,8 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
-import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
-import { emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
+import { finalizarRetiro } from '../../services/retiro.service';
 
 export const contenedoresRouter = Router();
 contenedoresRouter.use(requireAuth);
@@ -34,10 +33,20 @@ contenedoresRouter.get('/', async (req: Request, res: Response) => {
               WHEN c.actualizado_por LIKE 'operador:%' THEN COALESCE(u.nombre, 'Usuario eliminado')
               WHEN c.actualizado_por = 'validacion_pago' THEN 'Sistema (validación de pago)'
               ELSE c.actualizado_por
-            END AS actualizado_por
+            END AS actualizado_por,
+            va.tipo AS viaje_tipo, vch.nombre AS chofer_asignado
        FROM contenedores c
        LEFT JOIN choferes ch ON c.actualizado_por LIKE 'chofer:%' AND ch.id::text = substring(c.actualizado_por FROM 8)
        LEFT JOIN usuarios u  ON c.actualizado_por LIKE 'operador:%' AND u.id::text = substring(c.actualizado_por FROM 10)
+       -- Viaje activo (entrega o retiro) que tiene hoy asignado este contenedor,
+       -- para que el operador vea de un vistazo si quedó "huérfano" sin chofer.
+       LEFT JOIN LATERAL (
+         SELECT v.tipo, v.chofer_id
+           FROM viajes v
+          WHERE v.contenedor_numero = c.numero AND v.estado IN ('programado', 'en_curso')
+          ORDER BY v.creado_en DESC LIMIT 1
+       ) va ON true
+       LEFT JOIN choferes vch ON vch.id = va.chofer_id
       ORDER BY c.actualizado_en DESC`,
   );
   res.json(rows);
@@ -128,115 +137,21 @@ contenedoresRouter.post('/', requireRol('admin', 'operador'), async (req: Reques
 });
 
 /**
- * POST /api/contenedores/:numero/confirmar-retiro — el operador confirma
- * desde el panel que el contenedor que un chofer marcó como "retirado" por
- * WhatsApp llegó físicamente a la empresa. Recién ahí se aplica el cambio
- * de estado (antes queda pendiente, ver flows/chofer.flow.ts), vuelve a
- * quedar disponible para un cliente nuevo, y se avisa al chofer.
+ * POST /api/contenedores/:numero/confirmar-retiro — respaldo manual para el
+ * operador: el chofer ahora confirma solo por WhatsApp que vació el
+ * contenedor ("🗑️ Ya vacié", ver flows/chofer.flow.ts), que es el camino
+ * normal. Esta ruta queda para casos raros donde el chofer no puede usar el
+ * bot (sin señal, error, etc.) y un operador tiene que forzarlo a mano.
  */
 contenedoresRouter.post(
   '/:numero/confirmar-retiro',
   requireRol('admin', 'operador'),
   async (req: Request, res: Response) => {
-    const numero = req.params.numero;
-
-    const [viaje] = await query<{ id: string; chofer_id: string | null }>(
-      `SELECT id, chofer_id FROM viajes
-        WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado = 'en_curso'
-        ORDER BY creado_en DESC LIMIT 1`,
-      [numero],
-    );
-    if (!viaje) {
-      return res.status(404).json({ error: 'No hay un retiro pendiente de confirmación para ese contenedor' });
+    const resultado = await finalizarRetiro(req.params.numero, `operador:${req.user!.id}`);
+    if ('error' in resultado) {
+      const status = resultado.error.includes('pendiente de confirmación') ? 404 : 409;
+      return res.status(status).json({ error: resultado.error });
     }
-
-    try {
-      // El trigger fn_validar_transicion_contenedor solo permite "entregado" ->
-      // "retirado" directo; de ahí sí puede pasar a "disponible" (dos updates,
-      // cada uno válido por separado para el trigger). Vacía vence_en (era la
-      // fecha límite del cliente anterior, ya no aplica) para que el cron de
-      // "contenedor por vencer" no dispare una alerta vieja por error.
-      await query(
-        `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
-        [numero, `operador:${req.user!.id}`],
-      );
-      await query(
-        `UPDATE contenedores SET estado = 'disponible', vence_en = NULL, cliente_id = NULL, actualizado_por = $2 WHERE numero = $1`,
-        [numero, `operador:${req.user!.id}`],
-      );
-    } catch (e: any) {
-      return res.status(409).json({ error: e.message });
-    }
-
-    // El trigger fn_auditar_contenedor ya audita los dos UPDATE de arriba en
-    // historial_contenedores (con actualizado_por = 'operador:<uuid>') — no
-    // duplicar el insert acá.
-    await query(`UPDATE viajes SET estado = 'completado' WHERE id = $1`, [viaje.id]);
-    if (viaje.chofer_id) {
-      // El viaje de "entrega" (creado al validar el pago o al programarlo a
-      // mano) recién se cierra acá, cuando termina el ciclo completo — si se
-      // completaba antes (al marcar "entregado"), el chofer dejaba de tener
-      // un viaje activo vinculado y el filtro de seguridad de
-      // elegirContenedor (solo contenedores de SU propio viaje activo) le
-      // ocultaba el contenedor a la hora de elegir "ya retiré".
-      await query(
-        `UPDATE viajes SET estado = 'completado'
-          WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')`,
-        [numero, viaje.chofer_id],
-      );
-    }
-    // Si había una entrega reservada a futuro para este contenedor (ver POST
-    // /api/viajes: se permite reservar un contenedor ocupado para una fecha
-    // posterior a su vuelta), ahora que efectivamente volvió pasa directo a
-    // "reservado" — no queda una ventana en "disponible" donde otro pedido
-    // se lo podría llevar primero.
-    const [futura] = await query<{ id: string; chofer_id: string | null }>(
-      `SELECT id, chofer_id FROM viajes
-        WHERE contenedor_numero = $1 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
-        ORDER BY fecha LIMIT 1`,
-      [numero],
-    );
-    if (futura) {
-      await query(
-        `UPDATE contenedores SET estado = 'reservado', actualizado_por = $2 WHERE numero = $1`,
-        [numero, `operador:${req.user!.id}`],
-      );
-      if (futura.chofer_id) {
-        const [choferFutura] = await query<{ telefono: string }>('SELECT telefono FROM choferes WHERE id = $1', [futura.chofer_id]);
-        if (choferFutura?.telefono) {
-          sendText(
-            choferFutura.telefono,
-            `📦 El contenedor *${numero}* que tenías reservado ya volvió y quedó a tu nombre. Coordinemos la entrega.`,
-          ).catch((e) => console.error('Error avisando reserva futura lista:', motivoErrorWa(e)));
-        }
-      }
-    }
-
-    await query(
-      `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'confirmar_retiro' AND referencia_id = $1`,
-      [numero],
-    );
-    emitAlertaActualizada({ tipo: 'confirmar_retiro', referencia_id: numero, estado: 'resuelta' });
-    // Redundante con broadcastCambios (que ya debería cubrir esta ruta), pero
-    // explícito acá para no depender de esa cobertura genérica: la pestaña
-    // Contenedores tiene que verse "disponible" sin que nadie tenga que
-    // refrescar la página.
-    emitRecursoActualizado('contenedores');
-    // Este handler también cierra viajes (arriba), pero broadcastCambios solo
-    // ve '/api/contenedores/...' y avisa 'contenedores' — sin esto, la
-    // pestaña Viajes quedaba desactualizada hasta hacer F5.
-    emitRecursoActualizado('viajes');
-
-    if (viaje.chofer_id) {
-      const [chofer] = await query<{ telefono: string }>('SELECT telefono FROM choferes WHERE id = $1', [viaje.chofer_id]);
-      if (chofer) {
-        sendText(
-          chofer.telefono,
-          `✅ Confirmado: el contenedor *${numero}* ya quedó registrado en la empresa. ¡Gracias por tu trabajo! 🙌`,
-        ).catch((e) => console.error('Error avisando al chofer:', motivoErrorWa(e)));
-      }
-    }
-
-    res.json({ ok: true });
+    res.json(resultado);
   },
 );

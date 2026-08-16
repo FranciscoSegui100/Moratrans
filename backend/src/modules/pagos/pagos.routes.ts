@@ -10,6 +10,7 @@ import { sendText, sendButtons, uploadMedia, sendDocument, motivoErrorWa } from 
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada } from '../../config/socket';
+import { resolverUbicacion } from '../../services/ubicaciones.service';
 
 export const pagosRouter = Router();
 pagosRouter.use(requireAuth);
@@ -112,6 +113,9 @@ const validarSchema = z.object({
   // Requerida solo si el contenedor elegido está ocupado: para qué fecha se
   // arma la entrega (no puede ser antes de que ese contenedor vuelva).
   fechaEntrega: z.string().optional(),
+  // Depósito de donde sale el contenedor (ver ubicaciones.service.ts). Si no
+  // se manda y hay uno solo activo, se autoselecciona.
+  ubicacionId: z.string().uuid().optional(),
 });
 
 /**
@@ -186,8 +190,14 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
   const pagoId = req.params.id;
   const parsed = validarSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const { diasDemora, choferId, venceEn, contenedorNumero, fechaEntrega } = parsed.data;
+  const { diasDemora, choferId, venceEn, contenedorNumero, fechaEntrega, ubicacionId } = parsed.data;
   const contenedorNorm = contenedorNumero?.trim().toUpperCase() || null;
+
+  // Depósito de donde sale el contenedor de esta entrega. A diferencia de
+  // POST /api/viajes, acá no hay todavía un selector en el panel para elegir
+  // entre varios — si hay más de uno activo y no se especificó, se deja sin
+  // ubicación (se puede completar después desde la pestaña Viajes).
+  const ubicacion = await resolverUbicacion('deposito', ubicacionId);
 
   try {
     // Pre-chequeo liviano: si el contenedor elegido ya está ocupado, la
@@ -255,9 +265,10 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       }
       if (choferId) {
         await query(
-          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas)
-           VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', 'Asignado al validar el pago')`,
-          [venceEn ?? null, choferId, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null],
+          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas, ubicacion_id, ubicacion_direccion)
+           VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', 'Asignado al validar el pago', $6, $7)`,
+          [venceEn ?? null, choferId, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null,
+           ubicacion?.id ?? null, ubicacion?.direccion ?? null],
         );
 
         // Avisamos al chofer por WhatsApp: qué contenedor, a quién y adónde. No
@@ -287,9 +298,10 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       // verdad (ver POST /api/contenedores/:numero/confirmar-retiro, que
       // promueve el contenedor a 'reservado' en ese momento).
       await query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas)
-         VALUES ('entrega', $1, $2, $3, $4, $5, 'programado', 'Reservado al validar el pago; contenedor ocupado, pendiente de que vuelva')`,
-        [fechaEntrega, choferId ?? null, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null],
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas, ubicacion_id, ubicacion_direccion)
+         VALUES ('entrega', $1, $2, $3, $4, $5, 'programado', 'Reservado al validar el pago; contenedor ocupado, pendiente de que vuelva', $6, $7)`,
+        [fechaEntrega, choferId ?? null, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null,
+         ubicacion?.id ?? null, ubicacion?.direccion ?? null],
       );
       if (choferId && fechaEntrega) {
         avisarChoferReservaFutura(choferId, result.contenedor, fechaEntrega).catch((e) =>

@@ -5,6 +5,7 @@ import { requireAuth, requireRol } from '../../middleware/rbac';
 import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
+import { resolverUbicacion } from '../../services/ubicaciones.service';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -20,7 +21,13 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query(
     `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
             v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id, v.patente, v.grupo_id,
-            v.remito, v.importe,
+            v.remito, v.importe, v.ubicacion_id, v.ubicacion_direccion,
+            -- Origen/destino final del viaje: la entrega sale del depósito
+            -- (ubicacion_direccion) y llega a lo del cliente (destino_direccion);
+            -- el retiro sale de lo del cliente y llega al vaciadero. No se
+            -- guarda como columna aparte para no duplicar datos.
+            CASE WHEN v.tipo = 'entrega' THEN v.ubicacion_direccion ELSE v.destino_direccion END AS origen_direccion,
+            CASE WHEN v.tipo = 'entrega' THEN v.destino_direccion ELSE v.ubicacion_direccion END AS destino_final_direccion,
             -- Misma vista "por contrato" que GET /api/contenedores (columna
             -- estado_contrato) — expresión duplicada a propósito, mantener en sync.
             CASE
@@ -53,6 +60,11 @@ const nuevoSchema = z.object({
   notas: z.string().optional(),
   remito: z.string().optional(),
   importe: z.coerce.number().nonnegative().optional(),
+  // Depósito (si tipo='entrega') o vaciadero (si tipo='retiro') de donde
+  // sale/adonde llega el contenedor del lado de la empresa (ver GET /,
+  // columna origen_direccion). Opcional si sólo hay una ubicación activa de
+  // ese tipo: se autoselecciona más abajo.
+  ubicacion_id: z.string().uuid().optional(),
 });
 
 /**
@@ -91,6 +103,30 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
   const parsed = nuevoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
   const v = parsed.data;
+
+  // Depósito para una entrega, vaciadero para un retiro. Si no se especificó
+  // uno y hay más de una ubicación activa de ese tipo, hace falta que el
+  // operador elija — a diferencia de los flujos del bot, acá sí se puede
+  // pedir explícitamente (ver ubicaciones.service.ts).
+  const tipoUbicacion = v.tipo === 'entrega' ? 'deposito' : 'vaciadero';
+  let ubicacion: { id: string; direccion: string } | null = null;
+  if (v.ubicacion_id) {
+    ubicacion = await resolverUbicacion(tipoUbicacion, v.ubicacion_id);
+    if (!ubicacion) return res.status(400).json({ error: 'Ubicación inválida para este tipo de viaje.' });
+  } else {
+    const activas = await query<{ id: string; direccion: string }>(
+      'SELECT id, direccion FROM ubicaciones WHERE tipo = $1 AND activo = TRUE ORDER BY creado_en',
+      [tipoUbicacion],
+    );
+    if (activas.length === 1) ubicacion = activas[0];
+    else if (activas.length > 1) {
+      return res.status(400).json({
+        error: `Elegí ${tipoUbicacion === 'deposito' ? 'un depósito' : 'un vaciadero'}: hay más de uno cargado.`,
+      });
+    }
+    // 0 activas: se deja sin ubicación (todavía no se cargó ninguna en /ubicaciones).
+  }
+
   try {
     const row = await withTx(async (c) => {
       // Entrega: a lo sumo una reserva activa por contenedor. Si está
@@ -151,11 +187,11 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
       }
 
       const { rows } = await c.query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, ubicacion_id, ubicacion_direccion)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
         [v.tipo, v.fecha, v.chofer_id ?? null, v.contenedor_numero ?? null,
          v.cliente_telefono ?? null, v.zona ?? null, v.destino_direccion ?? null, v.notas ?? null, patente,
-         v.remito ?? null, v.importe ?? null],
+         v.remito ?? null, v.importe ?? null, ubicacion?.id ?? null, ubicacion?.direccion ?? null],
       );
       return rows[0];
     });
@@ -192,6 +228,7 @@ const patchSchema = z.object({
   contenedor_numero: z.string().min(1).nullable().optional(),
   remito: z.string().nullable().optional(),
   importe: z.coerce.number().nonnegative().nullable().optional(),
+  ubicacion_id: z.string().uuid().nullable().optional(),
 });
 
 /** PATCH /api/viajes/:id — cambiar estado, reasignar chofer o contenedor (admin/operador). */
@@ -212,6 +249,24 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
       ? (await query<{ patente: string | null }>('SELECT patente FROM choferes WHERE id = $1', [nuevoChoferId]))[0]?.patente ?? null
       : null;
     params.push(patente); sets.push(`patente = $${params.length}`);
+  }
+  // Reasignar la ubicación (depósito/vaciadero) también recalcula la foto de
+  // su dirección — mismo patrón que chofer_id/patente arriba.
+  if ('ubicacion_id' in parsed.data) {
+    const nuevoUbicacionId = parsed.data.ubicacion_id;
+    let direccion: string | null = null;
+    if (nuevoUbicacionId) {
+      const [viajeActual] = await query<{ tipo: 'entrega' | 'retiro' }>(
+        'SELECT tipo FROM viajes WHERE id = $1',
+        [req.params.id],
+      );
+      if (!viajeActual) return res.status(404).json({ error: 'Viaje inexistente' });
+      const tipoUbicacion = viajeActual.tipo === 'entrega' ? 'deposito' : 'vaciadero';
+      const ubicacion = await resolverUbicacion(tipoUbicacion, nuevoUbicacionId);
+      if (!ubicacion) return res.status(400).json({ error: 'Ubicación inválida para este tipo de viaje.' });
+      direccion = ubicacion.direccion;
+    }
+    params.push(direccion); sets.push(`ubicacion_direccion = $${params.length}`);
   }
   params.push(req.params.id);
   try {

@@ -13,6 +13,8 @@ interface Contenedor {
   vence_en: string | null;
   actualizado_por: string | null;
   actualizado_en: string;
+  viaje_tipo: 'entrega' | 'retiro' | null;
+  chofer_asignado: string | null;
 }
 interface HistorialItem {
   id: string;
@@ -121,6 +123,7 @@ export function Contenedores() {
             <tr>
               <th>Número</th>
               <th>Estado</th>
+              <th>Chofer asignado</th>
               <th>Vence</th>
               <th>Última actualización</th>
             </tr>
@@ -135,6 +138,20 @@ export function Contenedores() {
                   <span className={`badge ${c.estado_contrato}`}>
                     {ETIQUETAS_ESTADO[c.estado_contrato] ?? c.estado_contrato.replace('_', ' ')}
                   </span>
+                </td>
+                <td>
+                  {c.chofer_asignado ? (
+                    <span>
+                      {c.chofer_asignado}{' '}
+                      <span className="text-muted">({c.viaje_tipo})</span>
+                    </span>
+                  ) : (c.estado === 'reservado' || c.estado === 'entregado') ? (
+                    <span style={{ color: 'var(--danger)' }} title="Contenedor sin chofer ni viaje asignado">
+                      Sin asignar
+                    </span>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
                 </td>
                 <td>
                   {c.vence_en ? (
@@ -153,7 +170,7 @@ export function Contenedores() {
             ))}
             {contenedores.length === 0 && (
               <tr>
-                <td colSpan={4} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={5} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No hay contenedores registrados
                 </td>
               </tr>

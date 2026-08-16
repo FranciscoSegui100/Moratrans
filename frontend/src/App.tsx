@@ -17,6 +17,7 @@ import { ClienteDetalle } from './pages/ClienteDetalle';
 import { Viajes } from './pages/Viajes';
 import { Contenedores } from './pages/Contenedores';
 import { Tarifas } from './pages/Tarifas';
+import { Ubicaciones } from './pages/Ubicaciones';
 import { Usuarios } from './pages/Usuarios';
 import { Seguridad } from './pages/Seguridad';
 import { MfaSetup } from './pages/MfaSetup';
@@ -71,6 +72,7 @@ export default function App() {
                         <Route path="/clientes/:telefono" element={<ClienteDetalle />} />
                         <Route path="/contenedores"  element={<Contenedores />} />
                         <Route path="/tarifas"       element={<Tarifas />} />
+                        <Route path="/ubicaciones"   element={<Ubicaciones />} />
                         <Route path="/usuarios"      element={<Usuarios />} />
                         <Route path="/seguridad"     element={<Seguridad />} />
                         <Route path="/auditoria"     element={<Auditoria />} />

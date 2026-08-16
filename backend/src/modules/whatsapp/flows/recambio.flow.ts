@@ -4,6 +4,7 @@ import { sendText, sendButtons, sendList } from '../graphApi';
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
+import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -97,15 +98,21 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
   const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
   const grupoId = randomUUID();
 
+  // Vaciadero adonde se lleva el lleno (si hay uno solo activo cargado; si
+  // hay varios, queda sin asignar y se completa después desde el panel —
+  // mismo criterio que el contenedor de la fila 'entrega', más abajo).
+  const vaciadero = await resolverUbicacion('vaciadero');
+
   await query(
-    `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, grupo_id)
-     VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'Recambio: retira el lleno', $5)`,
-    [numero, to, zona, destino, grupoId],
+    `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+     VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'Recambio: retira el lleno', $5, $6, $7)`,
+    [numero, to, zona, destino, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
   );
+  const deposito = await resolverUbicacion('deposito');
   await query(
-    `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, notas, grupo_id)
-     VALUES ('entrega', CURRENT_DATE, $1, $2, $3, 'Recambio: deja un vacío', $4)`,
-    [to, zona, destino, grupoId],
+    `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+     VALUES ('entrega', CURRENT_DATE, $1, $2, $3, 'Recambio: deja un vacío', $4, $5, $6)`,
+    [to, zona, destino, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
   );
 
   const [alerta] = await query(

@@ -65,6 +65,11 @@ CREATE TYPE estado_cuenta_corriente AS ENUM ('sin_pedir', 'pendiente', 'aprobada
 -- Roles del panel (RBAC). Ver middleware/rbac.ts
 CREATE TYPE rol_usuario AS ENUM ('admin', 'operador', 'finanzas', 'lectura');
 
+-- Ubicaciones propias de la empresa: depósitos (de donde salen los vacíos
+-- para una entrega) y vaciaderos (adonde se lleva un lleno a vaciar en un
+-- retiro). Puede haber varias de cada tipo — no es una dirección fija.
+CREATE TYPE tipo_ubicacion AS ENUM ('deposito', 'vaciadero');
+
 -- ---------------------------------------------------------------------
 -- 2. USUARIOS DEL PANEL (RBAC)
 -- ---------------------------------------------------------------------
@@ -276,6 +281,19 @@ CREATE TABLE mensajes_chat (
 CREATE INDEX idx_mensajes_chat_telefono ON mensajes_chat(telefono, creado_en);
 
 -- ---------------------------------------------------------------------
+-- 8.a bis UBICACIONES DE LA EMPRESA (depósitos / vaciaderos)
+-- ---------------------------------------------------------------------
+CREATE TABLE ubicaciones (
+  id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tipo      tipo_ubicacion NOT NULL,
+  nombre    TEXT NOT NULL,
+  direccion TEXT NOT NULL,
+  activo    BOOLEAN NOT NULL DEFAULT TRUE,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_ubicaciones_tipo ON ubicaciones(tipo) WHERE activo = TRUE;
+
+-- ---------------------------------------------------------------------
 -- 8.b VIAJES PROGRAMADOS (entrega / retiro)
 -- ---------------------------------------------------------------------
 CREATE TABLE viajes (
@@ -290,7 +308,18 @@ CREATE TABLE viajes (
   -- programado/cerrado conserva la patente con la que realmente salió.
   patente           TEXT,
   zona              TEXT,
+  -- Dirección del cliente: destino de una entrega, origen de un retiro.
   destino_direccion TEXT,
+  -- Ubicación propia de la empresa usada en este viaje: el depósito (si
+  -- tipo='entrega', de donde sale el vacío) o el vaciadero (si
+  -- tipo='retiro', adonde se lleva el lleno). ubicacion_direccion es una
+  -- foto de la dirección al crear el viaje (mismo patrón que `patente`) para
+  -- que el historial no cambie si después se edita/desactiva la ubicación.
+  -- Origen/destino final de cada viaje se arma en las consultas según tipo
+  -- (ver GET /api/viajes): entrega = ubicacion_direccion -> destino_direccion,
+  -- retiro = destino_direccion -> ubicacion_direccion.
+  ubicacion_id      UUID REFERENCES ubicaciones(id) ON DELETE SET NULL,
+  ubicacion_direccion TEXT,
   estado            estado_viaje NOT NULL DEFAULT 'programado',
   -- Recambio: une la fila 'entrega' (vacío que deja) con la 'retiro' (lleno
   -- que se lleva) de una misma visita. NULL en un viaje normal.
@@ -307,6 +336,13 @@ CREATE TABLE viajes (
 CREATE INDEX idx_viajes_fecha  ON viajes(fecha);
 CREATE INDEX idx_viajes_estado ON viajes(estado);
 CREATE INDEX idx_viajes_grupo  ON viajes(grupo_id) WHERE grupo_id IS NOT NULL;
+-- A lo sumo un viaje activo de cada tipo por contenedor (evita asignaciones
+-- duplicadas/contradictorias a choferes distintos); entrega y retiro sí
+-- pueden coexistir activos (el de entrega se cierra recién al confirmar el
+-- retiro, ver contenedores.routes.ts /confirmar-retiro).
+CREATE UNIQUE INDEX ux_viajes_activo_por_tipo
+  ON viajes(contenedor_numero, tipo)
+  WHERE estado IN ('programado', 'en_curso') AND contenedor_numero IS NOT NULL;
 
 -- ---------------------------------------------------------------------
 -- 8.c IDEMPOTENCIA DEL WEBHOOK (dedupe por message_id de Meta)
@@ -488,6 +524,7 @@ ALTER TABLE alertas                ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sesiones_chat          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mensajes_chat          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE viajes                 ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ubicaciones            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mensajes_procesados    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sesiones               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dispositivos_conocidos ENABLE ROW LEVEL SECURITY;

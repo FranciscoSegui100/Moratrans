@@ -3,6 +3,7 @@ import { sendText, sendButtons, sendList, motivoErrorWa } from '../graphApi';
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
+import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -115,10 +116,13 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     await query(`UPDATE viajes SET fecha = CURRENT_DATE WHERE id = $1`, [existente.id]);
     choferId = existente.chofer_id;
   } else {
+    // Vaciadero adonde se lleva el lleno (si hay uno solo activo cargado; si
+    // hay varios, queda sin asignar y se completa después desde el panel).
+    const vaciadero = await resolverUbicacion('vaciadero');
     await query(
-      `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, notas)
-       VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'Pedido de retiro por WhatsApp (cliente)')`,
-      [numero, to, zona, destino],
+      `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, ubicacion_id, ubicacion_direccion)
+       VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'Pedido de retiro por WhatsApp (cliente)', $5, $6)`,
+      [numero, to, zona, destino, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
     );
     const [alerta] = await query(
       `INSERT INTO alertas (tipo, referencia_id, mensaje)
