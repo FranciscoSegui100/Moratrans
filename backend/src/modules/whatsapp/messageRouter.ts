@@ -8,6 +8,7 @@ import { handleAsesor } from './flows/asesor.flow';
 import { handleRecambio } from './flows/recambio.flow';
 import { handlePedirRetiro } from './flows/pedirRetiro.flow';
 import { handlePedirEntrega } from './flows/pedirEntrega.flow';
+import { handleDetalleMovimientos } from './flows/movimientos.flow';
 
 /** Mensaje normalizado, agnóstico del formato crudo de Meta. */
 export interface MensajeEntrante {
@@ -140,6 +141,9 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   if (m.seleccionId === 'opt_pedir_entrega' || t.includes('entrega')) {
     return handlePedirEntrega(m, { ...sesion, flujo: 'pedir_entrega', paso: null });
   }
+  if (m.seleccionId === 'opt_detalle_movimientos' || t.includes('movimiento')) {
+    return handleDetalleMovimientos(m, sesion);
+  }
 
   // 6) Fallback
   return enviarMenuPrincipal(m.from);
@@ -147,9 +151,10 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
 
 /**
  * Identifica al cliente por su teléfono (ver clientes.service.ts) y, si
- * tiene cuenta corriente aprobada, lo saluda por su nombre y le suma la
- * opción "Pedir entrega" (pedir un contenedor sin pagar antes) — eso es
- * exclusivo de cuenta corriente, un cliente ocasional no la ve; retiro y
+ * tiene cuenta corriente aprobada, lo saluda por su nombre y le arma un menú
+ * distinto: sin "Cotizar" (no le hace falta pedir precio, ya tiene forma de
+ * pedir sin pagar antes) y con dos opciones exclusivas — "Pedir entrega" y
+ * "Detalle de movimientos" — que un cliente ocasional no ve. Retiro y
  * recambio siguen disponibles para cualquiera.
  */
 async function enviarMenuPrincipal(to: string): Promise<void> {
@@ -164,10 +169,13 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
     : 'Soy el asistente de *MoraTrans* 🚚. ¿En qué te ayudo hoy?\n\n';
 
   const opciones = [
-    { id: 'opt_cotizar', title: '🧮 Cotizar', description: 'Precio del flete por departamento' },
+    ...(esCuentaCorriente ? [] : [{ id: 'opt_cotizar', title: '🧮 Cotizar', description: 'Precio del flete por departamento' }]),
     { id: 'opt_pagar', title: '💸 Ya pagué', description: 'Quiero enviar mi comprobante de pago' },
     ...(esCuentaCorriente
-      ? [{ id: 'opt_pedir_entrega', title: '📦 Pedir entrega', description: 'Cuenta corriente: pedir un contenedor sin pagar antes' }]
+      ? [
+          { id: 'opt_pedir_entrega', title: '📦 Pedir entrega', description: 'Cuenta corriente: pedir un contenedor sin pagar antes' },
+          { id: 'opt_detalle_movimientos', title: '📊 Detalle de movimientos', description: 'Recibir el detalle de tus entregas/retiros por Excel' },
+        ]
       : []),
     { id: 'opt_pedir_retiro', title: '📥 Pedir retiro', description: 'Se llenó antes de tiempo: que lo pasen a buscar' },
     { id: 'opt_recambio', title: '🔄 Pedir recambio', description: 'Cambiar el contenedor lleno por uno vacío' },

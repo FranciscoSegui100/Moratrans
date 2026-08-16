@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import { query } from '../../config/db';
+import { uploadMedia, sendDocument } from '../whatsapp/graphApi';
 
 /** Genera un Excel (buffer) con el estado actual de los contenedores. */
 export async function excelContenedores(): Promise<Buffer> {
@@ -85,6 +86,22 @@ export async function excelClientes(mes?: string, telefono?: string): Promise<Bu
     ws.getColumn('importe').numFmt = '"$"#,##0.00';
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+/**
+ * Genera el Excel de movimientos de UN cliente (mismo formato que
+ * excelClientes) y se lo manda por WhatsApp como documento — lo usa tanto el
+ * botón del panel (ver clientes.routes.ts) como el pedido del propio cliente
+ * por WhatsApp (ver movimientos.flow.ts).
+ */
+export async function enviarExcelClientePorWhatsApp(telefono: string, mes?: string): Promise<void> {
+  const buf = await excelClientes(mes, telefono);
+  const mediaId = await uploadMedia(
+    buf,
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'cuenta-corriente.xlsx',
+  );
+  await sendDocument(telefono, mediaId, 'cuenta-corriente.xlsx', '📊 Acá tenés el detalle de tus movimientos.');
 }
 
 /**

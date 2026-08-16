@@ -2,8 +2,8 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
-import { excelClientes } from '../reportes/reportes.service';
-import { uploadMedia, sendDocument, motivoErrorWa } from '../whatsapp/graphApi';
+import { excelClientes, enviarExcelClientePorWhatsApp } from '../reportes/reportes.service';
+import { motivoErrorWa } from '../whatsapp/graphApi';
 
 export const clientesRouter = Router();
 clientesRouter.use(requireAuth);
@@ -47,14 +47,8 @@ clientesRouter.post(
   requireRol('admin', 'operador', 'finanzas'),
   async (req: Request, res: Response) => {
     const telefono = req.params.telefono;
-    const buf = await excelClientes(undefined, telefono);
     try {
-      const mediaId = await uploadMedia(
-        buf,
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'cuenta-corriente.xlsx',
-      );
-      await sendDocument(telefono, mediaId, 'cuenta-corriente.xlsx', '📊 Acá tenés el detalle de tus movimientos.');
+      await enviarExcelClientePorWhatsApp(telefono);
       res.json({ ok: true });
     } catch (e) {
       const motivo = motivoErrorWa(e);
