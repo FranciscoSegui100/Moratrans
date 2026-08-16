@@ -41,7 +41,10 @@ const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
   vencido: 'Vencido',
 };
 
-const formInicial = { tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', chofer_id: '', destino_direccion: '', remito: '', importe: '', ubicacion_id: '' };
+const formInicial = {
+  tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', contenedor_numero_entrega: '',
+  chofer_id: '', destino_direccion: '', remito: '', importe: '', ubicacion_id: '',
+};
 
 export function Viajes() {
   const { show } = useToast();
@@ -67,9 +70,12 @@ export function Viajes() {
   const entregasActivas = new Set(
     viajes.filter((v) => v.tipo === 'entrega' && (v.estado === 'programado' || v.estado === 'en_curso')).map((v) => v.contenedor_numero),
   );
-  const contenedoresElegibles = form.tipo === 'retiro'
+  // Recambio: el contenedor principal es el LLENO que se retira, mismo
+  // criterio que un retiro suelto.
+  const contenedoresElegibles = form.tipo === 'retiro' || form.tipo === 'recambio'
     ? contenedores.filter((c) => c.estado === 'entregado')
     : contenedores.filter((c) => !entregasActivas.has(c.numero));
+  const vaciosDisponibles = contenedores.filter((c) => c.estado === 'disponible');
 
   const contenedorSeleccionado = contenedores.find((c) => c.numero === form.contenedor_numero);
   // Si el contenedor elegido para una entrega está ocupado, no se puede
@@ -80,7 +86,7 @@ export function Viajes() {
     : undefined;
 
   function etiquetaContenedor(c: Contenedor): { texto: string; disabled: boolean } {
-    if (form.tipo === 'retiro' || c.estado === 'disponible') return { texto: c.numero, disabled: false };
+    if (form.tipo === 'retiro' || form.tipo === 'recambio' || c.estado === 'disponible') return { texto: c.numero, disabled: false };
     if (!c.vence_en) return { texto: `${c.numero} — ${c.estado}, sin fecha de vuelta cargada`, disabled: true };
     const fecha = new Date(c.vence_en).toLocaleDateString('es-AR');
     return { texto: `${c.numero} — vuelve el ${fecha}`, disabled: false };
@@ -112,6 +118,7 @@ export function Viajes() {
         ...form,
         chofer_id: form.chofer_id || undefined,
         contenedor_numero: form.contenedor_numero || undefined,
+        contenedor_numero_entrega: form.tipo === 'recambio' ? (form.contenedor_numero_entrega || undefined) : undefined,
         zona: form.zona || undefined,
         destino_direccion: form.destino_direccion || undefined,
         remito: form.remito || undefined,
@@ -120,7 +127,7 @@ export function Viajes() {
       });
       setForm(formInicial);
       cargar();
-      show('success', 'Viaje programado correctamente', form.chofer_id ? 'Se avisó al chofer por WhatsApp' : undefined);
+      show('success', form.tipo === 'recambio' ? 'Recambio programado correctamente' : 'Viaje programado correctamente', form.chofer_id ? 'Se avisó al chofer por WhatsApp' : undefined);
     } catch (err: any) {
       show('error', 'Error al programar', err.response?.data?.error || 'Error desconocido');
     } finally {
@@ -181,10 +188,11 @@ export function Viajes() {
               <select
                 className="form-select"
                 value={form.tipo}
-                onChange={(e) => setForm({ ...form, tipo: e.target.value, contenedor_numero: '', ubicacion_id: '' })}
+                onChange={(e) => setForm({ ...form, tipo: e.target.value, contenedor_numero: '', contenedor_numero_entrega: '', ubicacion_id: '' })}
               >
                 <option value="entrega">Entrega</option>
                 <option value="retiro">Retiro</option>
+                <option value="recambio">Recambio</option>
               </select>
             </div>
             {ubicacionesElegibles.length > 1 && (
@@ -223,7 +231,7 @@ export function Viajes() {
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label">Contenedor</label>
+              <label className="form-label">{form.tipo === 'recambio' ? 'Contenedor lleno (a retirar)' : 'Contenedor'}</label>
               <select
                 className="form-select"
                 value={form.contenedor_numero}
@@ -237,7 +245,7 @@ export function Viajes() {
                 }}
               >
                 <option value="">
-                  {form.tipo === 'retiro' ? '— Elegir contenedor entregado —' : '— Elegir contenedor —'}
+                  {form.tipo === 'retiro' || form.tipo === 'recambio' ? '— Elegir contenedor entregado —' : '— Elegir contenedor —'}
                 </option>
                 {contenedoresElegibles.map((c) => {
                   const { texto, disabled } = etiquetaContenedor(c);
@@ -245,6 +253,19 @@ export function Viajes() {
                 })}
               </select>
             </div>
+            {form.tipo === 'recambio' && (
+              <div className="form-group">
+                <label className="form-label">Contenedor vacío (a entregar)</label>
+                <select
+                  className="form-select"
+                  value={form.contenedor_numero_entrega}
+                  onChange={(e) => setForm({ ...form, contenedor_numero_entrega: e.target.value })}
+                >
+                  <option value="">— Asignar después —</option>
+                  {vaciosDisponibles.map((c) => <option key={c.numero} value={c.numero}>{c.numero}</option>)}
+                </select>
+              </div>
+            )}
             <div className="form-group">
               <label className="form-label">Chofer</label>
               <select className="form-select" value={form.chofer_id} onChange={(e) => setForm({ ...form, chofer_id: e.target.value })}>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Check, X, Download, Pencil, ArrowRight } from 'lucide-react';
+import { Check, X, Download, Pencil, ArrowRight, Send } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -24,6 +24,15 @@ const ETIQUETA_CC: Record<Cliente['cuenta_corriente_estado'], { texto: string; c
   rechazada: { texto: 'Rechazada', clase: 'rechazado' },
 };
 
+type Pestana = 'cuenta_corriente' | 'ocasionales';
+
+// Cuenta corriente: la tiene aprobada o la está pidiendo (ver pago.flow.ts).
+// Ocasionales: paga por transferencia en cada viaje — nunca la pidió, o se
+// la rechazaron.
+function esCuentaCorriente(c: Cliente): boolean {
+  return c.cuenta_corriente_estado === 'aprobada' || c.cuenta_corriente_estado === 'pendiente';
+}
+
 export function Clientes() {
   const { show } = useToast();
   const { user } = useAuth();
@@ -31,11 +40,16 @@ export function Clientes() {
   const queryClient = useQueryClient();
   const [editandoPlan, setEditandoPlan] = useState<string | null>(null);
   const [planForm, setPlanForm] = useState('');
+  const [pestana, setPestana] = useState<Pestana>('cuenta_corriente');
+  const [enviando, setEnviando] = useState<string | null>(null);
 
-  const { data: clientes = [] } = useQuery({
+  const { data: todosLosClientes = [] } = useQuery({
     queryKey: ['clientes'],
     queryFn: () => api.get<Cliente[]>('/api/clientes').then((r) => r.data),
   });
+  const clientesCC = todosLosClientes.filter(esCuentaCorriente);
+  const clientesOcasionales = todosLosClientes.filter((c) => !esCuentaCorriente(c));
+  const clientes = pestana === 'cuenta_corriente' ? clientesCC : clientesOcasionales;
 
   async function cambiarCuentaCorriente(id: string, estado: Cliente['cuenta_corriente_estado']) {
     try {
@@ -44,6 +58,18 @@ export function Clientes() {
       show('success', estado === 'aprobada' ? 'Cuenta corriente aprobada' : 'Cuenta corriente rechazada');
     } catch {
       show('error', 'No se pudo actualizar la cuenta corriente');
+    }
+  }
+
+  async function enviarPorWhatsApp(telefono: string) {
+    setEnviando(telefono);
+    try {
+      await api.post(`/api/clientes/${encodeURIComponent(telefono)}/enviar-excel`);
+      show('success', 'Enviado por WhatsApp', telefono);
+    } catch (err: any) {
+      show('error', 'No se pudo enviar', err.response?.data?.error);
+    } finally {
+      setEnviando(null);
     }
   }
 
@@ -73,6 +99,21 @@ export function Clientes() {
           <Download strokeWidth={1.75} /> Exportar todo a Excel
         </button>
         <small className="text-muted">Sale seccionado en una hoja por mes, con todos los clientes.</small>
+      </div>
+
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+        <button
+          className={`btn btn-sm ${pestana === 'cuenta_corriente' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setPestana('cuenta_corriente')}
+        >
+          Cuenta corriente ({clientesCC.length})
+        </button>
+        <button
+          className={`btn btn-sm ${pestana === 'ocasionales' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setPestana('ocasionales')}
+        >
+          Ocasionales ({clientesOcasionales.length})
+        </button>
       </div>
 
       <div className="table-wrapper">
@@ -138,9 +179,21 @@ export function Clientes() {
                     </RoleGate>
                   </td>
                   <td>
-                    <Link to={`/clientes/${encodeURIComponent(c.telefono)}`} className="btn btn-ghost btn-sm">
-                      Ingresar <ArrowRight size={13} strokeWidth={1.75} />
-                    </Link>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <Link to={`/clientes/${encodeURIComponent(c.telefono)}`} className="btn btn-ghost btn-sm">
+                        Ingresar <ArrowRight size={13} strokeWidth={1.75} />
+                      </Link>
+                      <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          title="Enviar su Excel de movimientos por WhatsApp"
+                          onClick={() => enviarPorWhatsApp(c.telefono)}
+                          disabled={enviando === c.telefono}
+                        >
+                          <Send size={13} strokeWidth={1.75} /> {enviando === c.telefono ? '...' : 'Enviar'}
+                        </button>
+                      </RoleGate>
+                    </div>
                   </td>
                 </tr>
               );
@@ -148,7 +201,11 @@ export function Clientes() {
             {clientes.length === 0 && (
               <tr>
                 <td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-                  Todavía no hay clientes registrados (aparecen solos cuando cotizan por WhatsApp).
+                  {todosLosClientes.length === 0
+                    ? 'Todavía no hay clientes registrados (aparecen solos cuando cotizan por WhatsApp).'
+                    : pestana === 'cuenta_corriente'
+                      ? 'Ningún cliente pidió cuenta corriente todavía.'
+                      : 'No hay clientes ocasionales por ahora.'}
                 </td>
               </tr>
             )}

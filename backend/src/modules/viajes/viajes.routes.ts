@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query, withTx } from '../../config/db';
@@ -50,10 +51,18 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
 });
 
 const nuevoSchema = z.object({
-  tipo: z.enum(['entrega', 'retiro']),
+  // 'recambio' no es un tipo_viaje real en la DB: crea un par 'retiro'+'entrega'
+  // unido por grupo_id (ver comentario de viajes.grupo_id en schema.sql).
+  tipo: z.enum(['entrega', 'retiro', 'recambio']),
   fecha: z.string(), // YYYY-MM-DD
   chofer_id: z.string().uuid().optional(),
+  // retiro: el contenedor que se retira. entrega: el que se entrega.
+  // recambio: el lleno que se retira (obligatorio).
   contenedor_numero: z.string().optional(),
+  // Solo recambio: el vacío que se deja. Si no se manda, la pata 'entrega'
+  // queda sin contenedor para que el operador lo asigne después (misma UI
+  // "Asignar" que ya existe en la tabla de Viajes).
+  contenedor_numero_entrega: z.string().optional(),
   cliente_telefono: z.string().optional(),
   zona: z.string().optional(),
   destino_direccion: z.string().optional(),
@@ -98,7 +107,7 @@ async function avisarChoferViaje(
   await menuChofer(chofer.telefono, chofer.nombre);
 }
 
-/** POST /api/viajes — programar un viaje (admin/operador). */
+/** POST /api/viajes — programar un viaje, o un recambio (par retiro+entrega) (admin/operador). */
 viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = nuevoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
@@ -128,48 +137,50 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
   }
 
   try {
-    const row = await withTx(async (c) => {
-      // Entrega: a lo sumo una reserva activa por contenedor. Si está
-      // disponible, se reserva ya (misma transición que fn_validar_pago,
-      // disponible -> reservado). Si está ocupado (con otro cliente), se
-      // permite reservarlo igual pero solo para una fecha posterior a su
-      // vence_en (fecha de vuelta) — sin tocar su estado actual todavía; el
+    const resultado = await withTx(async (c) => {
+      const fail = (msg: string): never => {
+        const err: any = new Error(msg);
+        err.status = 409;
+        throw err;
+      };
+
+      // A lo sumo una reserva activa por contenedor. Si está disponible, se
+      // reserva ya (misma transición que fn_validar_pago, disponible ->
+      // reservado). Si está ocupado (con otro cliente), se permite
+      // reservarlo igual pero solo para una fecha posterior a su vence_en
+      // (fecha de vuelta) — sin tocar su estado actual todavía; el
       // contenedor pasa a "reservado" recién cuando efectivamente vuelve (ver
-      // POST /api/contenedores/:numero/confirmar-retiro).
-      if (v.tipo === 'entrega' && v.contenedor_numero) {
+      // POST /api/contenedores/:numero/confirmar-retiro). Se usa tanto para
+      // una entrega suelta como para la pata "entrega" de un recambio.
+      async function reservarParaEntrega(numero: string, fecha: string): Promise<void> {
         const { rows: contRows } = await c.query<{ estado: string; vence_en: string | null }>(
           'SELECT estado, vence_en FROM contenedores WHERE numero = $1 FOR UPDATE',
-          [v.contenedor_numero],
+          [numero],
         );
         const cont = contRows[0];
-        const fail = (msg: string): never => {
-          const err: any = new Error(msg);
-          err.status = 409;
-          throw err;
-        };
-        if (!cont) fail(`El contenedor ${v.contenedor_numero} no existe.`);
+        if (!cont) fail(`El contenedor ${numero} no existe.`);
 
         const { rows: activos } = await c.query(
           `SELECT id FROM viajes WHERE contenedor_numero = $1 AND tipo = 'entrega' AND estado IN ('programado','en_curso')`,
-          [v.contenedor_numero],
+          [numero],
         );
         if (activos.length > 0) {
-          fail(`El contenedor ${v.contenedor_numero} ya tiene una entrega reservada (actual o futura); no se puede reservar dos veces.`);
+          fail(`El contenedor ${numero} ya tiene una entrega reservada (actual o futura); no se puede reservar dos veces.`);
         }
 
         if (cont!.estado === 'disponible') {
           await c.query(
             `UPDATE contenedores SET estado = 'reservado', actualizado_por = $2
                WHERE numero = $1 AND estado = 'disponible'`,
-            [v.contenedor_numero, `operador:${req.user!.id}`],
+            [numero, `operador:${req.user!.id}`],
           );
         } else {
           if (!cont!.vence_en) {
-            fail(`El contenedor ${v.contenedor_numero} está ${cont!.estado} y no tiene fecha de vuelta cargada; no se puede reservar a futuro.`);
+            fail(`El contenedor ${numero} está ${cont!.estado} y no tiene fecha de vuelta cargada; no se puede reservar a futuro.`);
           }
           const venceFecha = new Date(cont!.vence_en!).toISOString().slice(0, 10);
-          if (v.fecha < venceFecha) {
-            fail(`El contenedor ${v.contenedor_numero} vuelve el ${new Date(cont!.vence_en!).toLocaleDateString('es-AR')}; elegí esa fecha o una posterior.`);
+          if (fecha < venceFecha) {
+            fail(`El contenedor ${numero} vuelve el ${new Date(cont!.vence_en!).toLocaleDateString('es-AR')}; elegí esa fecha o una posterior.`);
           }
           // Sigue "ocupado" hasta que vuelva de verdad — no se toca su estado acá.
         }
@@ -186,6 +197,38 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
         patente = choferRows[0]?.patente ?? null;
       }
 
+      if (v.tipo === 'recambio') {
+        if (!v.contenedor_numero) fail('Un recambio necesita el contenedor lleno que se va a retirar.');
+        if (v.contenedor_numero_entrega) {
+          await reservarParaEntrega(v.contenedor_numero_entrega, v.fecha);
+        }
+        const grupoId = randomUUID();
+        // `ubicacion` (resuelta arriba como vaciadero, porque tipo !== 'entrega')
+        // es el destino del lleno que se retira. El depósito del vacío que se
+        // deja se resuelve aparte y sin exigir elección — no hay un segundo
+        // selector para esto en el panel, mismo criterio "silencioso" que usa
+        // el bot en recambio.flow.ts.
+        const deposito = await resolverUbicacion('deposito');
+        const { rows: retiroRows } = await c.query(
+          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, grupo_id, ubicacion_id, ubicacion_direccion)
+           VALUES ('retiro',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+          [v.fecha, v.chofer_id ?? null, v.contenedor_numero, v.cliente_telefono ?? null, v.zona ?? null,
+           v.destino_direccion ?? null, v.notas ?? null, patente, v.remito ?? null, v.importe ?? null, grupoId,
+           ubicacion?.id ?? null, ubicacion?.direccion ?? null],
+        );
+        const { rows: entregaRows } = await c.query(
+          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, grupo_id, ubicacion_id, ubicacion_direccion)
+           VALUES ('entrega',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+          [v.fecha, v.chofer_id ?? null, v.contenedor_numero_entrega ?? null, v.cliente_telefono ?? null, v.zona ?? null,
+           v.destino_direccion ?? null, v.notas ?? null, patente, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
+        );
+        return { principal: retiroRows[0], secundario: entregaRows[0] };
+      }
+
+      if (v.tipo === 'entrega' && v.contenedor_numero) {
+        await reservarParaEntrega(v.contenedor_numero, v.fecha);
+      }
+
       const { rows } = await c.query(
         `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, ubicacion_id, ubicacion_direccion)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
@@ -193,20 +236,20 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
          v.cliente_telefono ?? null, v.zona ?? null, v.destino_direccion ?? null, v.notas ?? null, patente,
          v.remito ?? null, v.importe ?? null, ubicacion?.id ?? null, ubicacion?.direccion ?? null],
       );
-      return rows[0];
+      return { principal: rows[0], secundario: null as any };
     });
 
     if (v.chofer_id) {
-      avisarChoferViaje(v.chofer_id, v.tipo, v.contenedor_numero ?? null, v.destino_direccion ?? null).catch((e) => {
+      avisarChoferViaje(v.chofer_id, resultado.principal.tipo, resultado.principal.contenedor_numero ?? null, v.destino_direccion ?? null).catch((e) => {
         const motivo = motivoErrorWa(e);
         console.error('Error avisando al chofer el viaje programado:', motivo);
-        notificarEnvioFallido(row.id, `chofer del viaje ${row.id}`, 'aviso de viaje programado', motivo).catch(
+        notificarEnvioFallido(resultado.principal.id, `chofer del viaje ${resultado.principal.id}`, 'aviso de viaje programado', motivo).catch(
           (e2) => console.error('Error registrando alerta de envío fallido:', e2),
         );
       });
     }
 
-    res.status(201).json(row);
+    res.status(201).json(resultado.principal);
   } catch (error: any) {
     if (error.status === 409) {
       res.status(409).json({ error: error.message });

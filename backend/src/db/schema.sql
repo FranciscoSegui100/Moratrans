@@ -55,7 +55,8 @@ CREATE TYPE tipo_alerta AS ENUM (
   'envio_fallido',
   'cuenta_corriente_solicitada',
   'recambio_solicitado',
-  'retiro_solicitado'
+  'retiro_solicitado',
+  'entrega_solicitada'
 );
 
 -- Cuenta corriente: clientes que pagan a fin de mes o cuando se juntan

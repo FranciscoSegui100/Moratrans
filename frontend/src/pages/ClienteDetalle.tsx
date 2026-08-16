@@ -1,8 +1,10 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Download } from 'lucide-react';
+import { ArrowLeft, Download, Send } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
+import { RoleGate } from '../components/RoleGate';
+import { useToast } from '../components/Toast';
 
 interface Cliente {
   id: string;
@@ -48,6 +50,20 @@ function etiquetaMes(mes: string): string {
 
 export function ClienteDetalle() {
   const { telefono = '' } = useParams<{ telefono: string }>();
+  const { show } = useToast();
+  const [enviando, setEnviando] = useState(false);
+
+  async function enviarPorWhatsApp() {
+    setEnviando(true);
+    try {
+      await api.post(`/api/clientes/${encodeURIComponent(telefono)}/enviar-excel`);
+      show('success', 'Enviado por WhatsApp', telefono);
+    } catch (err: any) {
+      show('error', 'No se pudo enviar', err.response?.data?.error);
+    } finally {
+      setEnviando(false);
+    }
+  }
 
   const { data: clientes = [] } = useQuery({
     queryKey: ['clientes'],
@@ -96,6 +112,11 @@ export function ClienteDetalle() {
         >
           <Download strokeWidth={1.75} /> Exportar a Excel
         </button>
+        <RoleGate roles={['admin', 'operador', 'finanzas']}>
+          <button className="btn btn-ghost" onClick={enviarPorWhatsApp} disabled={enviando}>
+            <Send strokeWidth={1.75} /> {enviando ? 'Enviando...' : 'Enviar por WhatsApp'}
+          </button>
+        </RoleGate>
       </div>
 
       {grupos.length === 0 ? (

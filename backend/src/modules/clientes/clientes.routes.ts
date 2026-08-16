@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { excelClientes } from '../reportes/reportes.service';
+import { uploadMedia, sendDocument, motivoErrorWa } from '../whatsapp/graphApi';
 
 export const clientesRouter = Router();
 clientesRouter.use(requireAuth);
@@ -34,6 +35,34 @@ clientesRouter.get('/export.xlsx', async (req: Request, res: Response) => {
   res.setHeader('Content-Disposition', 'attachment; filename="clientes.xlsx"');
   res.send(buf);
 });
+
+/**
+ * POST /api/clientes/:telefono/enviar-excel — genera el Excel de este
+ * cliente (mismo formato que el botón de descarga) y se lo manda por
+ * WhatsApp como documento, igual que se hace hoy con las facturas
+ * (ver POST /api/pagos/:id/factura).
+ */
+clientesRouter.post(
+  '/:telefono/enviar-excel',
+  requireRol('admin', 'operador', 'finanzas'),
+  async (req: Request, res: Response) => {
+    const telefono = req.params.telefono;
+    const buf = await excelClientes(undefined, telefono);
+    try {
+      const mediaId = await uploadMedia(
+        buf,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'cuenta-corriente.xlsx',
+      );
+      await sendDocument(telefono, mediaId, 'cuenta-corriente.xlsx', '📊 Acá tenés el detalle de tus movimientos.');
+      res.json({ ok: true });
+    } catch (e) {
+      const motivo = motivoErrorWa(e);
+      console.error('Error enviando Excel de cliente por WhatsApp:', motivo);
+      res.status(502).json({ error: `No se pudo enviar por WhatsApp: ${motivo}` });
+    }
+  },
+);
 
 /** GET /api/clientes/:telefono/viajes?mes=YYYY-MM — detalle de viajes de un cliente. */
 clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
