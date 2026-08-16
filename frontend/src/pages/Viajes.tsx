@@ -225,7 +225,12 @@ export function Viajes() {
             </div>
             <div className="form-group">
               <label className="form-label">Zona</label>
-              <select className="form-select" value={form.zona} onChange={(e) => setForm({ ...form, zona: e.target.value })}>
+              <select
+                className="form-select"
+                value={form.zona}
+                required={form.tipo === 'recambio'}
+                onChange={(e) => setForm({ ...form, zona: e.target.value })}
+              >
                 <option value="">— Elegir zona —</option>
                 {zonas.map((z) => <option key={z.departamento} value={z.departamento}>{z.departamento}</option>)}
               </select>
@@ -241,7 +246,16 @@ export function Viajes() {
                   const nuevoMin = form.tipo === 'entrega' && c && c.estado !== 'disponible' && c.vence_en
                     ? new Date(c.vence_en).toISOString().slice(0, 10)
                     : undefined;
-                  setForm((f) => ({ ...f, contenedor_numero: numero, fecha: nuevoMin && f.fecha < nuevoMin ? nuevoMin : f.fecha }));
+                  // Recambio: al elegir el lleno, se completan zona/dirección/
+                  // importe con los de SU entrega activa (el viaje que lo tiene
+                  // hoy con ese cliente) — evita tipearlos de nuevo a mano.
+                  const activa = form.tipo === 'recambio'
+                    ? viajes.find((v) => v.contenedor_numero === numero && v.tipo === 'entrega' && (v.estado === 'programado' || v.estado === 'en_curso'))
+                    : undefined;
+                  const datosAuto = activa
+                    ? { zona: activa.zona ?? '', destino_direccion: activa.destino_direccion ?? '', importe: activa.importe ?? '' }
+                    : {};
+                  setForm((f) => ({ ...f, contenedor_numero: numero, ...datosAuto, fecha: nuevoMin && f.fecha < nuevoMin ? nuevoMin : f.fecha }));
                 }}
               >
                 <option value="">
@@ -279,6 +293,7 @@ export function Viajes() {
                 className="form-input"
                 placeholder="Ej. Av. San Martín 1234, Godoy Cruz"
                 value={form.destino_direccion}
+                required={form.tipo === 'recambio'}
                 onChange={(e) => setForm({ ...form, destino_direccion: e.target.value })}
               />
             </div>
@@ -298,6 +313,7 @@ export function Viajes() {
                 className="form-input"
                 placeholder="Ej. 85000"
                 value={form.importe}
+                required={form.tipo === 'recambio'}
                 onChange={(e) => setForm({ ...form, importe: e.target.value })}
               />
             </div>

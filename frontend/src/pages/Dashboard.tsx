@@ -24,7 +24,6 @@ const kpiConfig = [
 const estadoColors: Record<string, string> = {
   disponible:     'var(--success)',
   reservado:      'var(--accent)',
-  en_camino:      'var(--warning)',
   entregado:      'var(--purple)',
   retirado:       '#94a3b8',
   mantenimiento:  'var(--danger)',

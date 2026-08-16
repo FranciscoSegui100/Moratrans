@@ -72,13 +72,13 @@ npm run dev                 # http://localhost:5173
    envía por `/media`.
 4. **Chofer**: identificación por teléfono; si no se reconoce, se pide DNI; si coincide
    se vincula, si no se deriva a un operador (alerta). Sólo puede aplicar estados
-   logísticos: `en_camino`, `entregado`, `retirado`.
+   logísticos: `entregado`, `retirado`.
 
 ## Máquina de estados del contenedor
 Validada por trigger `fn_validar_transicion_contenedor`:
 ```
-disponible → reservado → en_camino → entregado → retirado → disponible
-     ↘ mantenimiento ↗                                   ↘ mantenimiento
+disponible → reservado → entregado → retirado → disponible
+     ↘ mantenimiento ↗                        ↘ mantenimiento
 ```
 
 ## Tareas en segundo plano

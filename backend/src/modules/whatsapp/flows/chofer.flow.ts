@@ -8,12 +8,13 @@ import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
-// Únicos estados que un chofer puede aplicar.
-const ESTADOS_CHOFER = ['en_camino', 'entregado', 'retirado'] as const;
+// Únicos estados que un chofer puede aplicar. Ya no existe "voy en camino":
+// una entrega pasa directo de 'reservado' a 'entregado' (ver migración
+// 0019_eliminar_en_camino.sql y el trigger fn_validar_transicion_contenedor).
+const ESTADOS_CHOFER = ['entregado', 'retirado'] as const;
 
 // Título del botón: WhatsApp corta a 20 caracteres, por eso van cortos.
 const LABEL_ESTADO: Record<(typeof ESTADOS_CHOFER)[number], string> = {
-  en_camino: '🚛 Voy en camino',
   entregado: '📦 Ya entregué',
   retirado: '📥 Ya retiré',
 };
@@ -280,8 +281,7 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
     return menuChofer(to);
   }
   // Contenedores en un estado desde el que la transición es válida.
-  const origen =
-    estado === 'en_camino' ? 'reservado' : estado === 'entregado' ? 'en_camino' : 'entregado';
+  const origen = estado === 'entregado' ? 'reservado' : 'entregado';
   // Solo contenedores con un viaje activo asignado a ESTE chofer — sin este
   // filtro, cualquier chofer veía y podía tocar el contenedor de otro chofer
   // si ambos tenían uno en el mismo estado a la vez.

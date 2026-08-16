@@ -443,7 +443,6 @@ body {
 }
 .badge.disponible  { background: var(--success-bg); color: var(--success); }
 .badge.reservado   { background: var(--accent-tint); color: var(--accent); }
-.badge.en_camino   { background: var(--warning-bg); color: var(--warning); }
 .badge.entregado   { background: var(--purple-bg); color: var(--purple); }
 .badge.retirado    { background: var(--neutral-bg); color: var(--neutral); }
 .badge.mantenimiento { background: var(--danger-bg); color: var(--danger); }

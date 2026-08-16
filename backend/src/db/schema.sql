@@ -17,7 +17,6 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto"; -- gen_random_uuid()
 CREATE TYPE estado_contenedor AS ENUM (
   'disponible',      -- en depósito, libre
   'reservado',       -- pago validado, asignado a un ticket
-  'en_camino',       -- chofer lo tomó y va en ruta (modificable por chofer)
   'entregado',       -- entregado al cliente        (modificable por chofer)
   'retirado',        -- retirado/devuelto vacío     (modificable por chofer)
   'mantenimiento'    -- fuera de servicio
@@ -370,8 +369,7 @@ BEGIN
 
   permitido := CASE OLD.estado
     WHEN 'disponible'    THEN NEW.estado IN ('reservado','mantenimiento')
-    WHEN 'reservado'     THEN NEW.estado IN ('en_camino','disponible')      -- se libera si se cancela
-    WHEN 'en_camino'     THEN NEW.estado IN ('entregado')
+    WHEN 'reservado'     THEN NEW.estado IN ('entregado','disponible')      -- se libera si se cancela
     WHEN 'entregado'     THEN NEW.estado IN ('retirado')
     WHEN 'retirado'      THEN NEW.estado IN ('disponible','mantenimiento')
     WHEN 'mantenimiento' THEN NEW.estado IN ('disponible')

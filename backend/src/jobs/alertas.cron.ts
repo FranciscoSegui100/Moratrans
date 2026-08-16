@@ -15,7 +15,9 @@ async function generarAlertas(): Promise<void> {
        FROM contenedores
       WHERE vence_en IS NOT NULL
         AND vence_en BETWEEN now() AND now() + interval '48 hours'
-        AND estado IN ('reservado','en_camino')
+        -- Ya no existe "en_camino": una entrega pasa directo de 'reservado' a
+        -- 'entregado' (ver migración 0019_eliminar_en_camino.sql).
+        AND estado = 'reservado'
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, creado_en`,
   );

@@ -14,11 +14,14 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
     viajes_hoy: number;
   }>(
     `SELECT
-       (SELECT count(*) FROM contenedores WHERE estado IN ('reservado','en_camino'))::int AS contenedores_activos,
+       -- Ya no existe "en_camino": una entrega pasa directo de 'reservado' a
+       -- 'entregado' (ver migración 0019_eliminar_en_camino.sql), así que
+       -- 'reservado' ya representa "asignado, todavía no entregado".
+       (SELECT count(*) FROM contenedores WHERE estado = 'reservado')::int               AS contenedores_activos,
        (SELECT count(*) FROM contenedores WHERE estado = 'disponible')::int              AS contenedores_disponibles,
        (SELECT count(*) FROM pagos WHERE estado = 'pendiente')::int                       AS cobros_pendientes,
        (SELECT count(*) FROM historial_contenedores
-          WHERE estado = 'en_camino' AND creado_en::date = current_date)::int             AS viajes_hoy`,
+          WHERE estado = 'entregado' AND creado_en::date = current_date)::int             AS viajes_hoy`,
   );
   res.json(kpis);
 });
