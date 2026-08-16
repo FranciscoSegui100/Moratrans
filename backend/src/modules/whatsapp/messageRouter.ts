@@ -6,7 +6,6 @@ import { handlePago } from './flows/pago.flow';
 import { handleChofer } from './flows/chofer.flow';
 import { handleAsesor } from './flows/asesor.flow';
 import { handleRecambio } from './flows/recambio.flow';
-import { handleCancelarRetiro } from './flows/cancelarRetiro.flow';
 import { handlePedirRetiro } from './flows/pedirRetiro.flow';
 
 /** Mensaje normalizado, agnóstico del formato crudo de Meta. */
@@ -117,7 +116,6 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   if (sesion.flujo === 'cotizacion') return handleCotizacion(m, sesion);
   if (sesion.flujo === 'pago') return handlePago(m, sesion);
   if (sesion.flujo === 'recambio') return handleRecambio(m, sesion);
-  if (sesion.flujo === 'cancelar_retiro') return handleCancelarRetiro(m, sesion);
   if (sesion.flujo === 'pedir_retiro') return handlePedirRetiro(m, sesion);
 
   // 5) Comandos de arranque
@@ -134,11 +132,6 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   if (m.seleccionId === 'opt_recambio' || t.includes('recambio')) {
     return handleRecambio(m, { ...sesion, flujo: 'recambio', paso: null });
   }
-  if (m.seleccionId === 'opt_cancelar' || t.includes('cancelar')) {
-    return handleCancelarRetiro(m, { ...sesion, flujo: 'cancelar_retiro', paso: null });
-  }
-  // Va después de "cancelar" a propósito: "cancelar retiro" tiene que
-  // matchear ese primero, no este (ambos contienen la palabra "retiro").
   if (m.seleccionId === 'opt_pedir_retiro' || t.includes('retiro') || t.includes('retirar')) {
     return handlePedirRetiro(m, { ...sesion, flujo: 'pedir_retiro', paso: null });
   }
@@ -159,7 +152,6 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
       { id: 'opt_pagar', title: '💸 Ya pagué', description: 'Quiero enviar mi comprobante de pago' },
       { id: 'opt_pedir_retiro', title: '📥 Pedir retiro', description: 'Se llenó antes de tiempo: que lo pasen a buscar' },
       { id: 'opt_recambio', title: '🔄 Pedir recambio', description: 'Cambiar el contenedor lleno por uno vacío' },
-      { id: 'opt_cancelar', title: '❌ Cancelar retiro', description: 'Cancelar un retiro que tengo programado' },
       { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
     ],
   );

@@ -8,8 +8,8 @@
 -- que se agrega (Postgres lo bloquea) — como esta migración no inserta ni
 -- filtra por los valores nuevos, se puede agregar junto con lo demás (migrate.ts
 -- ya envuelve todo el archivo en una única transacción).
-ALTER TABLE viajes ADD COLUMN grupo_id UUID;
-CREATE INDEX idx_viajes_grupo ON viajes(grupo_id) WHERE grupo_id IS NOT NULL;
+ALTER TABLE viajes ADD COLUMN IF NOT EXISTS grupo_id UUID;
+CREATE INDEX IF NOT EXISTS idx_viajes_grupo ON viajes(grupo_id) WHERE grupo_id IS NOT NULL;
 
-ALTER TYPE tipo_alerta ADD VALUE 'cuenta_corriente_solicitada';
-ALTER TYPE tipo_alerta ADD VALUE 'recambio_solicitado';
+ALTER TYPE tipo_alerta ADD VALUE IF NOT EXISTS 'cuenta_corriente_solicitada';
+ALTER TYPE tipo_alerta ADD VALUE IF NOT EXISTS 'recambio_solicitado';

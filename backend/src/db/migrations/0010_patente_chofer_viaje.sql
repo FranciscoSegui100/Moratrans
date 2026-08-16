@@ -3,5 +3,5 @@
 -- UNIQUE en choferes: un camión puede rotar entre choferes en distintos
 -- turnos/períodos. En viajes es una foto histórica copiada al crear el viaje
 -- (ver POST /api/viajes), no una referencia en vivo al chofer.
-ALTER TABLE choferes ADD COLUMN patente TEXT;
-ALTER TABLE viajes   ADD COLUMN patente TEXT;
+ALTER TABLE choferes ADD COLUMN IF NOT EXISTS patente TEXT;
+ALTER TABLE viajes   ADD COLUMN IF NOT EXISTS patente TEXT;

@@ -102,8 +102,12 @@ CREATE TABLE clientes (
   -- Se pide desde el bot (ver pago.flow.ts); 'aprobada' la deja poner un
   -- operador tras la primera validación manual de un pago con este flag.
   cuenta_corriente_estado estado_cuenta_corriente NOT NULL DEFAULT 'sin_pedir',
+  -- Numeración interna propia del cliente (viene de la planilla Excel que
+  -- ya usaban antes del sistema, ver excelClientes() en reportes.service.ts).
+  numero_plan INTEGER,
   creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX clientes_numero_plan_key ON clientes(numero_plan) WHERE numero_plan IS NOT NULL;
 
 CREATE TABLE choferes (
   id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -291,6 +295,11 @@ CREATE TABLE viajes (
   -- Recambio: une la fila 'entrega' (vacío que deja) con la 'retiro' (lleno
   -- que se lleva) de una misma visita. NULL en un viaje normal.
   grupo_id          UUID,
+  -- Número de remito y monto de ESTE movimiento puntual (a diferencia de
+  -- pedidos.precio, que es el precio total cotizado del pedido). Vienen de
+  -- la planilla Excel que ya usaban (ver excelClientes() en reportes.service.ts).
+  remito            TEXT,
+  importe           NUMERIC(12,2),
   notas             TEXT,
   creado_en         TIMESTAMPTZ  NOT NULL DEFAULT now(),
   actualizado_en    TIMESTAMPTZ  NOT NULL DEFAULT now()

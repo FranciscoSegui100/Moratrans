@@ -1,0 +1,143 @@
+import { useMemo } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowLeft, Download } from 'lucide-react';
+import { api, descargarArchivo } from '../api/client';
+
+interface Cliente {
+  id: string;
+  nombre: string;
+  telefono: string;
+  cuenta_corriente_estado: 'sin_pedir' | 'pendiente' | 'aprobada' | 'rechazada';
+  numero_plan: number | null;
+}
+
+interface ViajeCliente {
+  id: string;
+  tipo: 'entrega' | 'retiro';
+  fecha: string;
+  estado: string;
+  zona: string | null;
+  destino_direccion: string | null;
+  patente: string | null;
+  remito: string | null;
+  importe: string | null;
+  grupo_id: string | null;
+  chofer_nombre: string | null;
+}
+
+const ETIQUETA_CC: Record<Cliente['cuenta_corriente_estado'], { texto: string; clase: string }> = {
+  sin_pedir: { texto: 'Sin pedir', clase: 'retirado' },
+  pendiente: { texto: 'Pendiente', clase: 'pendiente' },
+  aprobada: { texto: 'Aprobada', clase: 'disponible' },
+  rechazada: { texto: 'Rechazada', clase: 'rechazado' },
+};
+
+/** Mismo criterio que excelClientes() en el backend — mantener en sync. */
+function tipoBulto(v: ViajeCliente): string {
+  if (v.tipo === 'entrega') return 'VACIO';
+  if (v.grupo_id) return 'Recambio';
+  return 'Retiro';
+}
+
+function etiquetaMes(mes: string): string {
+  const [anio, m] = mes.split('-');
+  const texto = new Date(Number(anio), Number(m) - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
+
+export function ClienteDetalle() {
+  const { telefono = '' } = useParams<{ telefono: string }>();
+
+  const { data: clientes = [] } = useQuery({
+    queryKey: ['clientes'],
+    queryFn: () => api.get<Cliente[]>('/api/clientes').then((r) => r.data),
+  });
+  const cliente = clientes.find((c) => c.telefono === telefono);
+
+  const { data: viajes = [] } = useQuery({
+    queryKey: ['clientes', telefono, 'viajes'],
+    queryFn: () => api.get<ViajeCliente[]>(`/api/clientes/${encodeURIComponent(telefono)}/viajes`).then((r) => r.data),
+    enabled: !!telefono,
+  });
+
+  // Ya vienen ordenados por fecha DESC desde el backend: agrupar preservando
+  // ese orden deja los meses más recientes arriba sin tener que reordenar.
+  const grupos = useMemo(() => {
+    const porMes = new Map<string, ViajeCliente[]>();
+    for (const v of viajes) {
+      const mes = v.fecha.slice(0, 7);
+      if (!porMes.has(mes)) porMes.set(mes, []);
+      porMes.get(mes)!.push(v);
+    }
+    return [...porMes.entries()];
+  }, [viajes]);
+
+  const cc = cliente ? ETIQUETA_CC[cliente.cuenta_corriente_estado] : null;
+
+  return (
+    <div>
+      <div className="page-header">
+        <Link to="/clientes" className="btn btn-ghost btn-sm" style={{ marginBottom: '10px' }}>
+          <ArrowLeft size={14} strokeWidth={1.75} /> Volver a Clientes
+        </Link>
+        <h2>{cliente?.nombre ?? telefono}</h2>
+        <p>
+          {telefono}
+          {cliente?.numero_plan != null && <> · Nº plan {cliente.numero_plan}</>}
+          {cc && <> · <span className={`badge ${cc.clase}`}>{cc.texto}</span></>}
+        </p>
+      </div>
+
+      <div className="form-card" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <button
+          className="btn btn-primary"
+          onClick={() => descargarArchivo(`/api/clientes/export.xlsx?telefono=${encodeURIComponent(telefono)}`, `${cliente?.nombre ?? telefono}.xlsx`)}
+        >
+          <Download strokeWidth={1.75} /> Exportar a Excel
+        </button>
+      </div>
+
+      {grupos.length === 0 ? (
+        <div className="card">
+          <div className="empty-state">
+            <div className="empty-state-title">Sin viajes registrados</div>
+          </div>
+        </div>
+      ) : (
+        grupos.map(([mes, viajesDelMes]) => (
+          <div key={mes} style={{ marginTop: '20px' }}>
+            <div className="section-title">{etiquetaMes(mes)}</div>
+            <div className="table-wrapper">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>FECHA</th><th>CHA/EQU</th><th>PAT</th><th>POSICIÓN</th>
+                    <th>TIPO BULTO</th><th>CANTIDAD</th><th>Nº REMITO</th>
+                    <th>IMPORTE</th><th>CHOFER</th><th>ESTADO</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {viajesDelMes.map((v) => (
+                    <tr key={v.id}>
+                      <td>{v.fecha}</td>
+                      <td>Contenedor</td>
+                      <td className="mono">{v.patente ?? '—'}</td>
+                      <td>{v.destino_direccion ?? v.zona ?? '—'}</td>
+                      <td>{tipoBulto(v)}</td>
+                      <td>1</td>
+                      <td className="mono">{v.remito ?? '—'}</td>
+                      <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>
+                      <td>{v.chofer_nombre ?? '—'}</td>
+                      <td><span className={`badge ${v.estado}`}>{v.estado}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}

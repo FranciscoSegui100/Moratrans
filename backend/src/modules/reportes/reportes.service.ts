@@ -21,50 +21,68 @@ export async function excelContenedores(): Promise<Buffer> {
 }
 
 /**
- * Genera un Excel (buffer) con los viajes de todos los clientes, seccionado
- * en una hoja por mes (a menos que se pida un mes puntual, que queda en una
- * sola hoja). El "cliente" de un viaje se referencia por teléfono (igual que
- * en el resto del sistema, ver clientes.service.ts); si todavía no está en
- * el padrón `clientes` se muestra el teléfono en su lugar.
+ * Genera un Excel (buffer) con los viajes de todos los clientes, en el mismo
+ * formato de la planilla que ya usaban antes del sistema (columnas FECHA,
+ * CHA/EQU, PAT, POSICIÓN, TIPO BULTO, CANTIDAD, Nº REMITO, IMPORTE, CHOFER,
+ * Nº PLAN.) — seccionado en una hoja por mes, a menos que se pida un mes
+ * puntual. "CHA/EQU" y "CANTIDAD" son fijos porque hoy el sistema solo
+ * mueve contenedores de a uno por viaje. "TIPO BULTO" se deriva:
+ * 'entrega' -> VACIO (deja un contenedor vacío), 'retiro' con grupo_id (es
+ * parte de un recambio, ver recambio.flow.ts) -> Recambio, 'retiro' suelto
+ * -> Retiro.
  */
-export async function excelClientes(mes?: string): Promise<Buffer> {
+export async function excelClientes(mes?: string, telefono?: string): Promise<Buffer> {
   const rows = await query<{
-    cliente_nombre: string;
-    cliente_telefono: string;
-    tipo: string;
     fecha: string;
-    estado: string;
-    zona: string | null;
-    contenedor_numero: string | null;
+    patente: string | null;
+    posicion: string | null;
+    tipo_bulto: string;
+    remito: string | null;
+    importe: string | null;
+    chofer_nombre: string | null;
+    numero_plan: number | null;
     mes: string;
   }>(
-    `SELECT COALESCE(cl.nombre, v.cliente_telefono) AS cliente_nombre, v.cliente_telefono,
-            v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero,
+    `SELECT v.fecha, v.patente, COALESCE(v.destino_direccion, v.zona) AS posicion,
+            CASE
+              WHEN v.tipo = 'entrega' THEN 'VACIO'
+              WHEN v.tipo = 'retiro' AND v.grupo_id IS NOT NULL THEN 'Recambio'
+              ELSE 'Retiro'
+            END AS tipo_bulto,
+            v.remito, v.importe, ch.nombre AS chofer_nombre, cl.numero_plan,
             to_char(v.fecha, 'YYYY-MM') AS mes
        FROM viajes v
+       LEFT JOIN choferes ch ON ch.id = v.chofer_id
        LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
       WHERE v.cliente_telefono IS NOT NULL
         AND ($1::text IS NULL OR to_char(v.fecha, 'YYYY-MM') = $1)
+        AND ($2::text IS NULL OR v.cliente_telefono = $2)
       ORDER BY v.fecha`,
-    [mes ?? null],
+    [mes ?? null, telefono ?? null],
   );
 
   const wb = new ExcelJS.Workbook();
   const meses = [...new Set(rows.map((r) => r.mes))].sort();
   const columnas = [
-    { header: 'Cliente', key: 'cliente_nombre', width: 26 },
-    { header: 'Teléfono', key: 'cliente_telefono', width: 18 },
-    { header: 'Tipo', key: 'tipo', width: 12 },
-    { header: 'Fecha', key: 'fecha', width: 14 },
-    { header: 'Estado', key: 'estado', width: 14 },
-    { header: 'Zona', key: 'zona', width: 18 },
-    { header: 'Contenedor', key: 'contenedor_numero', width: 18 },
+    { header: 'FECHA', key: 'fecha', width: 12 },
+    { header: 'CHA/EQU', key: 'cha_equ', width: 12 },
+    { header: 'PAT', key: 'patente', width: 12 },
+    { header: 'POSICIÓN', key: 'posicion', width: 28 },
+    { header: 'TIPO BULTO', key: 'tipo_bulto', width: 12 },
+    { header: 'CANTIDAD', key: 'cantidad', width: 10 },
+    { header: 'Nº REMITO', key: 'remito', width: 12 },
+    { header: 'IMPORTE', key: 'importe', width: 14 },
+    { header: 'CHOFER', key: 'chofer_nombre', width: 16 },
+    { header: 'Nº PLAN.', key: 'numero_plan', width: 10 },
   ];
   for (const m of meses.length ? meses : [mes ?? 'sin_datos']) {
     const ws = wb.addWorksheet(m);
     ws.columns = columnas;
     ws.getRow(1).font = { bold: true };
-    rows.filter((r) => r.mes === m).forEach((r) => ws.addRow(r));
+    rows
+      .filter((r) => r.mes === m)
+      .forEach((r) => ws.addRow({ ...r, cha_equ: 'Contenedor', cantidad: 1 }));
+    ws.getColumn('importe').numFmt = '"$"#,##0.00';
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

@@ -20,6 +20,7 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query(
     `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
             v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id, v.patente, v.grupo_id,
+            v.remito, v.importe,
             -- Misma vista "por contrato" que GET /api/contenedores (columna
             -- estado_contrato) — expresión duplicada a propósito, mantener en sync.
             CASE
@@ -50,6 +51,8 @@ const nuevoSchema = z.object({
   zona: z.string().optional(),
   destino_direccion: z.string().optional(),
   notas: z.string().optional(),
+  remito: z.string().optional(),
+  importe: z.coerce.number().nonnegative().optional(),
 });
 
 /**
@@ -148,10 +151,11 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
       }
 
       const { rows } = await c.query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
         [v.tipo, v.fecha, v.chofer_id ?? null, v.contenedor_numero ?? null,
-         v.cliente_telefono ?? null, v.zona ?? null, v.destino_direccion ?? null, v.notas ?? null, patente],
+         v.cliente_telefono ?? null, v.zona ?? null, v.destino_direccion ?? null, v.notas ?? null, patente,
+         v.remito ?? null, v.importe ?? null],
       );
       return rows[0];
     });
@@ -186,6 +190,8 @@ const patchSchema = z.object({
   // recambio.flow.ts): se crea sin contenedor porque el bot no elige cuál
   // vacío sale — el operador lo asigna acá, como cualquier entrega nueva.
   contenedor_numero: z.string().min(1).nullable().optional(),
+  remito: z.string().nullable().optional(),
+  importe: z.coerce.number().nonnegative().nullable().optional(),
 });
 
 /** PATCH /api/viajes/:id — cambiar estado, reasignar chofer o contenedor (admin/operador). */

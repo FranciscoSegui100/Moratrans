@@ -10,7 +10,7 @@ clientesRouter.use(requireAuth);
 /** GET /api/clientes — listado con totales de viajes (join por teléfono, ver clientes.service.ts). */
 clientesRouter.get('/', async (_req: Request, res: Response) => {
   const rows = await query(
-    `SELECT cl.id, cl.nombre, cl.telefono, cl.cuenta_corriente_estado, cl.creado_en,
+    `SELECT cl.id, cl.nombre, cl.telefono, cl.cuenta_corriente_estado, cl.numero_plan, cl.creado_en,
             COUNT(v.id)::int AS cantidad_viajes, MAX(v.fecha) AS ultimo_viaje
        FROM clientes cl
        LEFT JOIN viajes v ON v.cliente_telefono = cl.telefono
@@ -28,7 +28,8 @@ clientesRouter.get('/', async (_req: Request, res: Response) => {
  */
 clientesRouter.get('/export.xlsx', async (req: Request, res: Response) => {
   const mes = (req.query.mes as string) || undefined;
-  const buf = await excelClientes(mes);
+  const telefono = (req.query.telefono as string) || undefined;
+  const buf = await excelClientes(mes, telefono);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="clientes.xlsx"');
   res.send(buf);
@@ -39,7 +40,7 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
   const mes = (req.query.mes as string) || null;
   const rows = await query(
     `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion, v.patente,
-            ch.nombre AS chofer_nombre
+            v.remito, v.importe, v.grupo_id, ch.nombre AS chofer_nombre
        FROM viajes v
        LEFT JOIN choferes ch ON ch.id = v.chofer_id
       WHERE v.cliente_telefono = $1
@@ -51,18 +52,36 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
 });
 
 const patchSchema = z.object({
-  cuenta_corriente_estado: z.enum(['sin_pedir', 'pendiente', 'aprobada', 'rechazada']),
+  cuenta_corriente_estado: z.enum(['sin_pedir', 'pendiente', 'aprobada', 'rechazada']).optional(),
+  // Numeración interna propia del cliente (viene de la planilla Excel que ya usaban).
+  numero_plan: z.coerce.number().int().nullable().optional(),
 });
 
-/** PATCH /api/clientes/:id — aprobar/rechazar cuenta corriente a mano desde el panel. */
+/** PATCH /api/clientes/:id — aprobar/rechazar cuenta corriente o cargar el Nº de plan (admin/operador/finanzas). */
 clientesRouter.patch('/:id', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const parsed = patchSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const [row] = await query(
-    `UPDATE clientes SET cuenta_corriente_estado = $1 WHERE id = $2
-     RETURNING id, nombre, telefono, cuenta_corriente_estado`,
-    [parsed.data.cuenta_corriente_estado, req.params.id],
-  );
-  if (!row) return res.status(404).json({ error: 'Cliente inexistente' });
-  res.json(row);
+  const sets: string[] = [];
+  const params: any[] = [];
+  for (const [k, val] of Object.entries(parsed.data)) {
+    params.push(val); sets.push(`${k} = $${params.length}`);
+  }
+  if (sets.length === 0) return res.status(400).json({ error: 'Nada para actualizar' });
+  params.push(req.params.id);
+  try {
+    const [row] = await query(
+      `UPDATE clientes SET ${sets.join(', ')} WHERE id = $${params.length}
+       RETURNING id, nombre, telefono, cuenta_corriente_estado, numero_plan`,
+      params,
+    );
+    if (!row) return res.status(404).json({ error: 'Cliente inexistente' });
+    res.json(row);
+  } catch (e: any) {
+    if (e.code === '23505') { // Unique violation
+      res.status(409).json({ error: 'Ese número de plan ya está usado por otro cliente' });
+    } else {
+      console.error('Error al actualizar cliente:', e);
+      res.status(500).json({ error: 'Error interno del servidor.' });
+    }
+  }
 });

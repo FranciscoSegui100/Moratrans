@@ -19,6 +19,8 @@ interface Viaje {
   chofer_id: string | null;
   patente: string | null;
   grupo_id: string | null;
+  remito: string | null;
+  importe: string | null;
   notas: string | null;
 }
 interface Contenedor { numero: string; estado: string; vence_en: string | null; }
@@ -34,7 +36,7 @@ const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
   vencido: 'Vencido',
 };
 
-const formInicial = { tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', chofer_id: '', destino_direccion: '' };
+const formInicial = { tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', chofer_id: '', destino_direccion: '', remito: '', importe: '' };
 
 export function Viajes() {
   const { show } = useToast();
@@ -99,6 +101,8 @@ export function Viajes() {
         contenedor_numero: form.contenedor_numero || undefined,
         zona: form.zona || undefined,
         destino_direccion: form.destino_direccion || undefined,
+        remito: form.remito || undefined,
+        importe: form.importe || undefined,
       });
       setForm(formInicial);
       cargar();
@@ -229,6 +233,25 @@ export function Viajes() {
                 onChange={(e) => setForm({ ...form, destino_direccion: e.target.value })}
               />
             </div>
+            <div className="form-group">
+              <label className="form-label">Nº remito</label>
+              <input
+                className="form-input"
+                placeholder="Ej. 11938"
+                value={form.remito}
+                onChange={(e) => setForm({ ...form, remito: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Importe</label>
+              <input
+                type="number"
+                className="form-input"
+                placeholder="Ej. 85000"
+                value={form.importe}
+                onChange={(e) => setForm({ ...form, importe: e.target.value })}
+              />
+            </div>
             <button type="submit" className="btn btn-primary" disabled={loading}>
               {loading ? 'Guardando...' : 'Programar viaje'}
             </button>
@@ -247,6 +270,8 @@ export function Viajes() {
               <th>Estado contenedor</th>
               <th>Chofer</th>
               <th>Patente</th>
+              <th>Nº remito</th>
+              <th>Importe</th>
               <th>Estado</th>
               <th>Acciones</th>
             </tr>
@@ -307,6 +332,8 @@ export function Viajes() {
                 </td>
                 <td>{v.chofer_nombre ?? <span className="text-muted">Sin asignar</span>}</td>
                 <td className="mono">{v.patente ?? <span className="text-muted">—</span>}</td>
+                <td className="mono">{v.remito ?? <span className="text-muted">—</span>}</td>
+                <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>
                 <td>
                   <RoleGate roles={['admin', 'operador']}>
                     <select
@@ -332,7 +359,7 @@ export function Viajes() {
             ))}
             {viajes.length === 0 && (
               <tr>
-                <td colSpan={9} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={11} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No hay viajes cargados
                 </td>
               </tr>

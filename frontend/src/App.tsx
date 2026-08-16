@@ -13,6 +13,7 @@ import { Alertas } from './pages/Alertas';
 import { Conversaciones } from './pages/Conversaciones';
 import { Choferes } from './pages/Choferes';
 import { Clientes } from './pages/Clientes';
+import { ClienteDetalle } from './pages/ClienteDetalle';
 import { Viajes } from './pages/Viajes';
 import { Contenedores } from './pages/Contenedores';
 import { Tarifas } from './pages/Tarifas';
@@ -67,6 +68,7 @@ export default function App() {
                         <Route path="/conversaciones" element={<Conversaciones />} />
                         <Route path="/choferes"      element={<Choferes />} />
                         <Route path="/clientes"      element={<Clientes />} />
+                        <Route path="/clientes/:telefono" element={<ClienteDetalle />} />
                         <Route path="/contenedores"  element={<Contenedores />} />
                         <Route path="/tarifas"       element={<Tarifas />} />
                         <Route path="/usuarios"      element={<Usuarios />} />
