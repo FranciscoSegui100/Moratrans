@@ -7,6 +7,7 @@ import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
+import { emitRecursoActualizado } from '../../config/socket';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -386,21 +387,42 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
 
     res.json(row);
 
-    // Se completó (o reasignó) recién ahora el contenedor de la pata
-    // 'entrega' de un recambio (ver comentario de contenedor_numero en
-    // patchSchema, arriba) — avisamos al chofer con el mensaje específico
-    // de recambio, no el genérico que usa POST /api/viajes.
-    if ('contenedor_numero' in parsed.data && row.contenedor_numero && row.tipo === 'entrega' && row.grupo_id && row.chofer_id) {
-      query<{ contenedor_numero: string | null }>(
-        `SELECT contenedor_numero FROM viajes WHERE grupo_id = $1 AND tipo = 'retiro' LIMIT 1`,
-        [row.grupo_id],
-      ).then(([retiro]) => {
-        if (!retiro?.contenedor_numero) return;
-        return avisarChoferRecambio(row.chofer_id, retiro.contenedor_numero, row.contenedor_numero, row.ubicacion_id, row.destino_direccion);
-      }).catch((e) => {
+    // Reasignar chofer no pasa por broadcastCambios de la pestaña
+    // Contenedores (esa ruta es '/viajes/...', solo avisa 'viajes') — sin
+    // esto, la columna "Chofer asignado" de Contenedores quedaba
+    // desactualizada hasta hacer F5.
+    const cambioChofer = 'chofer_id' in parsed.data;
+    const cambioContenedorEntrega = 'contenedor_numero' in parsed.data && !!row.contenedor_numero && row.tipo === 'entrega';
+    if (cambioChofer || cambioContenedorEntrega) emitRecursoActualizado('contenedores');
+
+    // Si se tocó el chofer (asignación nueva o reasignación) o se acaba de
+    // completar el contenedor de una entrega (típicamente el vacío de un
+    // recambio, ver comentario de contenedor_numero en patchSchema), y ya
+    // hay alguien asignado, le mandamos el mismo aviso que recibiría si el
+    // viaje se hubiera creado así desde el principio — antes esto solo
+    // pasaba en POST /api/viajes, así que reasignar desde la tabla de Viajes
+    // no le avisaba nada al chofer nuevo.
+    if (row.chofer_id && (cambioChofer || cambioContenedorEntrega)) {
+      (async () => {
+        if (row.grupo_id) {
+          const [retiro] = await query<{ contenedor_numero: string | null }>(
+            `SELECT contenedor_numero FROM viajes WHERE grupo_id = $1 AND tipo = 'retiro' LIMIT 1`,
+            [row.grupo_id],
+          );
+          const [entrega] = await query<{ contenedor_numero: string | null; ubicacion_id: string | null }>(
+            `SELECT contenedor_numero, ubicacion_id FROM viajes WHERE grupo_id = $1 AND tipo = 'entrega' LIMIT 1`,
+            [row.grupo_id],
+          );
+          if (retiro?.contenedor_numero) {
+            await avisarChoferRecambio(row.chofer_id, retiro.contenedor_numero, entrega?.contenedor_numero ?? null, entrega?.ubicacion_id ?? null, row.destino_direccion);
+          }
+        } else {
+          await avisarChoferViaje(row.chofer_id, row.tipo, row.contenedor_numero, row.destino_direccion);
+        }
+      })().catch((e) => {
         const motivo = motivoErrorWa(e);
-        console.error('Error avisando al chofer la asignación de recambio:', motivo);
-        notificarEnvioFallido(row.id, `chofer del viaje ${row.id}`, 'aviso de recambio asignado', motivo).catch(
+        console.error('Error avisando al chofer la asignación:', motivo);
+        notificarEnvioFallido(row.id, `chofer del viaje ${row.id}`, 'aviso de asignación', motivo).catch(
           (e2) => console.error('Error registrando alerta de envío fallido:', e2),
         );
       });
