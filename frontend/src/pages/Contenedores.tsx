@@ -36,6 +36,7 @@ const ETIQUETAS_ESTADO: Record<string, string> = {
   disponible: 'Disponible',
   alquilado: 'Alquilado',
   para_retirar: 'Para retirar',
+  yendo_a_vaciar: 'Yendo a vaciar',
   vencido: 'Vencido',
 };
 

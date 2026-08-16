@@ -16,13 +16,18 @@ contenedoresRouter.use(requireAuth);
 contenedoresRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query(
     `SELECT c.numero, c.estado, c.cliente_id, c.vence_en, c.actualizado_en, c.creado_en,
-            -- Vista "por contrato" (Disponible/Alquilado/Para retirar/Vencido) derivada
-            -- del estado técnico de 6 valores, sin tocarlo — misma expresión duplicada
-            -- en viajes.routes.ts (columna contenedor_estado); mantener ambas en sync.
+            -- Vista "por contrato" (Disponible/Alquilado/Para retirar/Yendo a
+            -- vaciar/Vencido) derivada del estado técnico, sin tocarlo —
+            -- misma expresión duplicada en viajes.routes.ts (columna
+            -- contenedor_estado); mantener ambas en sync.
             CASE
               WHEN EXISTS (
                 SELECT 1 FROM viajes v
-                 WHERE v.contenedor_numero = c.numero AND v.tipo = 'retiro' AND v.estado IN ('programado', 'en_curso')
+                 WHERE v.contenedor_numero = c.numero AND v.tipo = 'retiro' AND v.estado = 'en_curso'
+              ) THEN 'yendo_a_vaciar'
+              WHEN EXISTS (
+                SELECT 1 FROM viajes v
+                 WHERE v.contenedor_numero = c.numero AND v.tipo = 'retiro' AND v.estado = 'programado'
               ) THEN 'para_retirar'
               WHEN c.estado = 'entregado' AND c.vence_en IS NOT NULL AND c.vence_en < now() THEN 'vencido'
               WHEN c.estado = 'entregado' THEN 'alquilado'

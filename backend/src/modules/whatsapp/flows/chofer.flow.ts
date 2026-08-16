@@ -284,11 +284,21 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
   const origen = estado === 'entregado' ? 'reservado' : 'entregado';
   // Solo contenedores con un viaje activo asignado a ESTE chofer — sin este
   // filtro, cualquier chofer veía y podía tocar el contenedor de otro chofer
-  // si ambos tenían uno en el mismo estado a la vez.
-  const conts = await query<{ numero: string }>(
-    `SELECT c.numero
+  // si ambos tenían uno en el mismo estado a la vez. Si el viaje es parte de
+  // un recambio (grupo_id), se trae también el contenedor "pareja" (el lleno
+  // si esto es el vacío, o viceversa) para mostrarlo en la lista — WhatsApp
+  // no deja poner esto en el botón (máx. 20 caracteres), así que se aclara
+  // acá, en la lista que sigue.
+  const conts = await query<{ numero: string; grupo_id: string | null; tipo: string; pareja_numero: string | null; pareja_tipo: string | null }>(
+    `SELECT c.numero, v.grupo_id, v.tipo, pareja.contenedor_numero AS pareja_numero, pareja.tipo AS pareja_tipo
        FROM contenedores c
        JOIN viajes v ON v.contenedor_numero = c.numero
+       LEFT JOIN LATERAL (
+         SELECT v2.contenedor_numero, v2.tipo
+           FROM viajes v2
+          WHERE v2.grupo_id = v.grupo_id AND v2.id <> v.id
+          LIMIT 1
+       ) pareja ON TRUE
       WHERE c.estado = $1
         AND v.chofer_id = $2
         AND v.estado IN ('programado', 'en_curso')
@@ -305,7 +315,15 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
     LABEL_ESTADO[estado as keyof typeof LABEL_ESTADO],
     '¿Cuál contenedor?',
     'Ver contenedores',
-    conts.map((c) => ({ id: `cont:${c.numero}`, title: c.numero })),
+    conts.map((c) => ({
+      id: `cont:${c.numero}`,
+      title: c.numero,
+      description: c.grupo_id
+        ? c.pareja_tipo === 'retiro'
+          ? `🔄 Recambio — retira el lleno ${c.pareja_numero}`
+          : `🔄 Recambio — entrega el vacío ${c.pareja_numero}`
+        : undefined,
+    })),
   );
 }
 
@@ -345,11 +363,33 @@ async function aplicarEstado(
       // si hay varios, se completa después desde el panel).
       const vaciadero = await resolverUbicacion('vaciadero');
 
-      await query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, destino_direccion, zona, estado, notas, ubicacion_id, ubicacion_direccion)
-         VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'en_curso', 'Retirado del cliente por WhatsApp', $5, $6)`,
-        [choferId, numero, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+      // Un recambio (o un "pedir retiro" por WhatsApp) ya deja creada de
+      // antes la fila 'retiro' de este contenedor — insertar otra acá
+      // violaría ux_viajes_activo_por_tipo (a lo sumo un retiro activo por
+      // contenedor). Si ya existe, se actualiza en vez de duplicarla.
+      const [retiroExistente] = await query<{ id: string }>(
+        `SELECT id FROM viajes
+          WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
+          ORDER BY creado_en DESC LIMIT 1`,
+        [numero, choferId],
       );
+      if (retiroExistente) {
+        await query(
+          `UPDATE viajes SET estado = 'en_curso',
+                  destino_direccion = COALESCE(destino_direccion, $2),
+                  zona = COALESCE(zona, $3),
+                  ubicacion_id = COALESCE(ubicacion_id, $4),
+                  ubicacion_direccion = COALESCE(ubicacion_direccion, $5)
+            WHERE id = $1`,
+          [retiroExistente.id, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+        );
+      } else {
+        await query(
+          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, destino_direccion, zona, estado, notas, ubicacion_id, ubicacion_direccion)
+           VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'en_curso', 'Retirado del cliente por WhatsApp', $5, $6)`,
+          [choferId, numero, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+        );
+      }
       await query(
         `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
         [numero, `chofer:${choferId}`],

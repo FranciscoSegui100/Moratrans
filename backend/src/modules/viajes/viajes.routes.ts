@@ -34,7 +34,11 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
             CASE
               WHEN EXISTS (
                 SELECT 1 FROM viajes v2
-                 WHERE v2.contenedor_numero = v.contenedor_numero AND v2.tipo = 'retiro' AND v2.estado IN ('programado', 'en_curso')
+                 WHERE v2.contenedor_numero = v.contenedor_numero AND v2.tipo = 'retiro' AND v2.estado = 'en_curso'
+              ) THEN 'yendo_a_vaciar'
+              WHEN EXISTS (
+                SELECT 1 FROM viajes v2
+                 WHERE v2.contenedor_numero = v.contenedor_numero AND v2.tipo = 'retiro' AND v2.estado = 'programado'
               ) THEN 'para_retirar'
               WHEN ct.estado = 'entregado' AND ct.vence_en IS NOT NULL AND ct.vence_en < now() THEN 'vencido'
               WHEN ct.estado = 'entregado' THEN 'alquilado'

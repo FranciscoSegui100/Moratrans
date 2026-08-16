@@ -445,6 +445,7 @@ body {
 .badge.reservado   { background: var(--accent-tint); color: var(--accent); }
 .badge.entregado   { background: var(--purple-bg); color: var(--purple); }
 .badge.retirado    { background: var(--neutral-bg); color: var(--neutral); }
+.badge.yendo_a_vaciar { background: var(--neutral-bg); color: var(--neutral); }
 .badge.mantenimiento { background: var(--danger-bg); color: var(--danger); }
 .badge.alquilado   { background: var(--purple-bg); color: var(--purple); }
 .badge.para_retirar { background: var(--warning-bg); color: var(--warning); }
