@@ -7,6 +7,7 @@ import { handleChofer } from './flows/chofer.flow';
 import { handleAsesor } from './flows/asesor.flow';
 import { handleRecambio } from './flows/recambio.flow';
 import { handlePedirRetiro } from './flows/pedirRetiro.flow';
+import { handlePedirEntrega } from './flows/pedirEntrega.flow';
 
 /** Mensaje normalizado, agnóstico del formato crudo de Meta. */
 export interface MensajeEntrante {
@@ -117,6 +118,7 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   if (sesion.flujo === 'pago') return handlePago(m, sesion);
   if (sesion.flujo === 'recambio') return handleRecambio(m, sesion);
   if (sesion.flujo === 'pedir_retiro') return handlePedirRetiro(m, sesion);
+  if (sesion.flujo === 'pedir_entrega') return handlePedirEntrega(m, sesion);
 
   // 5) Comandos de arranque
   if (m.seleccionId === 'opt_cotizar' || t.includes('cotiz')) return handleCotizacion(m, { ...sesion, flujo: 'cotizacion', paso: null });
@@ -135,21 +137,41 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   if (m.seleccionId === 'opt_pedir_retiro' || t.includes('retiro') || t.includes('retirar')) {
     return handlePedirRetiro(m, { ...sesion, flujo: 'pedir_retiro', paso: null });
   }
+  if (m.seleccionId === 'opt_pedir_entrega' || t.includes('entrega')) {
+    return handlePedirEntrega(m, { ...sesion, flujo: 'pedir_entrega', paso: null });
+  }
 
   // 6) Fallback
   return enviarMenuPrincipal(m.from);
 }
 
+/**
+ * Identifica al cliente por su teléfono (ver clientes.service.ts) y, si
+ * tiene cuenta corriente aprobada, lo saluda por su nombre — el menú es el
+ * mismo para todos (se suma la opción "Pedir entrega", no lo reemplaza),
+ * pero así el cliente sabe que ya lo reconocimos como cuenta corriente.
+ */
 async function enviarMenuPrincipal(to: string): Promise<void> {
+  const [cliente] = await query<{ nombre: string; cuenta_corriente_estado: string }>(
+    'SELECT nombre, cuenta_corriente_estado FROM clientes WHERE telefono = $1',
+    [to],
+  );
+  const saludo = cliente?.cuenta_corriente_estado === 'aprobada'
+    ? `👋 ¡Hola, ${cliente.nombre}!`
+    : '👋 ¡Hola!';
+  const bajada = cliente?.cuenta_corriente_estado === 'aprobada'
+    ? 'Soy el asistente de *MoraTrans* 🚚. Tenés *cuenta corriente activa* — ¿en qué te ayudo hoy?\n\n'
+    : 'Soy el asistente de *MoraTrans* 🚚. ¿En qué te ayudo hoy?\n\n';
+
   await sendList(
     to,
-    '👋 ¡Hola!',
-    'Soy el asistente de *MoraTrans* 🚚. ¿En qué te ayudo hoy?\n\n' +
-    '_Escribí *menú* cuando quieras volver acá, y *asesor* si preferís hablar con una persona._',
+    saludo,
+    bajada + '_Escribí *menú* cuando quieras volver acá, y *asesor* si preferís hablar con una persona._',
     'Ver opciones',
     [
       { id: 'opt_cotizar', title: '🧮 Cotizar', description: 'Precio del flete por departamento' },
       { id: 'opt_pagar', title: '💸 Ya pagué', description: 'Quiero enviar mi comprobante de pago' },
+      { id: 'opt_pedir_entrega', title: '📦 Pedir entrega', description: 'Cuenta corriente: pedir un contenedor sin pagar antes' },
       { id: 'opt_pedir_retiro', title: '📥 Pedir retiro', description: 'Se llenó antes de tiempo: que lo pasen a buscar' },
       { id: 'opt_recambio', title: '🔄 Pedir recambio', description: 'Cambiar el contenedor lleno por uno vacío' },
       { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
