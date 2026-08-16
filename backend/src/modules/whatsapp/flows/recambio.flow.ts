@@ -108,8 +108,6 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
      VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'Recambio: retira el lleno', $5, $6, $7)`,
     [numero, to, zona, destino, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
   );
-  // La fecha del retiro ES el vencimiento del lleno: cuándo se espera que vuelva.
-  await query(`UPDATE contenedores SET vence_en = CURRENT_DATE WHERE numero = $1`, [numero]);
   const deposito = await resolverUbicacion('deposito');
   await query(
     `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, notas, grupo_id, ubicacion_id, ubicacion_direccion)

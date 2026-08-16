@@ -112,9 +112,6 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
   }
 
   let choferId: string | null = null;
-  // La fecha del retiro ES el vencimiento del contenedor: cuándo se espera
-  // que vuelva a la empresa.
-  await query(`UPDATE contenedores SET vence_en = CURRENT_DATE WHERE numero = $1`, [numero]);
   if (existente) {
     await query(`UPDATE viajes SET fecha = CURRENT_DATE WHERE id = $1`, [existente.id]);
     choferId = existente.chofer_id;

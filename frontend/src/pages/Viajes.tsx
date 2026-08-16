@@ -162,6 +162,22 @@ export function Viajes() {
     }
   }
 
+  /**
+   * Reasignar chofer en cualquier viaje ya creado — sobre todo para la pata
+   * "retiro" de un recambio pedido por WhatsApp, que se crea sin chofer (ver
+   * recambio.flow.ts): sin esto no había forma de asignárselo desde el panel,
+   * y sin chofer_id el bot nunca le ofrece al chofer completar el recambio.
+   */
+  async function reasignarChofer(id: string, choferId: string) {
+    try {
+      await api.patch(`/api/viajes/${id}`, { chofer_id: choferId || null });
+      cargar();
+      show('success', 'Chofer reasignado');
+    } catch (err: any) {
+      show('error', 'No se pudo reasignar', err.response?.data?.error);
+    }
+  }
+
   async function borrar(id: string) {
     if (!confirm('¿Seguro que deseas eliminar este viaje?')) return;
     try {
@@ -409,7 +425,22 @@ export function Viajes() {
                     <span className="text-muted">—</span>
                   )}
                 </td>
-                <td>{v.chofer_nombre ?? <span className="text-muted">Sin asignar</span>}</td>
+                <td>
+                  <RoleGate roles={['admin', 'operador']}>
+                    <select
+                      className="form-select"
+                      style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                      value={v.chofer_id ?? ''}
+                      onChange={(e) => reasignarChofer(v.id, e.target.value)}
+                    >
+                      <option value="">— Sin asignar —</option>
+                      {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                    </select>
+                  </RoleGate>
+                  <RoleGate roles={['finanzas', 'lectura']}>
+                    {v.chofer_nombre ?? <span className="text-muted">Sin asignar</span>}
+                  </RoleGate>
+                </td>
                 <td className="mono">{v.patente ?? <span className="text-muted">—</span>}</td>
                 <td className="mono">{v.remito ?? <span className="text-muted">—</span>}</td>
                 <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>

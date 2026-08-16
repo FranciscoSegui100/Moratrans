@@ -261,9 +261,6 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
            v.destino_direccion ?? null, v.notas ?? null, patente, v.remito ?? null, v.importe ?? null, grupoId,
            ubicacion?.id ?? null, ubicacion?.direccion ?? null],
         );
-        // La fecha del retiro ES el vencimiento: cuándo se espera que este
-        // contenedor (el lleno) vuelva a la empresa.
-        await c.query(`UPDATE contenedores SET vence_en = $2::date WHERE numero = $1`, [v.contenedor_numero, v.fecha]);
         const { rows: entregaRows } = await c.query(
           `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, grupo_id, ubicacion_id, ubicacion_direccion)
            VALUES ('entrega',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
@@ -275,11 +272,6 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
 
       if (v.tipo === 'entrega' && v.contenedor_numero) {
         await reservarParaEntrega(v.contenedor_numero, v.fecha);
-      }
-      if (v.tipo === 'retiro' && v.contenedor_numero) {
-        // Misma idea que en el recambio: la fecha del retiro es el
-        // vencimiento (cuándo se espera que vuelva).
-        await c.query(`UPDATE contenedores SET vence_en = $2::date WHERE numero = $1`, [v.contenedor_numero, v.fecha]);
       }
 
       const { rows } = await c.query(
