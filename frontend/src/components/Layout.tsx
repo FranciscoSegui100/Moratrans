@@ -92,16 +92,20 @@ export function Layout({ children }: { children: ReactNode }) {
     // Resincroniza al (re)conectar: si hubo un corte de red o la compu se
     // suspendió, cualquier alerta creada durante ese lapso no llegó por
     // socket y quedaría afuera del contador hasta un refresh manual.
-    socket.on('connect', cargarConteo);
-    socket.on('nueva_alerta', (a: AlertaSocket) => {
+    const onNuevaAlerta = (a: AlertaSocket) => {
       if (a.tipo === 'solicita_asesor') setConversacionesCount((c) => c + 1);
       else setAlertCount((c) => c + 1);
       if (a.tipo === 'pago_pendiente_validacion') setPagosCount((c) => c + 1);
       show('info', tipoLabel[a.tipo] ?? a.tipo, a.cliente_telefono ? `${a.cliente_telefono} · ${a.mensaje}` : a.mensaje);
-    });
+    };
+    socket.on('connect', cargarConteo);
+    socket.on('nueva_alerta', onNuevaAlerta);
     return () => {
       socket.off('connect', cargarConteo);
-      socket.off('nueva_alerta');
+      // Con referencia al handler: useAlertas.ts registra su propio listener
+      // de 'nueva_alerta' sobre el mismo socket compartido, y off(evento) sin
+      // handler borra TODOS los listeners de ese evento, no solo el propio.
+      socket.off('nueva_alerta', onNuevaAlerta);
     };
   }, []);
 

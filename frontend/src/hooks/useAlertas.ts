@@ -36,11 +36,12 @@ export function useAlertas() {
     // Resincroniza al (re)conectar para no perder alertas creadas durante
     // un corte de red o mientras la pestaña estaba en segundo plano.
     const resincronizar = () => queryClient.invalidateQueries({ queryKey: ALERTAS_KEY });
-    socket.on('connect', resincronizar);
-    socket.on('nueva_alerta', (a: Alerta) => {
+    const onNuevaAlerta = (a: Alerta) => {
       queryClient.setQueryData<Alerta[]>(ALERTAS_KEY, (prev = []) =>
         prev.find((x) => x.id === a.id) ? prev : [a, ...prev]);
-    });
+    };
+    socket.on('connect', resincronizar);
+    socket.on('nueva_alerta', onNuevaAlerta);
     // Cuando OTRO operador resuelve/valida/rechaza algo, esto la saca de acá
     // en vivo — sin esto, cada quien solo veía reflejadas sus propias
     // acciones hasta hacer F5.
@@ -53,7 +54,11 @@ export function useAlertas() {
     socket.on('alerta_actualizada', onAlertaActualizada);
     return () => {
       socket.off('connect', resincronizar);
-      socket.off('nueva_alerta');
+      // Con referencia al handler: Layout.tsx registra su propio listener de
+      // 'nueva_alerta' sobre el mismo socket compartido (el badge del
+      // sidebar), y off(evento) sin handler borra TODOS los listeners de ese
+      // evento, no solo el propio.
+      socket.off('nueva_alerta', onNuevaAlerta);
       socket.off('alerta_actualizada', onAlertaActualizada);
     };
   }, [queryClient]);

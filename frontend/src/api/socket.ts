@@ -53,9 +53,13 @@ export function conectarSocket(): Socket {
         intentarRefresh();
       }
     });
-  } else if (!socket.connected) {
-    socket.connect();
   }
+  // No se llama socket.connect() a mano en el path de reuso: socket.io ya
+  // reintenta conectar solo (reconnection: true por defecto), y forzarlo acá
+  // puede pisarse con un handshake que ya está en curso (mismo riesgo que el
+  // comentario de más arriba sobre pageshow/bfcache) — de eso salían las
+  // notificaciones intermitentes cuando los tres useEffect de Layout.tsx
+  // pedían el socket en el mismo ciclo de montaje.
   return socket;
 }
 

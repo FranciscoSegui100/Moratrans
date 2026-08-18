@@ -40,6 +40,18 @@ export function initSocket(server: HttpServer): IOServer {
     }
   });
 
+  // Visibilidad del lado del servidor: sin esto, la única señal de un socket
+  // que conecta/desconecta era el console.log en la consola del navegador de
+  // cada usuario, invisible para el equipo — esto queda en los logs de
+  // Railway.
+  io.on('connection', (socket) => {
+    const user = (socket.data as any).user;
+    console.log(`[socket] conectado: ${socket.id} usuario=${user?.id} rol=${user?.rol}`);
+    socket.on('disconnect', (motivo) => {
+      console.log(`[socket] desconectado: ${socket.id} usuario=${user?.id} motivo=${motivo}`);
+    });
+  });
+
   return io;
 }
 
