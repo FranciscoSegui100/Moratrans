@@ -53,8 +53,8 @@ export function setRefreshCookie(res: Response, token: string, dias: number) {
   });
 }
 
-// Vive tanto como el refresh token (no el access token): si durara solo los
-// 15 min del access, ambos vencerían juntos y quedaría un candado sin salida
+// Vive tanto como el refresh token (no el access token): si durara solo lo
+// que dura el access, ambos vencerían juntos y quedaría un candado sin salida
 // — justo cuando hace falta refrescar (porque el access ya venció) es
 // cuando el CSRF de esa misma llamada también estaría vencido, y el refresh
 // se rechazaría con 403 aunque el refresh token siguiera siendo válido.

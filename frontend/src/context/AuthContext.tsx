@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { api, intentarRefresh } from '../api/client';
 
-// El access token dura 15 min (ver JWT_ACCESS_EXPIRES): con el panel abierto
+// El access token dura 8h (ver JWT_ACCESS_EXPIRES): con el panel abierto
 // horas de corrido, hay que renovarlo antes de que venza para que ni las
 // llamadas REST ni el socket (que solo se autentica una vez, al conectar o
 // reconectar) se encuentren con una cookie muerta.
@@ -48,7 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const id = setInterval(() => { intentarRefresh(); }, INTERVALO_REFRESH_MS);
     // El setInterval de arriba no alcanza solo: los navegadores frenan los
     // temporizadores de una pestaña en segundo plano (minimizada, otra
-    // pestaña activa, compu suspendida) — si pasan más de 15 min así, la
+    // pestaña activa, compu suspendida) — si pasan más de 8h así, la
     // cookie vence sin que nadie la renueve. Al volver a esta pestaña,
     // renovamos al toque en vez de esperar al próximo tick del intervalo.
     const alVolver = () => { if (document.visibilityState === 'visible') intentarRefresh(); };

@@ -28,7 +28,7 @@ declare global {
  * base que el usuario siga activo y que el token no haya sido revocado
  * (token_version), para que desactivar/degradar a un usuario surta efecto al
  * instante y no recién cuando expire su access token (JWT_ACCESS_EXPIRES,
- * por defecto 15 min — el frontend lo renueva solo vía /api/auth/refresh).
+ * por defecto 8h — el frontend lo renueva solo vía /api/auth/refresh).
  */
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = req.cookies?.[ACCESS_COOKIE];

@@ -22,7 +22,7 @@ export function conectarSocket(): Socket {
     // los datos, pero nunca llegan los eventos en vivo).
     socket.on('connect_error', (err) => {
       console.error('[socket] connect_error:', err.message);
-      // La causa más común: la cookie de sesión (dura 15 min) venció mientras
+      // La causa más común: la cookie de sesión (dura JWT_ACCESS_EXPIRES, 8h) venció mientras
       // el socket estaba desconectado (redeploy, corte de red, la compu se
       // suspendió) y nadie la renovó mientras tanto — sin esto, reintentaba
       // solo con la cookie vieja para siempre y nunca volvía a conectar.

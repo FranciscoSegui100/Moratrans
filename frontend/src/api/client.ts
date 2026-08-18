@@ -34,7 +34,7 @@ export function intentarRefresh(): Promise<boolean> {
   return refrescando;
 }
 
-// El access token dura 15 min: si expira a mitad de sesión, se intenta
+// El access token dura JWT_ACCESS_EXPIRES (8h): si expira a mitad de sesión, se intenta
 // renovar una vez con el refresh token (cookie aparte) antes de mandar al
 // usuario al login.
 api.interceptors.response.use(
