@@ -7,23 +7,33 @@ import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
+import { reservarParaEntrega } from '../../services/contenedorReserva.service';
 import { emitRecursoActualizado } from '../../config/socket';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
 
-/** GET /api/viajes?fecha=YYYY-MM-DD&estado=programado */
+/**
+ * GET /api/viajes?fecha=YYYY-MM-DD&estado=programado&chofer_id=&ruta_id=
+ * `ruta_id=null` (el literal, no el valor JS) filtra los viajes SIN rutear
+ * todavía — es la cola de la pestaña Ruta (ver rutas.routes.ts). No filtra
+ * por fecha a propósito en ese caso: un pedido de hoy tiene que poder verse
+ * al armar la ruta de pasado mañana.
+ */
 viajesRouter.get('/', async (req: Request, res: Response) => {
-  const { fecha, estado } = req.query as Record<string, string>;
+  const { fecha, estado, chofer_id: choferId, ruta_id: rutaId } = req.query as Record<string, string>;
   const conds: string[] = [];
   const params: any[] = [];
   if (fecha) { params.push(fecha); conds.push(`v.fecha = $${params.length}`); }
   if (estado) { params.push(estado); conds.push(`v.estado = $${params.length}`); }
+  if (choferId) { params.push(choferId); conds.push(`v.chofer_id = $${params.length}`); }
+  if (rutaId === 'null') conds.push(`v.ruta_id IS NULL`);
+  else if (rutaId) { params.push(rutaId); conds.push(`v.ruta_id = $${params.length}`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const rows = await query(
     `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
             v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id, v.patente, v.grupo_id,
-            v.remito, v.importe, v.ubicacion_id, v.ubicacion_direccion,
+            v.remito, v.importe, v.ubicacion_id, v.ubicacion_direccion, v.ruta_id, v.orden,
             -- Origen/destino final del viaje: la entrega sale del depósito
             -- (ubicacion_direccion) y llega a lo del cliente (destino_direccion);
             -- el retiro sale de lo del cliente y llega al vaciadero. No se
@@ -86,7 +96,7 @@ const nuevoSchema = z.object({
  * el panel — aclara si es envío (llevar) o retiro (buscar) del contenedor,
  * y la dirección de destino, si se cargó.
  */
-async function avisarChoferViaje(
+export async function avisarChoferViaje(
   choferId: string,
   tipo: 'entrega' | 'retiro',
   contenedorNumero: string | null,
@@ -118,7 +128,7 @@ async function avisarChoferViaje(
  * un recambio y qué contenedor vacío le corresponde dejar — y de qué
  * ubicación sale ese vacío, si ya se sabe.
  */
-async function avisarChoferRecambio(
+export async function avisarChoferRecambio(
   choferId: string,
   llenoNumero: string,
   vacioNumero: string | null,
@@ -190,50 +200,10 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
         throw err;
       };
 
-      // A lo sumo una reserva activa por contenedor. Si está disponible, se
-      // reserva ya (misma transición que fn_validar_pago, disponible ->
-      // reservado). Si está ocupado (con otro cliente), se permite
-      // reservarlo igual pero solo para una fecha posterior a su vence_en
-      // (fecha de vuelta) — sin tocar su estado actual todavía; el
-      // contenedor pasa a "reservado" recién cuando efectivamente vuelve (ver
-      // POST /api/contenedores/:numero/confirmar-retiro). Se usa tanto para
-      // una entrega suelta como para la pata "entrega" de un recambio.
-      async function reservarParaEntrega(numero: string, fecha: string): Promise<void> {
-        const { rows: contRows } = await c.query<{ estado: string; vence_en: string | null }>(
-          'SELECT estado, vence_en FROM contenedores WHERE numero = $1 FOR UPDATE',
-          [numero],
-        );
-        const cont = contRows[0];
-        if (!cont) fail(`El contenedor ${numero} no existe.`);
-
-        const { rows: activos } = await c.query(
-          `SELECT id FROM viajes WHERE contenedor_numero = $1 AND tipo = 'entrega' AND estado IN ('programado','en_curso')`,
-          [numero],
-        );
-        if (activos.length > 0) {
-          fail(`El contenedor ${numero} ya tiene una entrega reservada (actual o futura); no se puede reservar dos veces.`);
-        }
-
-        if (cont!.estado === 'disponible') {
-          // La fecha de la entrega ES el vencimiento: cuándo se espera que
-          // este contenedor vuelva una vez alquilado (no al programar el
-          // retiro — para entonces la alerta de "por vencer" ya llegaría tarde).
-          await c.query(
-            `UPDATE contenedores SET estado = 'reservado', vence_en = $2::date, actualizado_por = $3
-               WHERE numero = $1 AND estado = 'disponible'`,
-            [numero, fecha, `operador:${req.user!.id}`],
-          );
-        } else {
-          if (!cont!.vence_en) {
-            fail(`El contenedor ${numero} está ${cont!.estado} y no tiene fecha de vuelta cargada; no se puede reservar a futuro.`);
-          }
-          const venceFecha = new Date(cont!.vence_en!).toISOString().slice(0, 10);
-          if (fecha < venceFecha) {
-            fail(`El contenedor ${numero} vuelve el ${new Date(cont!.vence_en!).toLocaleDateString('es-AR')}; elegí esa fecha o una posterior.`);
-          }
-          // Sigue "ocupado" hasta que vuelva de verdad — no se toca su estado acá.
-        }
-      }
+      // reservarParaEntrega (backend/src/services/contenedorReserva.service.ts):
+      // a lo sumo una reserva activa por contenedor, se usa tanto para una
+      // entrega suelta como para la pata "entrega" de un recambio.
+      const actualizadoPor = `operador:${req.user!.id}`;
 
       // Foto de la patente del chofer al momento de crear el viaje (ver
       // comentario de viajes.patente en schema.sql).
@@ -249,7 +219,7 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
       if (v.tipo === 'recambio') {
         if (!v.contenedor_numero) fail('Un recambio necesita el contenedor lleno que se va a retirar.');
         if (v.contenedor_numero_entrega) {
-          await reservarParaEntrega(v.contenedor_numero_entrega, v.fecha);
+          await reservarParaEntrega(c, v.contenedor_numero_entrega, v.fecha, actualizadoPor);
         }
         const grupoId = randomUUID();
         // `ubicacion` (resuelta arriba como vaciadero, porque tipo !== 'entrega')
@@ -275,7 +245,7 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
       }
 
       if (v.tipo === 'entrega' && v.contenedor_numero) {
-        await reservarParaEntrega(v.contenedor_numero, v.fecha);
+        await reservarParaEntrega(c, v.contenedor_numero, v.fecha, actualizadoPor);
       }
 
       const { rows } = await c.query(

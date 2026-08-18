@@ -70,6 +70,9 @@ CREATE TYPE rol_usuario AS ENUM ('admin', 'operador', 'finanzas', 'lectura');
 -- retiro). Puede haber varias de cada tipo — no es una dirección fija.
 CREATE TYPE tipo_ubicacion AS ENUM ('deposito', 'vaciadero');
 
+-- Pestaña "Ruta": pre-planificación del recorrido diario de un chofer.
+CREATE TYPE estado_ruta AS ENUM ('planificada', 'en_curso', 'finalizada', 'cancelada');
+
 -- ---------------------------------------------------------------------
 -- 2. USUARIOS DEL PANEL (RBAC)
 -- ---------------------------------------------------------------------
@@ -294,6 +297,40 @@ CREATE TABLE ubicaciones (
 CREATE INDEX idx_ubicaciones_tipo ON ubicaciones(tipo) WHERE activo = TRUE;
 
 -- ---------------------------------------------------------------------
+-- 8.a ter RUTAS (pestaña "Ruta": pre-planificación del recorrido diario
+-- de un chofer+camión). Las paradas viven en `viajes` (columnas ruta_id/
+-- orden más abajo) — acá solo el "día de trabajo" y las paradas de
+-- vaciado, que no son filas de `viajes` porque liberan TODO el set
+-- "pendiente de vaciar" acumulado hasta ese punto, no un contenedor puntual.
+-- ---------------------------------------------------------------------
+CREATE TABLE rutas (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  fecha       DATE NOT NULL,
+  chofer_id   UUID NOT NULL REFERENCES choferes(id) ON DELETE RESTRICT,
+  -- Foto de choferes.patente al armar la ruta (mismo patrón que viajes.patente).
+  patente     TEXT,
+  estado      estado_ruta NOT NULL DEFAULT 'planificada',
+  armada_por  UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+  notas       TEXT,
+  creado_en      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_rutas_fecha_chofer ON rutas(fecha, chofer_id);
+CREATE INDEX idx_rutas_estado ON rutas(estado);
+-- Una sola ruta activa (no cancelada) por chofer por día.
+CREATE UNIQUE INDEX ux_rutas_chofer_fecha ON rutas(chofer_id, fecha) WHERE estado <> 'cancelada';
+
+CREATE TABLE ruta_vaciados (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ruta_id      UUID NOT NULL REFERENCES rutas(id) ON DELETE CASCADE,
+  orden        INT  NOT NULL,
+  ubicacion_id UUID REFERENCES ubicaciones(id) ON DELETE SET NULL, -- vaciadero
+  notas        TEXT,
+  creado_en    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (ruta_id, orden)
+);
+
+-- ---------------------------------------------------------------------
 -- 8.b VIAJES PROGRAMADOS (entrega / retiro)
 -- ---------------------------------------------------------------------
 CREATE TABLE viajes (
@@ -324,6 +361,11 @@ CREATE TABLE viajes (
   -- Recambio: une la fila 'entrega' (vacío que deja) con la 'retiro' (lleno
   -- que se lleva) de una misma visita. NULL en un viaje normal.
   grupo_id          UUID,
+  -- Pestaña "Ruta": si están seteados, esta fila es una parada dentro de la
+  -- secuencia de `ruta_id`, en la posición `orden`. Un recambio en una ruta
+  -- comparte ruta_id Y orden entre sus dos filas (misma visita física).
+  ruta_id           UUID REFERENCES rutas(id) ON DELETE SET NULL,
+  orden             INT,
   -- Número de remito y monto de ESTE movimiento puntual (a diferencia de
   -- pedidos.precio, que es el precio total cotizado del pedido). Vienen de
   -- la planilla Excel que ya usaban (ver excelClientes() en reportes.service.ts).
@@ -343,6 +385,15 @@ CREATE INDEX idx_viajes_grupo  ON viajes(grupo_id) WHERE grupo_id IS NOT NULL;
 CREATE UNIQUE INDEX ux_viajes_activo_por_tipo
   ON viajes(contenedor_numero, tipo)
   WHERE estado IN ('programado', 'en_curso') AND contenedor_numero IS NOT NULL;
+
+-- No puede haber orden sin ruta ni ruta sin orden: son la misma decisión.
+ALTER TABLE viajes ADD CONSTRAINT chk_viajes_ruta_orden
+  CHECK ((ruta_id IS NULL) = (orden IS NULL));
+-- Unique por (ruta_id, orden, tipo): permite que entrega+retiro de un mismo
+-- recambio compartan (ruta_id, orden) porque difieren en tipo, pero impide
+-- que dos paradas DISTINTAS choquen en el mismo número.
+CREATE UNIQUE INDEX ux_viajes_ruta_orden_tipo ON viajes(ruta_id, orden, tipo) WHERE ruta_id IS NOT NULL;
+CREATE INDEX idx_viajes_ruta ON viajes(ruta_id) WHERE ruta_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------
 -- 8.c IDEMPOTENCIA DEL WEBHOOK (dedupe por message_id de Meta)
@@ -436,6 +487,10 @@ CREATE TRIGGER trg_touch_viajes
   BEFORE UPDATE ON viajes
   FOR EACH ROW EXECUTE FUNCTION fn_touch_actualizado();
 
+CREATE TRIGGER trg_touch_rutas
+  BEFORE UPDATE ON rutas
+  FOR EACH ROW EXECUTE FUNCTION fn_touch_actualizado();
+
 -- ---------------------------------------------------------------------
 -- 10. AUTENTICACIÓN REFORZADA (MFA, sesiones, auditoría, dispositivos)
 -- ---------------------------------------------------------------------
@@ -524,6 +579,8 @@ ALTER TABLE sesiones_chat          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mensajes_chat          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE viajes                 ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ubicaciones            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rutas                  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ruta_vaciados          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mensajes_procesados    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sesiones               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dispositivos_conocidos ENABLE ROW LEVEL SECURITY;

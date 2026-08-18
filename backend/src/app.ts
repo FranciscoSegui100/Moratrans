@@ -21,6 +21,7 @@ import { clientesRouter } from './modules/clientes/clientes.routes';
 import { contenedoresRouter } from './modules/contenedores/contenedores.routes';
 import { ticketsRouter } from './modules/tickets/tickets.routes';
 import { viajesRouter } from './modules/viajes/viajes.routes';
+import { rutasRouter } from './modules/rutas/rutas.routes';
 import { reportesRouter } from './modules/reportes/reportes.routes';
 import { pedidosRouter } from './modules/pedidos/pedidos.routes';
 import { tarifasRouter } from './modules/tarifas/tarifas.routes';
@@ -88,6 +89,7 @@ export function crearApp() {
   app.use('/api/contenedores', contenedoresRouter);
   app.use('/api/tickets', ticketsRouter);
   app.use('/api/viajes', viajesRouter);
+  app.use('/api/rutas', rutasRouter);
   app.use('/api/pedidos', pedidosRouter);
   app.use('/api/tarifas', tarifasRouter);
   app.use('/api/ubicaciones', ubicacionesRouter);
