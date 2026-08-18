@@ -5,8 +5,6 @@ import { env, isProd } from '../../config/env';
 import { normalizarDestinoWhatsApp } from '../../services/telefono.service';
 import { logMensaje } from './chatLog.service';
 
-export { normalizarDestinoWhatsApp };
-
 const BASE = `https://graph.facebook.com/${env.WA_GRAPH_VERSION}`;
 const PHONE = env.WA_PHONE_NUMBER_ID;
 

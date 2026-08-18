@@ -1,7 +1,7 @@
 import { Request } from 'express';
 import { query } from '../config/db';
 
-export type TipoEventoAuth =
+type TipoEventoAuth =
   | 'login_exitoso'
   | 'login_fallido'
   | 'mfa_fallido'

@@ -6,7 +6,7 @@ import { ACCESS_COOKIE } from '../services/session.service';
 
 export type Rol = 'admin' | 'operador' | 'finanzas' | 'lectura';
 
-export interface AuthUser {
+interface AuthUser {
   id: string;
   rol: Rol;
   email: string;
@@ -72,11 +72,3 @@ export function requireRol(...roles: Rol[]) {
  */
 export const puedeVerDni = (rol: Rol) => rol === 'admin' || rol === 'operador';
 export const puedeVerComprobante = (rol: Rol) => rol === 'admin' || rol === 'finanzas';
-
-/** Enmascara campos sensibles de un objeto según el rol del usuario. */
-export function filtrarSensibles<T extends Record<string, any>>(obj: T, rol: Rol): T {
-  const clon: any = { ...obj };
-  if ('dni' in clon && !puedeVerDni(rol)) clon.dni = '••••••';
-  if ('url_comprobante' in clon && !puedeVerComprobante(rol)) clon.url_comprobante = null;
-  return clon;
-}

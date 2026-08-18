@@ -93,8 +93,3 @@ export function emitConversacionActualizada(payload: { telefono: string; modo_hu
 export function emitRecursoActualizado(recurso: string): void {
   io?.to('alertas').emit('recurso_actualizado', { recurso });
 }
-
-export function getIO(): IOServer {
-  if (!io) throw new Error('Socket.io no inicializado');
-  return io;
-}

@@ -62,7 +62,3 @@ export function conectarSocket(): Socket {
   // pedían el socket en el mismo ciclo de montaje.
   return socket;
 }
-
-export function getSocket(): Socket | null {
-  return socket;
-}
