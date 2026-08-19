@@ -1,6 +1,5 @@
-import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { ArrowRight, RefreshCw } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
@@ -65,14 +64,9 @@ const ETIQUETA_ESTADO: Record<Ruta['estado'], { texto: string; clase: string }> 
   cancelada: { texto: 'Cancelada', clase: 'rechazado' },
 };
 
-const formInicial = { fecha: '', chofer_id: '', notas: '' };
-
 export function Rutas() {
   const { show } = useToast();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [form, setForm] = useState(formInicial);
-  const [loading, setLoading] = useState(false);
 
   const { data: rutas = [] } = useQuery({
     queryKey: ['rutas'],
@@ -94,7 +88,6 @@ export function Rutas() {
     queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data.filter((c) => c.estado === 'disponible')),
   });
   const visitasPendientes = agruparPendientes(pendientes);
-  const cargar = () => queryClient.invalidateQueries({ queryKey: ['rutas'] });
   const cargarPendientes = () => queryClient.invalidateQueries({ queryKey: ['viajes', 'pendientes-sin-rutear'] });
 
   // Un recambio son dos filas (retiro+entrega); el chofer es uno solo para
@@ -116,23 +109,6 @@ export function Rutas() {
       cargarPendientes();
     } catch (err: any) {
       show('error', 'No se pudo asignar el contenedor', err.response?.data?.error);
-    }
-  }
-
-  async function crear(e: React.FormEvent) {
-    e.preventDefault();
-    if (!form.fecha || !form.chofer_id) return;
-    setLoading(true);
-    try {
-      const { data } = await api.post<Ruta>('/api/rutas', { ...form, notas: form.notas || undefined });
-      setForm(formInicial);
-      cargar();
-      show('success', 'Ruta creada', 'Ahora podés armar las paradas.');
-      navigate(`/rutas/${data.id}`);
-    } catch (err: any) {
-      show('error', 'Error al crear la ruta', err.response?.data?.error || 'Error desconocido');
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -189,36 +165,6 @@ export function Rutas() {
               </div>
             );
           })}
-        </div>
-
-        <div className="form-card">
-          <div className="section-title">Nueva ruta</div>
-          <form onSubmit={crear} className="form-row">
-            <div className="form-group">
-              <label className="form-label">Fecha</label>
-              <input
-                type="date"
-                className="form-input"
-                value={form.fecha}
-                onChange={(e) => setForm({ ...form, fecha: e.target.value })}
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Chofer</label>
-              <select className="form-select" value={form.chofer_id} onChange={(e) => setForm({ ...form, chofer_id: e.target.value })} required>
-                <option value="">— Elegir —</option>
-                {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Notas</label>
-              <input className="form-input" value={form.notas} onChange={(e) => setForm({ ...form, notas: e.target.value })} />
-            </div>
-            <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? 'Creando...' : 'Crear ruta'}
-            </button>
-          </form>
         </div>
       </RoleGate>
 

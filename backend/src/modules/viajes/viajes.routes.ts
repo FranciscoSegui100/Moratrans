@@ -341,19 +341,32 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
   }
   params.push(req.params.id);
   try {
-    const [row] = await query(
-      `UPDATE viajes SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
-      params,
-    );
+    // Asignar contenedor a una entrega (sobre todo el vacío de un recambio,
+    // ver comentario de contenedor_numero en patchSchema) tiene que reservarlo
+    // de verdad — misma validación atómica que un viaje nuevo (POST /) o que
+    // confirmar una ruta: si no, el contenedor sigue figurando 'disponible' y
+    // el bot puede volver a ofrecérselo a otro cliente (o el pago validarlo
+    // solo) mientras "ya estaba asignado" en el panel.
+    const row = await withTx(async (c) => {
+      if ('contenedor_numero' in parsed.data && parsed.data.contenedor_numero) {
+        const { rows: viajeRows } = await c.query<{ tipo: string; fecha: string }>(
+          'SELECT tipo, fecha FROM viajes WHERE id = $1 FOR UPDATE',
+          [req.params.id],
+        );
+        if (!viajeRows[0]) return null;
+        if (viajeRows[0].tipo === 'entrega') {
+          await reservarParaEntrega(c, parsed.data.contenedor_numero, viajeRows[0].fecha, `operador:${req.user!.id}`, {
+            excluirViajeId: req.params.id,
+          });
+        }
+      }
+      const { rows } = await c.query(
+        `UPDATE viajes SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+        params,
+      );
+      return rows[0] ?? null;
+    });
     if (!row) return res.status(404).json({ error: 'Viaje inexistente' });
-
-    // Se acaba de asignar el contenedor a una entrega (sobre todo el vacío
-    // de un recambio, ver comentario de contenedor_numero en patchSchema) —
-    // la fecha del viaje ES el vencimiento: cuándo se espera que vuelva una
-    // vez alquilado.
-    if ('contenedor_numero' in parsed.data && row.contenedor_numero && row.tipo === 'entrega') {
-      await query(`UPDATE contenedores SET vence_en = $2::date WHERE numero = $1`, [row.contenedor_numero, row.fecha]);
-    }
 
     res.json(row);
 
