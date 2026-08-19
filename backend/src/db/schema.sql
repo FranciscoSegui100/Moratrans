@@ -188,6 +188,13 @@ CREATE TABLE pedidos (
   destino_lng      NUMERIC(9,6),
   destino_direccion TEXT,                      -- dirección escrita por el cliente, o la que venga con la ubicación GPS
   estado           estado_pedido NOT NULL DEFAULT 'nuevo',
+  -- 'recambio': se cotiza y se cobra igual que una entrega, pero al validar
+  -- el pago se crea el par retiro(lleno)+entrega(vacío) en vez de una sola
+  -- entrega (ver contenedor_recambio_numero y pagos.routes.ts /validar).
+  tipo             TEXT NOT NULL DEFAULT 'entrega' CHECK (tipo IN ('entrega', 'recambio')),
+  -- Solo si tipo = 'recambio': el contenedor lleno que ya se sabe que hay que
+  -- retirar (viene de contenedoresDelCliente, no se le vuelve a preguntar).
+  contenedor_recambio_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
   creado_en        TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_pedidos_telefono ON pedidos(cliente_telefono);
