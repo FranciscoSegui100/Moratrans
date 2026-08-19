@@ -180,11 +180,12 @@ async function avisarChoferReservaFutura(choferId: string, contenedor: string, f
 
 /**
  * POST /api/pagos/:id/validar — SÓLO operador/admin/finanzas.
- * Llama a fn_validar_pago (atómico): reserva contenedor + crea ticket.
- * Opcionalmente, el operador indica cuántos días va a demorar el retiro,
- * qué chofer queda asignado a la entrega y la fecha de vencimiento del
- * contenedor — se registra un viaje de entrega y se avisa al cliente.
- * Luego genera y envía el PDF por WhatsApp.
+ * Llama a fn_validar_pago (atómico): reserva contenedor + crea ticket, y
+ * registra un viaje de entrega sin ruta ni chofer todavía — eso se arma un
+ * día antes desde la pestaña Rutas (cola sin rutear). Opcionalmente el
+ * operador puede indicar de una el chofer, cuántos días va a demorar el
+ * retiro y la fecha de vencimiento del contenedor. Luego genera y envía el
+ * PDF por WhatsApp.
  */
 pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const pagoId = req.params.id;
@@ -263,14 +264,19 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       if (venceEn) {
         await query('UPDATE contenedores SET vence_en = $1 WHERE numero = $2', [venceEn, result.contenedor]);
       }
-      if (choferId) {
-        await query(
-          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas, ubicacion_id, ubicacion_direccion)
-           VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', 'Asignado al validar el pago', $6, $7)`,
-          [venceEn ?? null, choferId, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null,
-           ubicacion?.id ?? null, ubicacion?.direccion ?? null],
-        );
 
+      // Siempre se crea el viaje (sin ruta_id todavía) aunque no se haya
+      // indicado chofer: la logística se arma un día antes desde la pestaña
+      // Rutas, donde este viaje aparece en la "cola sin rutear" listo para
+      // asignarle chofer y confirmar el contenedor.
+      await query(
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas, ubicacion_id, ubicacion_direccion, destino_direccion)
+         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', 'Creado al validar el pago', $6, $7, $8)`,
+        [venceEn ?? null, choferId ?? null, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null,
+         ubicacion?.id ?? null, ubicacion?.direccion ?? null, info?.destino_direccion ?? null],
+      );
+
+      if (choferId) {
         // Avisamos al chofer por WhatsApp: qué contenedor, a quién y adónde. No
         // bloquea la respuesta del panel si falla el envío, pero si falla queda
         // una alerta en el panel — si no, el chofer nunca se entera de la

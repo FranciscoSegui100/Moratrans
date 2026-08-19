@@ -5,7 +5,6 @@ import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
 import { RoleGate } from '../components/RoleGate';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
-import { ValidarPagoForm, ValidarPagoPayload } from '../components/ValidarPagoForm';
 import { useToast } from '../components/Toast';
 
 interface Pago {
@@ -23,8 +22,6 @@ interface Pago {
   es_cuenta_corriente: boolean;
 }
 
-interface Chofer { id: string; nombre: string; activo: boolean; }
-interface Contenedor { numero: string; estado: string; vence_en: string | null; }
 interface Adjunto { id: string; creado_en: string; }
 
 /**
@@ -53,19 +50,10 @@ export function Pagos() {
   const { show } = useToast();
   const queryClient = useQueryClient();
   const [procesando, setProcesando] = useState<string | null>(null);
-  const [validandoId, setValidandoId] = useState<string | null>(null);
 
   const { data: pagos = [] } = useQuery({
     queryKey: ['pagos', 'pendiente'],
     queryFn: () => api.get<Pago[]>('/api/pagos?estado=pendiente').then((r) => r.data),
-  });
-  const { data: choferes = [] } = useQuery({
-    queryKey: ['choferes', 'activos'],
-    queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data.filter((c) => c.activo)),
-  });
-  const { data: contenedores = [] } = useQuery({
-    queryKey: ['contenedores'],
-    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
   });
 
   const cargar = () => queryClient.invalidateQueries({ queryKey: ['pagos', 'pendiente'] });
@@ -83,10 +71,12 @@ export function Pagos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function validar(id: string, payload: ValidarPagoPayload) {
+  // La logística (chofer, contenedor) se arma un día antes desde la
+  // pestaña Viajes — acá solo se confirma el pago, y de ahí se manda directo.
+  async function validar(id: string) {
     setProcesando(id);
     try {
-      const { data } = await api.post(`/api/pagos/${id}/validar`, payload);
+      const { data } = await api.post(`/api/pagos/${id}/validar`, {});
       show(
         'success',
         'Pago validado',
@@ -94,7 +84,6 @@ export function Pagos() {
           ? `Ticket ${data.ticket_id} — contenedor ${data.contenedor}`
           : `Ticket ${data.ticket_id} — contenedor ${data.contenedor} reservado a futuro, todavía está ocupado`,
       );
-      setValidandoId(null);
       cargar();
     } catch (e: any) {
       show('error', 'Error al validar', e.response?.data?.error || 'Error desconocido');
@@ -151,7 +140,7 @@ export function Pagos() {
       ) : (
         <div className="space-y">
           {pagos.map((p) => (
-            <div key={p.id} className={`pago-card ${validandoId === p.id ? 'pago-card-expandido' : ''}`}>
+            <div key={p.id} className="pago-card">
               <div className="pago-card-top">
                 <div className="pago-avatar"><CreditCard strokeWidth={1.75} /></div>
 
@@ -179,15 +168,13 @@ export function Pagos() {
 
                 <div className="pago-actions">
                   <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                    {validandoId !== p.id && (
-                      <button
-                        onClick={() => setValidandoId(p.id)}
-                        className="btn btn-success btn-sm"
-                        disabled={procesando === p.id}
-                      >
-                        <Check strokeWidth={2} /> Validar
-                      </button>
-                    )}
+                    <button
+                      onClick={() => validar(p.id)}
+                      className="btn btn-success btn-sm"
+                      disabled={procesando === p.id}
+                    >
+                      <Check strokeWidth={2} /> Validar
+                    </button>
                     <button
                       onClick={() => rechazar(p.id)}
                       className="btn btn-danger btn-sm"
@@ -206,16 +193,6 @@ export function Pagos() {
                   </RoleGate>
                 </div>
               </div>
-
-              {validandoId === p.id && (
-                <ValidarPagoForm
-                  choferes={choferes}
-                  contenedores={contenedores}
-                  procesando={procesando === p.id}
-                  onConfirm={(payload) => validar(p.id, payload)}
-                  onCancel={() => setValidandoId(null)}
-                />
-              )}
             </div>
           ))}
         </div>

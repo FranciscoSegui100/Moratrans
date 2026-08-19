@@ -1,16 +1,10 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Check, X, RotateCcw, CircleCheck, FileCheck } from 'lucide-react';
 import { useAlertas } from '../hooks/useAlertas';
 import { RoleGate } from '../components/RoleGate';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
-import { ValidarPagoForm, ValidarPagoPayload } from '../components/ValidarPagoForm';
 import { useToast } from '../components/Toast';
-import { api } from '../api/client';
 import { tipoLabel } from '../lib/alertLabels';
-
-interface Chofer { id: string; nombre: string; activo: boolean; }
-interface Contenedor { numero: string; estado: string; vence_en: string | null; }
 
 export function Alertas() {
   const { alertas: todasLasAlertas, resolver, validarPago, rechazarPago, confirmarRetiro, enviarFactura } = useAlertas();
@@ -18,24 +12,14 @@ export function Alertas() {
   const alertas = todasLasAlertas.filter((a) => a.tipo !== 'solicita_asesor');
   const { show } = useToast();
   const [procesando, setProcesando] = useState<string | null>(null);
-  const [validandoId, setValidandoId] = useState<string | null>(null);
   const [facturaFile, setFacturaFile] = useState<Record<string, File | undefined>>({});
 
-  const { data: choferes = [] } = useQuery({
-    queryKey: ['choferes', 'activos'],
-    queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data.filter((c) => c.activo)),
-  });
-
-  const { data: contenedores = [] } = useQuery({
-    queryKey: ['contenedores'],
-    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
-  });
-
-  async function onValidar(pagoId: string, payload: ValidarPagoPayload) {
+  // La logística (chofer, contenedor) se arma un día antes desde la
+  // pestaña Viajes — acá solo se confirma el pago, y de ahí se manda directo.
+  async function onValidar(pagoId: string) {
     setProcesando(pagoId);
     try {
-      const data = await validarPago(pagoId, payload);
-      setValidandoId(null);
+      const data = await validarPago(pagoId, {});
       show(
         'success',
         'Pago validado',
@@ -130,7 +114,6 @@ export function Alertas() {
             const esPago = a.tipo === 'pago_pendiente_validacion' || a.tipo === 'cuenta_corriente_solicitada';
             const esRetiro = a.tipo === 'confirmar_retiro';
             const esFactura = a.tipo === 'factura_solicitada';
-            const expandida = esPago && validandoId === a.referencia_id;
             return (
               <div
                 key={a.id}
@@ -201,44 +184,32 @@ export function Alertas() {
                     </div>
 
                     <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                      {!expandida && (
-                        <div className="alerta-pago-actions">
-                          <button
-                            onClick={() => setValidandoId(a.referencia_id)}
-                            className="btn btn-success btn-sm"
-                            disabled={procesando === a.referencia_id}
-                          >
-                            <Check strokeWidth={2} /> Impactó — Validar
-                          </button>
-                          <button
-                            onClick={() => onRechazar(a.referencia_id)}
-                            className="btn btn-danger btn-sm"
-                            disabled={procesando === a.referencia_id}
-                          >
-                            <X strokeWidth={2} /> No impactó — Rechazar
-                          </button>
-                          <button
-                            onClick={() => onPedirDeNuevo(a.referencia_id)}
-                            className="btn btn-ghost btn-sm"
-                            disabled={procesando === a.referencia_id}
-                            title="El comprobante no se lee bien: le pedimos al cliente que lo reenvíe"
-                          >
-                            <RotateCcw strokeWidth={1.75} /> Pedir de nuevo
-                          </button>
-                        </div>
-                      )}
+                      <div className="alerta-pago-actions">
+                        <button
+                          onClick={() => onValidar(a.referencia_id)}
+                          className="btn btn-success btn-sm"
+                          disabled={procesando === a.referencia_id}
+                        >
+                          <Check strokeWidth={2} /> Impactó — Validar
+                        </button>
+                        <button
+                          onClick={() => onRechazar(a.referencia_id)}
+                          className="btn btn-danger btn-sm"
+                          disabled={procesando === a.referencia_id}
+                        >
+                          <X strokeWidth={2} /> No impactó — Rechazar
+                        </button>
+                        <button
+                          onClick={() => onPedirDeNuevo(a.referencia_id)}
+                          className="btn btn-ghost btn-sm"
+                          disabled={procesando === a.referencia_id}
+                          title="El comprobante no se lee bien: le pedimos al cliente que lo reenvíe"
+                        >
+                          <RotateCcw strokeWidth={1.75} /> Pedir de nuevo
+                        </button>
+                      </div>
                     </RoleGate>
                   </div>
-                )}
-
-                {expandida && (
-                  <ValidarPagoForm
-                    choferes={choferes}
-                    contenedores={contenedores}
-                    procesando={procesando === a.referencia_id}
-                    onConfirm={(payload) => onValidar(a.referencia_id, payload)}
-                    onCancel={() => setValidandoId(null)}
-                  />
                 )}
               </div>
             );

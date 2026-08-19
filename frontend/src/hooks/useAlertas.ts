@@ -2,7 +2,14 @@ import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
-import type { ValidarPagoPayload } from '../components/ValidarPagoForm';
+
+interface ValidarPagoPayload {
+  diasDemora?: number;
+  choferId?: string;
+  venceEn?: string;
+  contenedorNumero?: string;
+  fechaEntrega?: string;
+}
 
 export interface Alerta {
   id: string;
