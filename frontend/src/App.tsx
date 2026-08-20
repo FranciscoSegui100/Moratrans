@@ -16,7 +16,6 @@ import { Clientes } from './pages/Clientes';
 import { ClienteDetalle } from './pages/ClienteDetalle';
 import { Viajes } from './pages/Viajes';
 import { Rutas } from './pages/Rutas';
-import { RutaDetalle } from './pages/RutaDetalle';
 import { Contenedores } from './pages/Contenedores';
 import { Tarifas } from './pages/Tarifas';
 import { Ubicaciones } from './pages/Ubicaciones';
@@ -68,7 +67,6 @@ export default function App() {
                         <Route path="/pagos"         element={<Pagos />} />
                         <Route path="/viajes"        element={<Viajes />} />
                         <Route path="/rutas"         element={<Rutas />} />
-                        <Route path="/rutas/:id"     element={<RutaDetalle />} />
                         <Route path="/alertas"       element={<Alertas />} />
                         <Route path="/conversaciones" element={<Conversaciones />} />
                         <Route path="/choferes"      element={<Choferes />} />
