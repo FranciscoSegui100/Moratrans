@@ -314,7 +314,7 @@ function DetalleRuta({ rutaId, cola, contenedoresDisponibles, onCambio }: {
             {cola.map((v) => (
               <div key={v.id} className="qrow">
                 <div>
-                  <div className="cli">{v.destino_direccion ?? v.cliente_telefono ?? v.zona ?? '—'}</div>
+                  <div className="cli">{v.destino_direccion ?? v.zona ?? v.cliente_telefono ?? '—'}</div>
                   <div className="sub">
                     {v.grupo_id ? 'Recambio' : v.tipo}
                     {v.contenedor_numero ? ` · ${v.contenedor_numero}` : ''}
