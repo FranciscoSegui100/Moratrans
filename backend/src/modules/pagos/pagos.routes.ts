@@ -266,56 +266,49 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       );
     }
 
-    if (result.reservado_ahora) {
+    if (result.contenedor && result.reservado_ahora) {
       if (venceEn) {
         await query('UPDATE contenedores SET vence_en = $1 WHERE numero = $2', [venceEn, result.contenedor]);
       }
+    }
 
-      // Siempre se crea(n) el/los viaje(s) (sin ruta_id todavía) aunque no se
-      // haya indicado chofer: la logística se arma un día antes desde la
-      // pestaña Rutas, donde aparecen en la "cola sin rutear" listos para
-      // asignarles chofer y confirmar el contenedor.
-      if (esRecambio) {
-        // Recambio: además del vacío que reservó fn_validar_pago (entrega),
-        // se registra el retiro del lleno ya conocido — mismo par
-        // retiro+entrega por grupo_id que arma POST /api/viajes.
-        const grupoId = randomUUID();
-        const vaciadero = await resolverUbicacion('vaciadero');
-        await query(
-          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
-           VALUES ('retiro', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, 'programado', 'Creado al validar el pago (recambio)', $7, $8, $9)`,
-          [venceEn ?? null, choferId ?? null, info!.contenedor_recambio_numero, info?.cliente_telefono ?? null, info?.zona ?? null,
-           info?.destino_direccion ?? null, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
-        );
-        await query(
-          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
-           VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, 'programado', 'Creado al validar el pago (recambio)', $7, $8, $9)`,
-          [venceEn ?? null, choferId ?? null, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null,
-           info?.destino_direccion ?? null, grupoId, ubicacion?.id ?? null, ubicacion?.direccion ?? null],
-        );
+    if (esRecambio) {
+      const grupoId = randomUUID();
+      const vaciadero = await resolverUbicacion('vaciadero');
+      await query(
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+         VALUES ('retiro', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, 'programado', 'Creado al validar el pago (recambio)', $7, $8, $9)`,
+        [venceEn ?? null, choferId ?? null, info!.contenedor_recambio_numero, info?.cliente_telefono ?? null, info?.zona ?? null,
+         info?.destino_direccion ?? null, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+      );
+      await query(
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, 'programado', 'Creado al validar el pago (recambio)', $7, $8, $9)`,
+        [venceEn ?? null, choferId ?? null, result.contenedor ?? null, info?.cliente_telefono ?? null, info?.zona ?? null,
+         info?.destino_direccion ?? null, grupoId, ubicacion?.id ?? null, ubicacion?.direccion ?? null],
+      );
 
-        if (choferId) {
-          avisarChoferRecambio(choferId, info!.contenedor_recambio_numero!, result.contenedor, ubicacion?.id ?? null, info?.destino_direccion ?? null).catch((e) => {
-            const motivo = motivoErrorWa(e);
-            console.error('Error avisando al chofer el recambio:', motivo);
-            notificarEnvioFallido(result.contenedor, `chofer del recambio ${info!.contenedor_recambio_numero}`, 'aviso de recambio asignado', motivo).catch(
-              (e2) => console.error('Error registrando alerta de envío fallido:', e2),
-            );
-          });
-        }
-      } else {
-        await query(
-          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas, ubicacion_id, ubicacion_direccion, destino_direccion)
-           VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', 'Creado al validar el pago', $6, $7, $8)`,
-          [venceEn ?? null, choferId ?? null, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null,
-           ubicacion?.id ?? null, ubicacion?.direccion ?? null, info?.destino_direccion ?? null],
-        );
+      if (choferId && result.contenedor) {
+        avisarChoferRecambio(choferId, info!.contenedor_recambio_numero!, result.contenedor, ubicacion?.id ?? null, info?.destino_direccion ?? null).catch((e) => {
+          const motivo = motivoErrorWa(e);
+          console.error('Error avisando al chofer el recambio:', motivo);
+          notificarEnvioFallido(result.contenedor, `chofer del recambio ${info!.contenedor_recambio_numero}`, 'aviso de recambio asignado', motivo).catch(
+            (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+          );
+        });
+      }
+    } else {
+      const fechaViaje = fechaEntrega ?? venceEn ?? null;
+      await query(
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas, ubicacion_id, ubicacion_direccion, destino_direccion)
+         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', $6, $7, $8, $9)`,
+        [fechaViaje, choferId ?? null, result.contenedor ?? null, info?.cliente_telefono ?? null, info?.zona ?? null,
+         result.contenedor ? (result.reservado_ahora ? 'Creado al validar el pago' : 'Reservado al validar el pago; contenedor ocupado, pendiente de que vuelva') : 'Creado al validar el pago (en bolsa sin rutear)',
+         ubicacion?.id ?? null, ubicacion?.direccion ?? null, info?.destino_direccion ?? null],
+      );
 
-        if (choferId) {
-          // Avisamos al chofer por WhatsApp: qué contenedor, a quién y adónde. No
-          // bloquea la respuesta del panel si falla el envío, pero si falla queda
-          // una alerta en el panel — si no, el chofer nunca se entera de la
-          // entrega y nadie lo nota hasta que pregunte por qué no salió.
+      if (choferId && result.contenedor) {
+        if (result.reservado_ahora) {
           avisarChoferAsignacion(choferId, result.contenedor, info).catch((e) => {
             const motivo = motivoErrorWa(e);
             console.error('Error avisando al chofer la asignación:', motivo);
@@ -323,33 +316,19 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
               (e2) => console.error('Error registrando alerta de envío fallido:', e2),
             );
           });
+        } else if (fechaEntrega) {
+          avisarChoferReservaFutura(choferId, result.contenedor, fechaEntrega).catch((e) =>
+            console.error('Error avisando reserva futura al chofer:', motivoErrorWa(e)),
+          );
         }
       }
-      if (diasDemora != null) {
-        sendText(
-          info.cliente_telefono,
-          `📅 Tu contenedor se pasará a recoger en *${diasDemora} día${diasDemora === 1 ? '' : 's'}* desde la entrega del mismo.`,
-        ).catch((e) => console.error('Error avisando plazo de retiro:', motivoErrorWa(e)));
-      }
-    } else {
-      // Contenedor todavía ocupado: dejamos el viaje futuro registrado (con o
-      // sin chofer) para que quede "tomado" — fn_validar_pago ya comprobó que
-      // nadie más lo tiene reservado. No se manda el aviso de entrega en
-      // firme (avisarChoferAsignacion) ni el plazo de retiro al cliente
-      // todavía: ninguno de los dos aplica hasta que el contenedor vuelva de
-      // verdad (ver POST /api/contenedores/:numero/confirmar-retiro, que
-      // promueve el contenedor a 'reservado' en ese momento).
-      await query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas, ubicacion_id, ubicacion_direccion)
-         VALUES ('entrega', $1, $2, $3, $4, $5, 'programado', 'Reservado al validar el pago; contenedor ocupado, pendiente de que vuelva', $6, $7)`,
-        [fechaEntrega, choferId ?? null, result.contenedor, info?.cliente_telefono ?? null, info?.zona ?? null,
-         ubicacion?.id ?? null, ubicacion?.direccion ?? null],
-      );
-      if (choferId && fechaEntrega) {
-        avisarChoferReservaFutura(choferId, result.contenedor, fechaEntrega).catch((e) =>
-          console.error('Error avisando reserva futura al chofer:', motivoErrorWa(e)),
-        );
-      }
+    }
+
+    if (diasDemora != null && info?.cliente_telefono) {
+      sendText(
+        info.cliente_telefono,
+        `📅 Tu contenedor se pasará a recoger en *${diasDemora} día${diasDemora === 1 ? '' : 's'}* desde la entrega del mismo.`,
+      ).catch((e) => console.error('Error avisando plazo de retiro:', motivoErrorWa(e)));
     }
 
     // Envío del PDF (no bloqueante para la respuesta HTTP)
