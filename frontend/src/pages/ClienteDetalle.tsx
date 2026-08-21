@@ -51,30 +51,31 @@ function etiquetaMes(mes: string): string {
 // TEMPORAL: viajes de ejemplo para previsualizar cómo queda la tabla con
 // datos de un cliente de cuenta corriente activo. Sacar cuando ya no haga falta.
 function viajesDeEjemplo(): ViajeCliente[] {
-  const hoy = new Date();
-  const ejemplos: ViajeCliente[] = [];
-  for (let mesesAtras = 0; mesesAtras < 4; mesesAtras++) {
-    const base = new Date(hoy.getFullYear(), hoy.getMonth() - mesesAtras, 1);
-    for (let i = 0; i < 3; i++) {
-      const dia = 5 + i * 8;
-      const fecha = new Date(base.getFullYear(), base.getMonth(), dia);
-      const idx = mesesAtras * 3 + i;
-      ejemplos.push({
-        id: `demo-${idx}`,
-        tipo: idx % 2 === 0 ? 'retiro' : 'entrega',
-        fecha: fecha.toISOString().slice(0, 10),
-        estado: 'entregado',
-        zona: 'Zona Norte',
-        destino_direccion: 'Av. Ejemplo 1234',
-        patente: 'AB123CD',
-        remito: `R-${1000 + idx}`,
-        importe: '15000',
-        grupo_id: idx % 3 === 0 ? `grupo-${idx}` : null,
-        chofer_nombre: 'Juan Pérez',
-      });
-    }
-  }
-  return ejemplos;
+  const hoy = new Date().toISOString().slice(0, 10);
+  const ayer = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const hace2 = new Date(Date.now() - 86400000 * 2).toISOString().slice(0, 10);
+  return [
+    { id: 'd-01', tipo: 'entrega', fecha: hoy, estado: 'programado', zona: 'Montevideo', destino_direccion: 'Av. Italia 3200, Montevideo', patente: 'SBC1234', remito: null, importe: null, grupo_id: null, chofer_nombre: 'Carlos Méndez' },
+    { id: 'd-02', tipo: 'entrega', fecha: hoy, estado: 'programado', zona: 'Montevideo', destino_direccion: 'Bvar. Artigas 1850, Montevideo', patente: 'SBC1234', remito: null, importe: null, grupo_id: null, chofer_nombre: 'Carlos Méndez' },
+    { id: 'd-03', tipo: 'retiro', fecha: hoy, estado: 'programado', zona: 'Montevideo', destino_direccion: 'Rambla Rep. del Perú 1100', patente: 'SBC1234', remito: null, importe: null, grupo_id: null, chofer_nombre: 'Carlos Méndez' },
+    { id: 'd-04', tipo: 'entrega', fecha: hoy, estado: 'programado', zona: 'Canelones', destino_direccion: 'Ruta 5 km 28, Las Piedras', patente: 'TAD5678', remito: null, importe: null, grupo_id: null, chofer_nombre: 'Roberto Silva' },
+    { id: 'd-05', tipo: 'retiro', fecha: hoy, estado: 'programado', zona: 'Canelones', destino_direccion: 'Av. Giannattasio km 22, Ciudad de la Costa', patente: 'TAD5678', remito: null, importe: null, grupo_id: 'g-01', chofer_nombre: 'Roberto Silva' },
+    { id: 'd-06', tipo: 'entrega', fecha: hoy, estado: 'programado', zona: 'Canelones', destino_direccion: 'Av. Giannattasio km 22, Ciudad de la Costa', patente: 'TAD5678', remito: null, importe: null, grupo_id: 'g-01', chofer_nombre: 'Roberto Silva' },
+    { id: 'd-07', tipo: 'entrega', fecha: hoy, estado: 'programado', zona: 'Maldonado', destino_direccion: 'Av. Roosevelt 4500, Punta del Este', patente: 'UEF9012', remito: null, importe: null, grupo_id: null, chofer_nombre: 'Diego Fernández' },
+    { id: 'd-08', tipo: 'entrega', fecha: hoy, estado: 'programado', zona: 'Maldonado', destino_direccion: 'Ruta 39 km 5, San Carlos', patente: 'UEF9012', remito: null, importe: null, grupo_id: null, chofer_nombre: 'Diego Fernández' },
+    { id: 'd-09', tipo: 'retiro', fecha: hoy, estado: 'programado', zona: 'Maldonado', destino_direccion: 'Calle 20 esq. 25, Punta del Este', patente: 'UEF9012', remito: null, importe: null, grupo_id: null, chofer_nombre: 'Diego Fernández' },
+    { id: 'd-10', tipo: 'entrega', fecha: hoy, estado: 'programado', zona: 'Colonia', destino_direccion: 'Av. Artigas 580, Colonia del Sacramento', patente: 'SBC1234', remito: null, importe: null, grupo_id: null, chofer_nombre: 'Carlos Méndez' },
+    { id: 'd-11', tipo: 'retiro', fecha: hoy, estado: 'programado', zona: 'San José', destino_direccion: 'Ruta 1 km 98, San José de Mayo', patente: 'TAD5678', remito: null, importe: null, grupo_id: null, chofer_nombre: 'Roberto Silva' },
+    { id: 'd-12', tipo: 'entrega', fecha: hoy, estado: 'programado', zona: 'Soriano', destino_direccion: 'Calle 18 de Julio 320, Mercedes', patente: 'VGH3456', remito: null, importe: null, grupo_id: null, chofer_nombre: 'Martín López' },
+    { id: 'd-13', tipo: 'retiro', fecha: hoy, estado: 'programado', zona: 'Soriano', destino_direccion: 'Av. Asencio 1200, Mercedes', patente: 'VGH3456', remito: null, importe: null, grupo_id: 'g-02', chofer_nombre: 'Martín López' },
+    { id: 'd-14', tipo: 'entrega', fecha: hoy, estado: 'programado', zona: 'Soriano', destino_direccion: 'Av. Asencio 1200, Mercedes', patente: 'VGH3456', remito: null, importe: null, grupo_id: 'g-02', chofer_nombre: 'Martín López' },
+    { id: 'd-15', tipo: 'entrega', fecha: hoy, estado: 'programado', zona: 'Paysandú', destino_direccion: 'Av. España 950, Paysandú', patente: 'VGH3456', remito: null, importe: null, grupo_id: null, chofer_nombre: 'Martín López' },
+    { id: 'd-16', tipo: 'retiro', fecha: ayer, estado: 'entregado', zona: 'Montevideo', destino_direccion: 'Av. 8 de Octubre 3100', patente: 'SBC1234', remito: 'R-2001', importe: '18500', grupo_id: null, chofer_nombre: 'Carlos Méndez' },
+    { id: 'd-17', tipo: 'entrega', fecha: ayer, estado: 'entregado', zona: 'Montevideo', destino_direccion: 'Cno. Maldonado 5200', patente: 'TAD5678', remito: 'R-2002', importe: '22000', grupo_id: null, chofer_nombre: 'Roberto Silva' },
+    { id: 'd-18', tipo: 'entrega', fecha: hace2, estado: 'entregado', zona: 'Canelones', destino_direccion: 'Ruta 8 km 32, Pando', patente: 'UEF9012', remito: 'R-1998', importe: '16000', grupo_id: null, chofer_nombre: 'Diego Fernández' },
+    { id: 'd-19', tipo: 'retiro', fecha: hace2, estado: 'entregado', zona: 'Maldonado', destino_direccion: 'Av. Pedragosa Sierra 600, Maldonado', patente: 'UEF9012', remito: 'R-1999', importe: '25000', grupo_id: null, chofer_nombre: 'Diego Fernández' },
+    { id: 'd-20', tipo: 'entrega', fecha: hace2, estado: 'entregado', zona: 'Colonia', destino_direccion: 'Ruta 1 km 177, Nueva Helvecia', patente: 'VGH3456', remito: 'R-2000', importe: '19500', grupo_id: null, chofer_nombre: 'Martín López' },
+  ];
 }
 
 export function ClienteDetalle() {
