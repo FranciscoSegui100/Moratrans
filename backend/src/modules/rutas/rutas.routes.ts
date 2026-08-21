@@ -1,16 +1,26 @@
+import { PoolClient } from 'pg';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query, withTx } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { reservarParaEntrega } from '../../services/contenedorReserva.service';
-import { simularDisponibilidad, ParadaSimulada } from './disponibilidad.service';
+import { simularDisponibilidad, ParadaSimulada, CapacidadCamion, CAPACIDAD_CAMION_DEFAULT } from './disponibilidad.service';
 import { avisarChoferViaje, avisarChoferRecambio } from '../viajes/viajes.routes';
 import { motivoErrorWa } from '../whatsapp/graphApi';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 
 export const rutasRouter = Router();
 rutasRouter.use(requireAuth);
+
+/** Estados que cierran la ruta: a partir de acá no se acepta más trabajo. Todo lo demás ('planificada', 'en_curso') está "abierto". */
+const ESTADOS_CERRADOS = ['finalizada', 'cancelada'] as const;
+
+function fail(msg: string, status = 409): never {
+  const err: any = new Error(msg);
+  err.status = status;
+  throw err;
+}
 
 interface ViajeParada {
   id: string;
@@ -24,6 +34,9 @@ interface ViajeParada {
   estado: string;
   notas: string | null;
   ubicacion_id: string | null;
+  origen: 'planificada' | 'agregada_en_dia';
+  completada_en: string | null;
+  ruta_confirmada_en: string | null;
 }
 
 interface VaciadoParada {
@@ -48,7 +61,7 @@ async function calcularDisponibilidadRuta(
 ) {
   const viajes: ViajeParada[] = await ejecutar(
     `SELECT id, orden, tipo, contenedor_numero, destino_direccion, zona, cliente_telefono,
-            grupo_id, estado, notas, ubicacion_id
+            grupo_id, estado, notas, ubicacion_id, origen, completada_en, ruta_confirmada_en
        FROM viajes WHERE ruta_id = $1 ORDER BY orden`,
     [rutaId],
   );
@@ -62,19 +75,69 @@ async function calcularDisponibilidadRuta(
     await ejecutar(`SELECT numero FROM contenedores WHERE estado = 'disponible'`, [])
   ).map((r: { numero: string }) => r.numero);
 
+  const capacidadRows: { capacidad_llenos: number; capacidad_vacios: number }[] = await ejecutar(
+    `SELECT ch.capacidad_llenos, ch.capacidad_vacios
+       FROM rutas r JOIN choferes ch ON ch.id = r.chofer_id
+      WHERE r.id = $1`,
+    [rutaId],
+  );
+  const capacidad: CapacidadCamion = capacidadRows[0]
+    ? { llenos: capacidadRows[0].capacidad_llenos, vacios: capacidadRows[0].capacidad_vacios }
+    : CAPACIDAD_CAMION_DEFAULT;
+
   const paradasSimuladas: ParadaSimulada[] = [
     ...viajes.map((v) => ({ orden: v.orden, tipoParada: 'viaje' as const, viajeTipo: v.tipo, contenedorNumero: v.contenedor_numero })),
     ...vaciados.map((v) => ({ orden: v.orden, tipoParada: 'vaciado' as const })),
   ];
-  const { porOrden, liberadosPor } = simularDisponibilidad(paradasSimuladas, disponiblesAlInicio);
+  const { porOrden, liberadosPor, advertencias } = simularDisponibilidad(paradasSimuladas, disponiblesAlInicio, capacidad);
 
-  return { viajes, vaciados, porOrden, liberadosPor };
+  return { viajes, vaciados, porOrden, liberadosPor, advertencias };
 }
 
 /** Prioridad de tie-break cuando dos paradas comparten `orden` (recambio): entrega antes que retiro. */
 function prioridadParada(tipoParada: 'viaje' | 'vaciado', viajeTipo?: string): number {
   if (tipoParada === 'vaciado') return -1;
   return viajeTipo === 'retiro' ? 1 : 0;
+}
+
+/**
+ * Corre la simulación dentro de la transacción y, mientras haya una parada de
+ * retiro/recambio marcada "lleno_sin_vaciar" (más llenos a bordo que la
+ * capacidad del camión), inserta automáticamente una parada de vaciado justo
+ * después — así el operador no tiene que acordarse de agregarla a mano en
+ * cada recambio. Tope de 5 iteraciones: cada inserción resuelve al menos una
+ * advertencia, así que en la práctica converge en 1-2 vueltas.
+ */
+async function resolverVaciadosAutomaticos(c: PoolClient, rutaId: string): Promise<void> {
+  const ejecutar = async (sql: string, params: any[]) => (await c.query(sql, params)).rows;
+  for (let intento = 0; intento < 5; intento++) {
+    const { advertencias } = await calcularDisponibilidadRuta(rutaId, ejecutar);
+    const faltante = advertencias.find((a) => a.tipo === 'lleno_sin_vaciar');
+    if (!faltante) return;
+    await insertarVaciadoAutomatico(c, rutaId, faltante.orden + 1);
+  }
+}
+
+/** Inserta una parada de vaciado en `orden`, corriendo el resto de la secuencia una posición para atrás. */
+async function insertarVaciadoAutomatico(c: PoolClient, rutaId: string, orden: number): Promise<void> {
+  // Fase temporal negativa, igual que PATCH /orden, para no chocar contra las
+  // constraints UNIQUE de orden mientras se corre la secuencia.
+  await c.query(
+    `UPDATE viajes SET orden = -(orden + 1) WHERE ruta_id = $1 AND orden >= $2`,
+    [rutaId, orden],
+  );
+  await c.query(
+    `UPDATE ruta_vaciados SET orden = -(orden + 1) WHERE ruta_id = $1 AND orden >= $2`,
+    [rutaId, orden],
+  );
+  await c.query(`UPDATE viajes SET orden = -orden WHERE ruta_id = $1 AND orden < 0`, [rutaId]);
+  await c.query(`UPDATE ruta_vaciados SET orden = -orden WHERE ruta_id = $1 AND orden < 0`, [rutaId]);
+
+  const ubicacion = await resolverUbicacion('vaciadero');
+  await c.query(
+    `INSERT INTO ruta_vaciados (ruta_id, orden, ubicacion_id, notas) VALUES ($1,$2,$3,$4)`,
+    [rutaId, orden, ubicacion?.id ?? null, 'Vaciado insertado automáticamente (capacidad de llenos del camión).'],
+  );
 }
 
 const nuevaRutaSchema = z.object({
@@ -93,7 +156,7 @@ rutasRouter.get('/', async (req: Request, res: Response) => {
   if (estado) { params.push(estado); conds.push(`r.estado = $${params.length}`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const rows = await query(
-    `SELECT r.id, r.fecha, r.chofer_id, c.nombre AS chofer_nombre, r.patente, r.estado, r.notas, r.creado_en
+    `SELECT r.id, r.fecha, r.chofer_id, c.nombre AS chofer_nombre, r.patente, r.estado, r.notas, r.version, r.creado_en
        FROM rutas r LEFT JOIN choferes c ON c.id = r.chofer_id
        ${where}
        ORDER BY r.fecha DESC, r.creado_en DESC`,
@@ -127,17 +190,42 @@ rutasRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res:
   }
 });
 
+/**
+ * GET /api/rutas/bolsa?fecha= — viajes sin rutear (la bolsa de pendientes),
+ * listos para que el frontend los agrupe por zona y los arrastre a una ruta.
+ * `planificable`: una entrega (horario pedido / vencimiento) se puede mover
+ * de fecha u orden con libertad; un recambio (la mitad "retiro" trae un
+ * contenedor YA posicionado en lo del cliente) no — solo se rutea, no se
+ * replanifica.
+ */
+rutasRouter.get('/bolsa', async (req: Request, res: Response) => {
+  const { fecha } = req.query as Record<string, string>;
+  const conds = [`v.ruta_id IS NULL`, `v.estado IN ('programado', 'en_curso')`];
+  const params: any[] = [];
+  if (fecha) { params.push(fecha); conds.push(`v.fecha = $${params.length}`); }
+  const rows = await query(
+    `SELECT v.id, v.tipo, v.fecha, v.zona, v.contenedor_numero, v.destino_direccion,
+            v.cliente_telefono, v.grupo_id, v.notas, v.creado_en,
+            (v.tipo = 'entrega') AS planificable
+       FROM viajes v
+      WHERE ${conds.join(' AND ')}
+      ORDER BY v.zona NULLS LAST, v.fecha, v.creado_en`,
+    params,
+  );
+  res.json(rows);
+});
+
 /** GET /api/rutas/:id — ruta + paradas ordenadas + disponibilidad resuelta por parada de entrega. */
 rutasRouter.get('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const [ruta] = await query(
-    `SELECT r.id, r.fecha, r.chofer_id, c.nombre AS chofer_nombre, r.patente, r.estado, r.notas, r.creado_en
+    `SELECT r.id, r.fecha, r.chofer_id, c.nombre AS chofer_nombre, r.patente, r.estado, r.notas, r.version, r.creado_en
        FROM rutas r LEFT JOIN choferes c ON c.id = r.chofer_id WHERE r.id = $1`,
     [id],
   );
   if (!ruta) return res.status(404).json({ error: 'Ruta no encontrada.' });
 
-  const { viajes, vaciados, porOrden } = await calcularDisponibilidadRuta(id);
+  const { viajes, vaciados, porOrden, advertencias } = await calcularDisponibilidadRuta(id);
 
   const paradas = [
     ...viajes.map((v) => ({
@@ -152,6 +240,8 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
       grupo_id: v.grupo_id,
       estado: v.estado,
       notas: v.notas,
+      origen: v.origen,
+      completada_en: v.completada_en,
       // Solo tiene sentido ofrecer opciones en la mitad "entrega": la mitad
       // "retiro" siempre trae su propio contenedor (el lleno del cliente).
       disponibles: v.tipo === 'entrega' ? (porOrden.get(v.orden) ?? []) : undefined,
@@ -169,12 +259,12 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
     return prioridadParada(a.tipo_parada, (a as any).viaje_tipo) - prioridadParada(b.tipo_parada, (b as any).viaje_tipo);
   });
 
-  res.json({ ...ruta, paradas });
+  res.json({ ...ruta, paradas, advertencias });
 });
 
 const nuevaParadaSchema = z.object({ viaje_id: z.string().uuid() });
 
-/** POST /api/rutas/:id/paradas — adjunta un viaje YA EXISTENTE (de la cola sin rutear) a la ruta. */
+/** POST /api/rutas/:id/paradas — adjunta un viaje YA EXISTENTE (de la cola sin rutear) a la ruta. Funciona con la ruta abierta (planificada o en curso): el 80% del trabajo entra durante el día. */
 rutasRouter.post('/:id/paradas', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const { id: rutaId } = req.params;
   const parsed = nuevaParadaSchema.safeParse(req.body);
@@ -183,19 +273,15 @@ rutasRouter.post('/:id/paradas', requireRol('admin', 'operador'), async (req: Re
 
   try {
     const resultado = await withTx(async (c) => {
-      const fail = (msg: string): never => {
-        const err: any = new Error(msg);
-        err.status = 409;
-        throw err;
-      };
-
       const { rows: rutaRows } = await c.query<{ chofer_id: string; fecha: string; patente: string | null; estado: string }>(
         'SELECT chofer_id, fecha, patente, estado FROM rutas WHERE id = $1 FOR UPDATE',
         [rutaId],
       );
       const ruta = rutaRows[0];
-      if (!ruta) fail('Ruta no encontrada.');
-      if (ruta!.estado !== 'planificada') fail('Solo se pueden agregar paradas a una ruta planificada.');
+      if (!ruta) fail('Ruta no encontrada.', 404);
+      if (ESTADOS_CERRADOS.includes(ruta!.estado as any)) fail('Esta ruta ya está cerrada; no se le puede agregar más trabajo.');
+
+      const origen = ruta!.estado === 'en_curso' ? 'agregada_en_dia' : 'planificada';
 
       const { rows: ordenRows } = await c.query<{ max: number | null }>(
         `SELECT MAX(orden) AS max FROM (
@@ -206,11 +292,11 @@ rutasRouter.post('/:id/paradas', requireRol('admin', 'operador'), async (req: Re
       );
       const nuevoOrden = (ordenRows[0]?.max ?? 0) + 1;
 
-      const { rows: viajeRows } = await c.query<{ id: string; grupo_id: string | null }>(
-        `UPDATE viajes SET ruta_id = $1, orden = $2, chofer_id = $3, patente = $4, fecha = $5
-           WHERE id = $6 AND ruta_id IS NULL
-           RETURNING id, grupo_id`,
-        [rutaId, nuevoOrden, ruta!.chofer_id, ruta!.patente, ruta!.fecha, viaje_id],
+      const { rows: viajeRows } = await c.query<{ id: string; grupo_id: string | null; tipo: string }>(
+        `UPDATE viajes SET ruta_id = $1, orden = $2, chofer_id = $3, patente = $4, fecha = $5, origen = $6
+           WHERE id = $7 AND ruta_id IS NULL
+           RETURNING id, grupo_id, tipo`,
+        [rutaId, nuevoOrden, ruta!.chofer_id, ruta!.patente, ruta!.fecha, origen, viaje_id],
       );
       const viaje = viajeRows[0];
       if (!viaje) fail('Ese viaje no existe o ya está en una ruta.');
@@ -218,16 +304,21 @@ rutasRouter.post('/:id/paradas', requireRol('admin', 'operador'), async (req: Re
       // Recambio: la pareja (mismo grupo_id) va a la misma visita física.
       if (viaje!.grupo_id) {
         await c.query(
-          `UPDATE viajes SET ruta_id = $1, orden = $2, chofer_id = $3, patente = $4, fecha = $5
-             WHERE grupo_id = $6 AND id <> $7 AND ruta_id IS NULL`,
-          [rutaId, nuevoOrden, ruta!.chofer_id, ruta!.patente, ruta!.fecha, viaje!.grupo_id, viaje!.id],
+          `UPDATE viajes SET ruta_id = $1, orden = $2, chofer_id = $3, patente = $4, fecha = $5, origen = $6
+             WHERE grupo_id = $7 AND id <> $8 AND ruta_id IS NULL`,
+          [rutaId, nuevoOrden, ruta!.chofer_id, ruta!.patente, ruta!.fecha, origen, viaje!.grupo_id, viaje!.id],
         );
       }
+
+      if (viaje!.tipo === 'retiro') {
+        await resolverVaciadosAutomaticos(c, rutaId);
+      }
+
       return { orden: nuevoOrden };
     });
     res.status(201).json(resultado);
   } catch (error: any) {
-    if (error.status === 409) res.status(409).json({ error: error.message });
+    if (error.status) res.status(error.status).json({ error: error.message });
     else throw error;
   }
 });
@@ -256,14 +347,9 @@ rutasRouter.post('/:id/paradas/vaciado', requireRol('admin', 'operador'), async 
 
   try {
     const resultado = await withTx(async (c) => {
-      const fail = (msg: string): never => {
-        const err: any = new Error(msg);
-        err.status = 409;
-        throw err;
-      };
       const { rows: rutaRows } = await c.query<{ estado: string }>('SELECT estado FROM rutas WHERE id = $1 FOR UPDATE', [rutaId]);
-      if (!rutaRows[0]) fail('Ruta no encontrada.');
-      if (rutaRows[0]!.estado !== 'planificada') fail('Solo se pueden agregar paradas a una ruta planificada.');
+      if (!rutaRows[0]) fail('Ruta no encontrada.', 404);
+      if (ESTADOS_CERRADOS.includes(rutaRows[0]!.estado as any)) fail('Esta ruta ya está cerrada; no se le puede agregar más trabajo.');
 
       const { rows: ordenRows } = await c.query<{ max: number | null }>(
         `SELECT MAX(orden) AS max FROM (
@@ -282,7 +368,7 @@ rutasRouter.post('/:id/paradas/vaciado', requireRol('admin', 'operador'), async 
     });
     res.status(201).json(resultado);
   } catch (error: any) {
-    if (error.status === 409) res.status(409).json({ error: error.message });
+    if (error.status) res.status(error.status).json({ error: error.message });
     else throw error;
   }
 });
@@ -315,8 +401,89 @@ rutasRouter.delete('/:id/paradas/:tipo/:paradaId', requireRol('admin', 'operador
   res.json({ ok: true });
 });
 
+const moverParadaSchema = z.object({ ruta_destino_id: z.string().uuid() });
+
+/**
+ * POST /api/rutas/:id/paradas/:tipo/:paradaId/mover — mueve una parada
+ * directo a otra ruta (a diferencia de DELETE, que la desprende a la cola en
+ * dos pasos). Caso de uso: se rompe un camión o falta un chofer y hay que
+ * repartir sus paradas entre otros camiones ya en curso.
+ */
+rutasRouter.post('/:id/paradas/:tipo/:paradaId/mover', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const { id: rutaOrigenId, tipo, paradaId } = req.params;
+  if (tipo !== 'viaje' && tipo !== 'vaciado') return res.status(400).json({ error: 'Tipo de parada inválido.' });
+  const parsed = moverParadaSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
+  const { ruta_destino_id: rutaDestinoId } = parsed.data;
+  if (rutaDestinoId === rutaOrigenId) return res.status(400).json({ error: 'La ruta de destino tiene que ser distinta de la de origen.' });
+
+  try {
+    const resultado = await withTx(async (c) => {
+      const { rows: destRows } = await c.query<{ chofer_id: string; patente: string | null; fecha: string; estado: string }>(
+        'SELECT chofer_id, patente, fecha, estado FROM rutas WHERE id = $1 FOR UPDATE',
+        [rutaDestinoId],
+      );
+      const destino = destRows[0];
+      if (!destino) fail('Ruta de destino no encontrada.', 404);
+      if (ESTADOS_CERRADOS.includes(destino!.estado as any)) fail('La ruta de destino ya está cerrada.');
+
+      const { rows: ordenRows } = await c.query<{ max: number | null }>(
+        `SELECT MAX(orden) AS max FROM (
+           SELECT orden FROM viajes WHERE ruta_id = $1
+           UNION ALL SELECT orden FROM ruta_vaciados WHERE ruta_id = $1
+         ) t`,
+        [rutaDestinoId],
+      );
+      const nuevoOrden = (ordenRows[0]?.max ?? 0) + 1;
+      const origen = destino!.estado === 'en_curso' ? 'agregada_en_dia' : 'planificada';
+      const ejecutar = async (sql: string, params: any[]) => (await c.query(sql, params)).rows;
+
+      if (tipo === 'vaciado') {
+        const { rows } = await c.query(
+          `UPDATE ruta_vaciados SET ruta_id = $1, orden = $2 WHERE id = $3 AND ruta_id = $4 RETURNING id`,
+          [rutaDestinoId, nuevoOrden, paradaId, rutaOrigenId],
+        );
+        if (!rows[0]) fail('Parada no encontrada en la ruta de origen.', 404);
+        const { advertencias } = await calcularDisponibilidadRuta(rutaDestinoId, ejecutar);
+        return { orden: nuevoOrden, advertencias };
+      }
+
+      const { rows: viajeRows } = await c.query<{ id: string; grupo_id: string | null; tipo: string }>(
+        `UPDATE viajes SET ruta_id = $1, orden = $2, chofer_id = $3, patente = $4, fecha = $5, origen = $6
+           WHERE id = $7 AND ruta_id = $8
+           RETURNING id, grupo_id, tipo`,
+        [rutaDestinoId, nuevoOrden, destino!.chofer_id, destino!.patente, destino!.fecha, origen, paradaId, rutaOrigenId],
+      );
+      const viaje = viajeRows[0];
+      if (!viaje) fail('Parada no encontrada en la ruta de origen.', 404);
+      if (viaje!.grupo_id) {
+        await c.query(
+          `UPDATE viajes SET ruta_id = $1, orden = $2, chofer_id = $3, patente = $4, fecha = $5, origen = $6
+             WHERE grupo_id = $7 AND id <> $8 AND ruta_id = $9`,
+          [rutaDestinoId, nuevoOrden, destino!.chofer_id, destino!.patente, destino!.fecha, origen, viaje!.grupo_id, viaje!.id, rutaOrigenId],
+        );
+      }
+
+      if (viaje!.tipo === 'retiro') {
+        await resolverVaciadosAutomaticos(c, rutaDestinoId);
+      }
+
+      const { advertencias } = await calcularDisponibilidadRuta(rutaDestinoId, ejecutar);
+      return { orden: nuevoOrden, advertencias };
+    });
+    res.status(200).json(resultado);
+  } catch (error: any) {
+    if (error.status) res.status(error.status).json({ error: error.message });
+    else throw error;
+  }
+});
+
 const ordenSchema = z.object({
   secuencia: z.array(z.object({ tipo: z.enum(['viaje', 'vaciado']), id: z.string().uuid() })).min(1),
+  // Lock optimista: el frontend manda la `version` que tenía cuando cargó la
+  // ruta. Si no coincide con la actual, alguien más la modificó mientras
+  // tanto — se rechaza en vez de pisarle el trabajo.
+  version: z.number().int().optional(),
 });
 
 /**
@@ -328,35 +495,60 @@ rutasRouter.patch('/:id/orden', requireRol('admin', 'operador'), async (req: Req
   const { id: rutaId } = req.params;
   const parsed = ordenSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const { secuencia } = parsed.data;
+  const { secuencia, version } = parsed.data;
 
-  await withTx(async (c) => {
-    for (let i = 0; i < secuencia.length; i++) {
-      const p = secuencia[i];
-      const tmp = -(i + 1);
-      if (p.tipo === 'viaje') {
-        await c.query(`UPDATE viajes SET orden = $1 WHERE id = $2 AND ruta_id = $3`, [tmp, p.id, rutaId]);
-      } else {
-        await c.query(`UPDATE ruta_vaciados SET orden = $1 WHERE id = $2 AND ruta_id = $3`, [tmp, p.id, rutaId]);
+  try {
+    const resultado = await withTx(async (c) => {
+      const { rows: rutaRows } = await c.query<{ estado: string; version: number }>(
+        'SELECT estado, version FROM rutas WHERE id = $1 FOR UPDATE',
+        [rutaId],
+      );
+      const ruta = rutaRows[0];
+      if (!ruta) fail('Ruta no encontrada.', 404);
+      if (ESTADOS_CERRADOS.includes(ruta!.estado as any)) fail('Esta ruta ya está cerrada; no se puede reordenar.');
+      if (version !== undefined && version !== ruta!.version) {
+        fail('Alguien más modificó esta ruta mientras tanto. Recargá para ver los cambios y volvé a intentar.');
       }
-    }
-    for (let i = 0; i < secuencia.length; i++) {
-      const p = secuencia[i];
-      const nuevoOrden = i + 1;
-      if (p.tipo === 'viaje') {
-        const { rows } = await c.query<{ grupo_id: string | null }>(
-          `UPDATE viajes SET orden = $1 WHERE id = $2 AND ruta_id = $3 RETURNING grupo_id`,
-          [nuevoOrden, p.id, rutaId],
-        );
-        if (rows[0]?.grupo_id) {
-          await c.query(`UPDATE viajes SET orden = $1 WHERE grupo_id = $2 AND ruta_id = $3`, [nuevoOrden, rows[0].grupo_id, rutaId]);
+
+      for (let i = 0; i < secuencia.length; i++) {
+        const p = secuencia[i];
+        const tmp = -(i + 1);
+        if (p.tipo === 'viaje') {
+          await c.query(`UPDATE viajes SET orden = $1 WHERE id = $2 AND ruta_id = $3`, [tmp, p.id, rutaId]);
+        } else {
+          await c.query(`UPDATE ruta_vaciados SET orden = $1 WHERE id = $2 AND ruta_id = $3`, [tmp, p.id, rutaId]);
         }
-      } else {
-        await c.query(`UPDATE ruta_vaciados SET orden = $1 WHERE id = $2 AND ruta_id = $3`, [nuevoOrden, p.id, rutaId]);
       }
-    }
-  });
-  res.json({ ok: true });
+      for (let i = 0; i < secuencia.length; i++) {
+        const p = secuencia[i];
+        const nuevoOrden = i + 1;
+        if (p.tipo === 'viaje') {
+          const { rows } = await c.query<{ grupo_id: string | null }>(
+            `UPDATE viajes SET orden = $1 WHERE id = $2 AND ruta_id = $3 RETURNING grupo_id`,
+            [nuevoOrden, p.id, rutaId],
+          );
+          if (rows[0]?.grupo_id) {
+            await c.query(`UPDATE viajes SET orden = $1 WHERE grupo_id = $2 AND ruta_id = $3`, [nuevoOrden, rows[0].grupo_id, rutaId]);
+          }
+        } else {
+          await c.query(`UPDATE ruta_vaciados SET orden = $1 WHERE id = $2 AND ruta_id = $3`, [nuevoOrden, p.id, rutaId]);
+        }
+      }
+
+      await resolverVaciadosAutomaticos(c, rutaId);
+
+      const { rows: versionRows } = await c.query<{ version: number }>(
+        `UPDATE rutas SET version = version + 1 WHERE id = $1 RETURNING version`,
+        [rutaId],
+      );
+      const { advertencias } = await calcularDisponibilidadRuta(rutaId, async (sql, params) => (await c.query(sql, params)).rows);
+      return { version: versionRows[0].version, advertencias };
+    });
+    res.json({ ok: true, ...resultado });
+  } catch (error: any) {
+    if (error.status) res.status(error.status).json({ error: error.message });
+    else throw error;
+  }
 });
 
 const contenedorParadaSchema = z.object({ contenedor_numero: z.string().min(1) });
@@ -387,8 +579,14 @@ rutasRouter.patch('/:id/paradas/:viajeId/contenedor', requireRol('admin', 'opera
 
 /**
  * POST /api/rutas/:id/confirmar — revalida con datos frescos y reserva.
- * Todo o nada: si una sola parada quedó inválida, la transacción entera se
- * revierte y no se reserva nada.
+ *
+ * NO es todo-o-nada ni cierra la ruta: reserva cada parada de entrega que ya
+ * es válida y confirmable, deja pendientes las que no (sin abortar el resto),
+ * y es idempotente/reintentable — una parada ya confirmada en una corrida
+ * anterior (`ruta_confirmada_en`) no se vuelve a reservar ni a avisar. Así
+ * soporta confirmaciones repetidas durante el día a medida que entra trabajo
+ * nuevo, sin que una sola parada todavía sin contenedor haga fallar la tanda
+ * entera.
  */
 rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const { id: rutaId } = req.params;
@@ -396,11 +594,6 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
 
   try {
     const resultado = await withTx(async (c) => {
-      const fail = (msg: string): never => {
-        const err: any = new Error(msg);
-        err.status = 409;
-        throw err;
-      };
       const ejecutar = async (sql: string, params: any[]) => (await c.query(sql, params)).rows;
 
       const { rows: rutaRows } = await c.query<{ fecha: string; chofer_id: string; estado: string }>(
@@ -408,36 +601,65 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
         [rutaId],
       );
       const ruta = rutaRows[0];
-      if (!ruta) fail('Ruta no encontrada.');
-      if (ruta!.estado !== 'planificada') fail('Solo se puede confirmar una ruta planificada.');
+      if (!ruta) fail('Ruta no encontrada.', 404);
+      if (ESTADOS_CERRADOS.includes(ruta!.estado as any)) fail('Esta ruta ya está cerrada.');
 
       const { viajes, porOrden, liberadosPor } = await calcularDisponibilidadRuta(rutaId, ejecutar);
       if (viajes.length === 0) fail('La ruta no tiene ninguna parada.');
 
+      const pendientes: string[] = [];
+      const confirmadasAhora: ViajeParada[] = [];
+
       const entregas = viajes.filter((v) => v.tipo === 'entrega');
       for (const v of entregas) {
-        if (!v.contenedor_numero) fail(`La parada ${v.orden} (entrega) no tiene contenedor asignado todavía.`);
-        const disponibles = porOrden.get(v.orden) ?? [];
-        if (!disponibles.includes(v.contenedor_numero!)) {
-          fail(`El contenedor ${v.contenedor_numero} de la parada ${v.orden} ya no está disponible — otro proceso lo tomó mientras se armaba la ruta.`);
+        if (v.ruta_confirmada_en) continue; // ya reservada/avisada en una corrida anterior
+        try {
+          if (!v.contenedor_numero) {
+            pendientes.push(`La parada ${v.orden} (entrega) no tiene contenedor asignado todavía.`);
+            continue;
+          }
+          const disponibles = porOrden.get(v.orden) ?? [];
+          if (!disponibles.includes(v.contenedor_numero)) {
+            pendientes.push(`El contenedor ${v.contenedor_numero} de la parada ${v.orden} ya no está disponible — otro proceso lo tomó mientras se armaba la ruta.`);
+            continue;
+          }
+          const liberadoEn = liberadosPor.get(v.contenedor_numero);
+          await reservarParaEntrega(c, v.contenedor_numero, ruta!.fecha, actualizadoPor, {
+            excluirViajeId: v.id,
+            ...(liberadoEn !== undefined ? { liberadoPorRutaEnOrden: liberadoEn } : {}),
+          });
+          await c.query(`UPDATE viajes SET ruta_confirmada_en = now() WHERE id = $1`, [v.id]);
+          confirmadasAhora.push(v);
+        } catch (err: any) {
+          pendientes.push(err.message ?? `No se pudo confirmar la parada ${v.orden}.`);
         }
       }
 
-      for (const v of entregas) {
-        const liberadoEn = liberadosPor.get(v.contenedor_numero!);
-        await reservarParaEntrega(c, v.contenedor_numero!, ruta!.fecha, actualizadoPor, {
-          excluirViajeId: v.id,
-          ...(liberadoEn !== undefined ? { liberadoPorRutaEnOrden: liberadoEn } : {}),
-        });
+      // Los retiros (incl. la mitad-retiro de un recambio) no reservan
+      // contenedor — el lleno ya está en lo del cliente — pero sí hace falta
+      // marcarlos confirmados para no volver a avisarle al chofer en la
+      // próxima corrida de `confirmar`.
+      const retiros = viajes.filter((v) => v.tipo === 'retiro' && !v.ruta_confirmada_en);
+      for (const v of retiros) {
+        await c.query(`UPDATE viajes SET ruta_confirmada_en = now() WHERE id = $1`, [v.id]);
+        confirmadasAhora.push(v);
       }
 
-      return { viajes, choferId: ruta!.chofer_id };
+      // Primera confirmación: la ruta pasa a "en curso" (abierta, sigue
+      // aceptando trabajo nuevo). Confirmaciones siguientes durante el día no
+      // tocan el estado — ya está donde tiene que estar.
+      if (ruta!.estado === 'planificada') {
+        await c.query(`UPDATE rutas SET estado = 'en_curso' WHERE id = $1`, [rutaId]);
+      }
+
+      return { confirmadasAhora, choferId: ruta!.chofer_id, pendientes };
     });
 
     // Avisos por WhatsApp fuera de la transacción (no bloqueantes), uno por
-    // VISITA (agrupando por `orden`: un recambio manda un solo aviso, no dos).
+    // VISITA (agrupando por `orden`: un recambio manda un solo aviso, no dos)
+    // — y solo para lo confirmado EN ESTA CORRIDA, no lo ya avisado antes.
     const porOrdenVisita = new Map<number, ViajeParada[]>();
-    for (const v of resultado.viajes) {
+    for (const v of resultado.confirmadasAhora) {
       const lista = porOrdenVisita.get(v.orden) ?? [];
       lista.push(v);
       porOrdenVisita.set(v.orden, lista);
@@ -465,9 +687,9 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
       });
     }
 
-    res.json({ ok: true });
+    res.json({ ok: true, confirmadas: resultado.confirmadasAhora.length, pendientes: resultado.pendientes });
   } catch (error: any) {
-    if (error.status === 409) res.status(409).json({ error: error.message });
+    if (error.status) res.status(error.status).json({ error: error.message });
     else throw error;
   }
 });

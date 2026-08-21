@@ -334,6 +334,7 @@ async function cascadearParejaRecambio(numero: string, choferId: string, choferN
     // La pareja es el vacío: se entrega si está 'reservado' (ya asignado, esperando salir).
     if (cont?.estado !== 'reservado') return '';
     await query(`UPDATE contenedores SET estado = 'entregado', actualizado_por = $2 WHERE numero = $1`, [pareja.contenedor_numero, `chofer:${choferId}`]);
+    await query(`UPDATE viajes SET completada_en = now() WHERE id = $1`, [pareja.id]);
     return ` y entregaste *${pareja.contenedor_numero}*`;
   }
 
@@ -341,7 +342,7 @@ async function cascadearParejaRecambio(numero: string, choferId: string, choferN
   if (cont?.estado !== 'entregado') return '';
   const vaciadero = await resolverUbicacion('vaciadero');
   await query(
-    `UPDATE viajes SET estado = 'en_curso',
+    `UPDATE viajes SET estado = 'en_curso', completada_en = now(),
             ubicacion_id = COALESCE(ubicacion_id, $2), ubicacion_direccion = COALESCE(ubicacion_direccion, $3)
       WHERE id = $1`,
     [pareja.id, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
@@ -404,6 +405,7 @@ async function aplicarVacioRecambio(
     if (viajeEntrega) {
       await query(`UPDATE contenedores SET vence_en = $2::date WHERE numero = $1`, [numero, viajeEntrega.fecha]);
     }
+    await query(`UPDATE viajes SET completada_en = now() WHERE id = $1`, [entregaId]);
 
     const mensajeLleno = await cascadearParejaRecambio(numero, choferId, choferNombre);
 
@@ -521,7 +523,7 @@ async function aplicarEstado(
       );
       if (retiroExistente) {
         await query(
-          `UPDATE viajes SET estado = 'en_curso',
+          `UPDATE viajes SET estado = 'en_curso', completada_en = now(),
                   destino_direccion = COALESCE(destino_direccion, $2),
                   zona = COALESCE(zona, $3),
                   ubicacion_id = COALESCE(ubicacion_id, $4),
@@ -531,8 +533,8 @@ async function aplicarEstado(
         );
       } else {
         await query(
-          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, destino_direccion, zona, estado, notas, ubicacion_id, ubicacion_direccion)
-           VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'en_curso', 'Retirado del cliente por WhatsApp', $5, $6)`,
+          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, destino_direccion, zona, estado, notas, ubicacion_id, ubicacion_direccion, completada_en)
+           VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'en_curso', 'Retirado del cliente por WhatsApp', $5, $6, now())`,
           [choferId, numero, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
         );
       }
@@ -583,6 +585,16 @@ async function aplicarEstado(
     // La pestaña Viajes ahora muestra el estado del contenedor asociado
     // (join en GET /api/viajes), así que también tiene que refrescarse sola.
     emitRecursoActualizado('viajes');
+    // Marca la parada de entrega como hecha (alimenta la vista día: "marcó
+    // hace X min" por chofer). Solo aplica acá — 'retirado' ya se marca más
+    // arriba, donde crea/actualiza su propia fila de viajes.
+    if (estado === 'entregado') {
+      await query(
+        `UPDATE viajes SET completada_en = now()
+          WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')`,
+        [numero, choferId],
+      );
+    }
     // Si esto es el vacío de un recambio y el lleno pareja ya está listo
     // (entregado), se retira en el mismo momento (yendo a vaciar) — así no
     // importa si el chofer marca primero el vacío o el lleno.

@@ -13,6 +13,7 @@ interface Ruta {
   patente: string | null;
   estado: 'planificada' | 'en_curso' | 'finalizada' | 'cancelada';
   notas: string | null;
+  version: number;
   creado_en: string;
 }
 interface Chofer { id: string; nombre: string; activo: boolean; }
@@ -27,10 +28,11 @@ interface ViajePendiente {
   contenedor_numero: string | null;
   destino_direccion: string | null;
   cliente_telefono: string | null;
-  chofer_id: string | null;
-  ruta_id: string | null;
-  orden: number | null;
+  chofer_id?: string | null;
+  ruta_id?: string | null;
+  orden?: number | null;
   grupo_id: string | null;
+  planificable?: boolean;
 }
 /** Un recambio son dos filas (retiro+entrega) que comparten grupo_id — se muestran como una sola visita. */
 interface VisitaPendiente {
@@ -48,15 +50,33 @@ function agruparPendientes(viajes: ViajePendiente[]): VisitaPendiente[] {
   const sueltas: VisitaPendiente[] = [];
   for (const v of viajes) {
     if (!v.grupo_id) {
-      sueltas.push({ id: v.id, fecha: v.fecha, zona: v.zona, destino_direccion: v.destino_direccion, cliente_telefono: v.cliente_telefono, chofer_id: v.chofer_id, [v.tipo]: v } as VisitaPendiente);
+      const visita: VisitaPendiente = {
+        id: v.id,
+        fecha: v.fecha,
+        zona: v.zona,
+        destino_direccion: v.destino_direccion,
+        cliente_telefono: v.cliente_telefono,
+        chofer_id: v.chofer_id ?? null,
+      };
+      if (v.tipo === 'entrega') visita.entrega = v;
+      if (v.tipo === 'retiro') visita.retiro = v;
+      sueltas.push(visita);
       continue;
     }
     let visita = porGrupo.get(v.grupo_id);
     if (!visita) {
-      visita = { id: v.grupo_id, fecha: v.fecha, zona: v.zona, destino_direccion: v.destino_direccion, cliente_telefono: v.cliente_telefono, chofer_id: v.chofer_id };
+      visita = {
+        id: v.grupo_id,
+        fecha: v.fecha,
+        zona: v.zona,
+        destino_direccion: v.destino_direccion,
+        cliente_telefono: v.cliente_telefono,
+        chofer_id: v.chofer_id ?? null,
+      };
       porGrupo.set(v.grupo_id, visita);
     }
-    visita[v.tipo] = v;
+    if (v.tipo === 'entrega') visita.entrega = v;
+    if (v.tipo === 'retiro') visita.retiro = v;
   }
   return [...sueltas, ...porGrupo.values()];
 }
@@ -128,7 +148,9 @@ interface ParadaVaciado {
 }
 type Parada = ParadaViaje | ParadaVaciado;
 
-interface RutaData extends Ruta { paradas: Parada[]; }
+interface Advertencia { orden: number; tipo: 'lleno_sin_vaciar' | 'vacios_exceso'; mensaje: string; }
+
+interface RutaData extends Ruta { paradas: Parada[]; advertencias: Advertencia[]; }
 
 /** Agrupa las paradas (ya ordenadas por el backend) en "visitas": un recambio son dos filas de `viajes` que comparten `orden` y se muestran como una sola. */
 interface Visita {
@@ -168,10 +190,11 @@ function simularAbordo(visitas: Visita[], disponiblesAlInicio: string[]): { disp
   return { disp: [...disp], pend: [...pend] };
 }
 
-function DetalleRuta({ rutaId, cola, contenedoresDisponibles, onCambio }: {
+function DetalleRuta({ rutaId, cola, contenedoresDisponibles, rutasDelDia, onCambio }: {
   rutaId: string;
   cola: ViajePendiente[];
   contenedoresDisponibles: Contenedor[];
+  rutasDelDia: Ruta[];
   onCambio: () => void;
 }) {
   const { show } = useToast();
@@ -196,7 +219,10 @@ function DetalleRuta({ rutaId, cola, contenedoresDisponibles, onCambio }: {
   };
 
   const visitas = ruta ? agruparVisitas(ruta.paradas) : [];
-  const editable = ruta?.estado === 'planificada';
+  // La ruta nunca se "cierra" al confirmar: sigue aceptando trabajo nuevo
+  // mientras esté 'planificada' o 'en_curso'. Solo se bloquea al finalizarla
+  // o cancelarla.
+  const editable = ruta?.estado === 'planificada' || ruta?.estado === 'en_curso';
   const abordo = simularAbordo(visitas, contenedoresDisponibles.map((c) => c.numero));
 
   async function agregarParada(viajeId: string) {
@@ -238,9 +264,15 @@ function DetalleRuta({ rutaId, cola, contenedoresDisponibles, onCambio }: {
     try {
       await api.patch(`/api/rutas/${rutaId}/orden`, {
         secuencia: nuevasVisitas.map((v) => ({ tipo: v.tipoParada, id: v.id })),
+        version: ruta?.version,
       });
       cargar();
     } catch (err: any) {
+      if (err.response?.status === 409) {
+        show('error', 'Esta ruta cambió', 'Otro usuario la modificó mientras tanto — se recargó con los cambios de él.');
+        cargar();
+        return;
+      }
       show('error', 'No se pudo reordenar', err.response?.data?.error);
     }
   }
@@ -264,12 +296,22 @@ function DetalleRuta({ rutaId, cola, contenedoresDisponibles, onCambio }: {
   }
 
   async function confirmarRuta() {
-    if (!confirm('¿Confirmar la ruta? Se reservan los contenedores y se avisa al chofer por WhatsApp.')) return;
+    if (!confirm('¿Confirmar la ruta? Se reservan las paradas nuevas y se avisa al chofer por WhatsApp. Podés volver a confirmar más tarde si entra trabajo nuevo.')) return;
     setConfirmando(true);
     try {
-      await api.post(`/api/rutas/${rutaId}/confirmar`);
+      const { data } = await api.post<{ confirmadas: number; pendientes: string[] }>(`/api/rutas/${rutaId}/confirmar`);
       cargar();
-      show('success', 'Ruta confirmada', 'Se avisó al chofer por WhatsApp.');
+      if (data.pendientes.length > 0) {
+        show(
+          'error',
+          `${data.confirmadas} parada(s) confirmada(s), ${data.pendientes.length} pendiente(s)`,
+          data.pendientes.join(' · '),
+        );
+      } else if (data.confirmadas > 0) {
+        show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'Se avisó al chofer por WhatsApp.');
+      } else {
+        show('success', 'Ya estaba todo confirmado', 'No había paradas nuevas para reservar.');
+      }
     } catch (err: any) {
       show('error', 'No se pudo confirmar', err.response?.data?.error || 'Error desconocido');
     } finally {
@@ -334,6 +376,16 @@ function DetalleRuta({ rutaId, cola, contenedoresDisponibles, onCambio }: {
               {abordo.disp.map((c) => <span key={c} className="cchip">{c}</span>)}
               {abordo.pend.map((c) => <span key={c} className="cchip pend">{c} · sin vaciar</span>)}
             </div>
+
+            {ruta.advertencias.length > 0 && (
+              <div className="rc-warn" style={{ marginTop: '8px', marginBottom: '4px', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
+                {ruta.advertencias.map((a, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <AlertTriangle size={13} strokeWidth={2} /> {a.mensaje}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {visitas.length === 0 && <div className="rc-empty">Todavía no hay paradas — agregá desde la cola de la izquierda.</div>}
             {visitas.map((v, idx) => {
@@ -493,11 +545,11 @@ export function Rutas() {
     queryKey: ['rutas', fecha],
     queryFn: () => api.get<Ruta[]>(`/api/rutas?fecha=${fecha}`).then((r) => r.data),
   });
-  // Cola de pedidos sin rutear: no se filtra por `fecha` a propósito — un
-  // pedido de hoy puede terminar en la ruta de otro día.
+  // Cola de pedidos sin rutear ("la bolsa"): no se filtra por `fecha` a
+  // propósito — un pedido de hoy puede terminar en la ruta de otro día.
   const { data: cola = [] } = useQuery({
-    queryKey: ['viajes', 'sin-rutear'],
-    queryFn: () => api.get<ViajePendiente[]>('/api/viajes?ruta_id=null&estado=programado').then((r) => r.data),
+    queryKey: ['rutas', 'bolsa'],
+    queryFn: () => api.get<ViajePendiente[]>('/api/rutas/bolsa').then((r) => r.data),
     refetchInterval: 15000,
   });
   const { data: viajesDelDia = [] } = useQuery({
@@ -522,7 +574,7 @@ export function Rutas() {
 
   const recargarListas = () => {
     queryClient.invalidateQueries({ queryKey: ['rutas', fecha] });
-    queryClient.invalidateQueries({ queryKey: ['viajes', 'sin-rutear'] });
+    queryClient.invalidateQueries({ queryKey: ['rutas', 'bolsa'] });
     queryClient.invalidateQueries({ queryKey: ['viajes', 'del-dia', fecha] });
   };
 
@@ -618,7 +670,7 @@ export function Rutas() {
       {rutaSeleccionada && (
         <>
           <div className="section-title">Ruta seleccionada</div>
-          <DetalleRuta rutaId={rutaSeleccionada} cola={cola} contenedoresDisponibles={contenedoresDisponibles} onCambio={recargarListas} />
+          <DetalleRuta rutaId={rutaSeleccionada} cola={cola} contenedoresDisponibles={contenedoresDisponibles} rutasDelDia={rutas} onCambio={recargarListas} />
         </>
       )}
     </div>

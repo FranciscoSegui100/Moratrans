@@ -5,6 +5,10 @@
  * medio. Algoritmo puro (sin DB) — lo usan tanto `GET /rutas/:id` (para
  * poblar los selects del frontend mientras se arma la ruta) como
  * `POST /rutas/:id/confirmar` (revalidación final con datos frescos).
+ *
+ * Además valida (a título de ADVERTENCIA, nunca bloquea) la capacidad física
+ * del camión: a lo sumo un lleno a bordo sin vaciar, y un tope de vacíos
+ * transportados — ver reunión del 21/08.
  */
 
 export interface ParadaSimulada {
@@ -15,11 +19,31 @@ export interface ParadaSimulada {
   contenedorNumero?: string | null;
 }
 
+export interface CapacidadCamion {
+  /** Máximo de contenedores llenos a bordo sin vaciar. Default: 1. */
+  llenos: number;
+  /** Máximo de contenedores vacíos a bordo. Default: 6. */
+  vacios: number;
+}
+
+export const CAPACIDAD_CAMION_DEFAULT: CapacidadCamion = { llenos: 1, vacios: 6 };
+
+/** A partir de cuántos vacíos a bordo se empieza a advertir (aunque no se supere la capacidad todavía). */
+const UMBRAL_ADVERTENCIA_VACIOS = 3;
+
+export interface AdvertenciaCapacidad {
+  orden: number;
+  tipo: 'lleno_sin_vaciar' | 'vacios_exceso';
+  mensaje: string;
+}
+
 export interface ResultadoDisponibilidad {
   /** Para cada `orden` de una parada de entrega (o la mitad-entrega de un recambio): los contenedores asignables ahí. */
   porOrden: Map<number, string[]>;
   /** En qué `orden` se liberó cada contenedor (por retiro), para reservarParaEntrega. */
   liberadosPor: Map<string, number>;
+  /** Avisos de capacidad del camión — no bloquean el armado de la ruta. */
+  advertencias: AdvertenciaCapacidad[];
 }
 
 const PRIORIDAD_VIAJE_TIPO: Record<'entrega' | 'retiro', number> = { entrega: 0, retiro: 1 };
@@ -27,6 +51,7 @@ const PRIORIDAD_VIAJE_TIPO: Record<'entrega' | 'retiro', number> = { entrega: 0,
 export function simularDisponibilidad(
   paradas: ParadaSimulada[],
   disponiblesAlInicio: string[],
+  capacidad: CapacidadCamion = CAPACIDAD_CAMION_DEFAULT,
 ): ResultadoDisponibilidad {
   // Dentro del mismo `orden` (par de recambio), la mitad "entrega" se
   // resuelve antes que la "retiro" — no cambia el resultado (son
@@ -42,6 +67,24 @@ export function simularDisponibilidad(
   const pendientesDeVaciar = new Set<string>();
   const liberadosPor = new Map<string, number>();
   const porOrden = new Map<number, string[]>();
+  const advertencias: AdvertenciaCapacidad[] = [];
+
+  const chequearVacios = (orden: number) => {
+    if (disponibles.size > capacidad.vacios) {
+      advertencias.push({
+        orden,
+        tipo: 'vacios_exceso',
+        mensaje: `Hay ${disponibles.size} contenedores vacíos a bordo, por encima de la capacidad del camión (${capacidad.vacios}).`,
+      });
+    } else if (disponibles.size >= UMBRAL_ADVERTENCIA_VACIOS) {
+      advertencias.push({
+        orden,
+        tipo: 'vacios_exceso',
+        mensaje: `Hay ${disponibles.size} contenedores vacíos a bordo — cerca del límite del camión (${capacidad.vacios}).`,
+      });
+    }
+  };
+  chequearVacios(0); // estado al arrancar la ruta, antes de la primera parada
 
   for (const parada of ordenadas) {
     if (parada.tipoParada === 'vaciado') {
@@ -49,10 +92,21 @@ export function simularDisponibilidad(
       // contenedor puntual, tal como pide la regla de negocio.
       for (const numero of pendientesDeVaciar) disponibles.add(numero);
       pendientesDeVaciar.clear();
+      chequearVacios(parada.orden);
       continue;
     }
 
     if (parada.viajeTipo === 'retiro') {
+      // Ya hay tantos llenos a bordo sin vaciar como la capacidad del camión:
+      // esta parada de retiro/recambio es inválida hasta insertar un vaciado
+      // antes. Se avisa igual (no se bloquea acá — el llamador decide).
+      if (pendientesDeVaciar.size >= capacidad.llenos) {
+        advertencias.push({
+          orden: parada.orden,
+          tipo: 'lleno_sin_vaciar',
+          mensaje: `Parada ${parada.orden} (retiro): ya hay ${pendientesDeVaciar.size} lleno(s) a bordo sin vaciar (capacidad del camión: ${capacidad.llenos}) — insertá un vaciado antes.`,
+        });
+      }
       // Un contenedor recién retirado del cliente nunca estuvo "a bordo
       // disponible" — viene de 'entregado', no de 'disponible'. Solo queda
       // pendiente de vaciar hasta la próxima parada de vaciado.
@@ -69,5 +123,5 @@ export function simularDisponibilidad(
     if (parada.contenedorNumero) disponibles.delete(parada.contenedorNumero);
   }
 
-  return { porOrden, liberadosPor };
+  return { porOrden, liberadosPor, advertencias };
 }

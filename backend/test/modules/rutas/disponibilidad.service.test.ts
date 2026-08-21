@@ -63,4 +63,63 @@ describe('simularDisponibilidad', () => {
     const { porOrden } = simularDisponibilidad(paradas, []);
     expect(porOrden.get(4)?.sort()).toEqual(['A', 'B']);
   });
+
+  describe('capacidad del camión', () => {
+    it('un segundo retiro sin vaciado de por medio advierte "lleno_sin_vaciar" (capacidad default: 1)', () => {
+      const paradas: ParadaSimulada[] = [
+        { orden: 1, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'A' },
+        { orden: 2, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'B' },
+      ];
+      const { advertencias } = simularDisponibilidad(paradas, []);
+      expect(advertencias).toHaveLength(1);
+      expect(advertencias[0]).toMatchObject({ orden: 2, tipo: 'lleno_sin_vaciar' });
+    });
+
+    it('un vaciado entre dos retiros no genera advertencia de lleno sin vaciar', () => {
+      const paradas: ParadaSimulada[] = [
+        { orden: 1, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'A' },
+        { orden: 2, tipoParada: 'vaciado' },
+        { orden: 3, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'B' },
+      ];
+      const { advertencias } = simularDisponibilidad(paradas, []);
+      expect(advertencias.filter((a) => a.tipo === 'lleno_sin_vaciar')).toHaveLength(0);
+    });
+
+    it('una capacidad de llenos mayor a 1 tolera varios retiros sin vaciado', () => {
+      const paradas: ParadaSimulada[] = [
+        { orden: 1, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'A' },
+        { orden: 2, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'B' },
+      ];
+      const { advertencias } = simularDisponibilidad(paradas, [], { llenos: 2, vacios: 6 });
+      expect(advertencias.filter((a) => a.tipo === 'lleno_sin_vaciar')).toHaveLength(0);
+    });
+
+    it('advierte "vacios_exceso" desde 3 vacíos a bordo, aunque no se supere la capacidad', () => {
+      const { advertencias } = simularDisponibilidad([], ['A', 'B', 'C']);
+      expect(advertencias).toHaveLength(1);
+      expect(advertencias[0]).toMatchObject({ orden: 0, tipo: 'vacios_exceso' });
+      expect(advertencias[0].mensaje).not.toMatch(/por encima/);
+    });
+
+    it('advierte "vacios_exceso" con mensaje distinto al superar la capacidad del camión', () => {
+      const { advertencias } = simularDisponibilidad([], ['A', 'B', 'C', 'D', 'E', 'F', 'G']);
+      expect(advertencias).toHaveLength(1);
+      expect(advertencias[0]).toMatchObject({ orden: 0, tipo: 'vacios_exceso' });
+      expect(advertencias[0].mensaje).toMatch(/por encima/);
+    });
+
+    it('menos de 3 vacíos a bordo no genera advertencia', () => {
+      const { advertencias } = simularDisponibilidad([], ['A', 'B']);
+      expect(advertencias).toHaveLength(0);
+    });
+
+    it('un vaciado que suma vacíos a bordo por encima del umbral también advierte', () => {
+      const paradas: ParadaSimulada[] = [
+        { orden: 1, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'A' },
+        { orden: 2, tipoParada: 'vaciado' },
+      ];
+      const { advertencias } = simularDisponibilidad(paradas, ['X', 'Y']);
+      expect(advertencias.some((a) => a.orden === 2 && a.tipo === 'vacios_exceso')).toBe(true);
+    });
+  });
 });
