@@ -11,7 +11,6 @@ import {
   Users,
   Package,
   DollarSign,
-  MapPin,
   ShieldCheck,
   LogOut,
   MessageCircle,
@@ -35,7 +34,6 @@ const nav: { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] }
   { to: '/clientes', label: 'Clientes', icon: Users },
   { to: '/contenedores', label: 'Contenedores', icon: Package },
   { to: '/tarifas', label: 'Tarifas', icon: DollarSign },
-  { to: '/ubicaciones', label: 'Ubicaciones', icon: MapPin },
   { to: '/usuarios', label: 'Usuarios', icon: ShieldCheck, roles: ['admin'] },
 ];
 

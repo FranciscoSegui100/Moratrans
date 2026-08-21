@@ -18,7 +18,6 @@ import { Viajes } from './pages/Viajes';
 import { Rutas } from './pages/Rutas';
 import { Contenedores } from './pages/Contenedores';
 import { Tarifas } from './pages/Tarifas';
-import { Ubicaciones } from './pages/Ubicaciones';
 import { Usuarios } from './pages/Usuarios';
 
 // Datos ya vistos se muestran al instante desde caché al volver a una
@@ -62,7 +61,6 @@ export default function App() {
                         <Route path="/clientes/:telefono" element={<ClienteDetalle />} />
                         <Route path="/contenedores"  element={<Contenedores />} />
                         <Route path="/tarifas"       element={<Tarifas />} />
-                        <Route path="/ubicaciones"   element={<Ubicaciones />} />
                         <Route path="/usuarios"      element={<Usuarios />} />
                       </Routes>
                     </Layout>

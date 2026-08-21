@@ -48,6 +48,35 @@ function etiquetaMes(mes: string): string {
   return texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 
+// TEMPORAL: viajes de ejemplo para previsualizar cómo queda la tabla con
+// datos de un cliente de cuenta corriente activo. Sacar cuando ya no haga falta.
+function viajesDeEjemplo(): ViajeCliente[] {
+  const hoy = new Date();
+  const ejemplos: ViajeCliente[] = [];
+  for (let mesesAtras = 0; mesesAtras < 4; mesesAtras++) {
+    const base = new Date(hoy.getFullYear(), hoy.getMonth() - mesesAtras, 1);
+    for (let i = 0; i < 3; i++) {
+      const dia = 5 + i * 8;
+      const fecha = new Date(base.getFullYear(), base.getMonth(), dia);
+      const idx = mesesAtras * 3 + i;
+      ejemplos.push({
+        id: `demo-${idx}`,
+        tipo: idx % 2 === 0 ? 'retiro' : 'entrega',
+        fecha: fecha.toISOString().slice(0, 10),
+        estado: 'entregado',
+        zona: 'Zona Norte',
+        destino_direccion: 'Av. Ejemplo 1234',
+        patente: 'AB123CD',
+        remito: `R-${1000 + idx}`,
+        importe: '15000',
+        grupo_id: idx % 3 === 0 ? `grupo-${idx}` : null,
+        chofer_nombre: 'Juan Pérez',
+      });
+    }
+  }
+  return ejemplos;
+}
+
 export function ClienteDetalle() {
   const { telefono = '' } = useParams<{ telefono: string }>();
   const { show } = useToast();
@@ -71,11 +100,15 @@ export function ClienteDetalle() {
   });
   const cliente = clientes.find((c) => c.telefono === telefono);
 
-  const { data: viajes = [] } = useQuery({
+  const { data: viajesReales = [] } = useQuery({
     queryKey: ['clientes', telefono, 'viajes'],
     queryFn: () => api.get<ViajeCliente[]>(`/api/clientes/${encodeURIComponent(telefono)}/viajes`).then((r) => r.data),
     enabled: !!telefono,
   });
+  // TEMPORAL: si es cuenta corriente y todavía no tiene viajes reales, se
+  // muestran de ejemplo para previsualizar cómo queda la tabla con datos.
+  const esCC = cliente?.cuenta_corriente_estado === 'aprobada' || cliente?.cuenta_corriente_estado === 'pendiente';
+  const viajes = viajesReales.length === 0 && esCC ? viajesDeEjemplo() : viajesReales;
 
   // Ya vienen ordenados por fecha DESC desde el backend: agrupar preservando
   // ese orden deja los meses más recientes arriba sin tener que reordenar.
