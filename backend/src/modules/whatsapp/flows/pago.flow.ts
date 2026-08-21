@@ -72,14 +72,12 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
 
   // Si el usuario escribió "Ya pagué" (o "pago"/"pagar"/etc, ver messageRouter)
   // sin adjuntar nada aún: antes de pedirle el comprobante, preguntamos cómo
-  // va a pagar (algunos clientes tienen cuenta corriente con nosotros y no
-  // transfieren en el momento — ver iniciarCuentaCorriente).
+  // va a pagar — pero "Cuenta corriente" solo se ofrece a quien ya la tiene
+  // *aprobada*; para el resto es directo por transferencia (la cuenta
+  // corriente se habilita aparte, no se autopide desde acá).
   if (m.tipo === 'text') {
     await setSesion({ ...sesion, flujo: 'pago', paso: 'elegir_metodo_pago', contexto: {} });
-    await sendButtons(to, '💳 ¿Cómo vas a pagar?', [
-      { id: 'metodo_transferencia', title: '💸 Transferencia' },
-      { id: 'metodo_cuenta_corriente', title: '📋 Cuenta corriente' },
-    ]);
+    await sendButtons(to, '💳 ¿Cómo vas a pagar?', await opcionesMetodoPago(to));
     return;
   }
 
@@ -136,6 +134,29 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   }
 }
 
+/**
+ * ¿Este teléfono ya tiene cuenta corriente aprobada? Se usa para decidir si
+ * se le ofrece esa opción de pago — un cliente ocasional no la ve, solo
+ * transferencia (la cuenta corriente se habilita aparte, ej. desde el panel
+ * de Clientes, no autopidiéndola desde este flujo).
+ */
+async function tieneCuentaCorrienteAprobada(telefono: string): Promise<boolean> {
+  const [cliente] = await query<{ cuenta_corriente_estado: string }>(
+    'SELECT cuenta_corriente_estado FROM clientes WHERE telefono = $1',
+    [telefono],
+  );
+  return cliente?.cuenta_corriente_estado === 'aprobada';
+}
+
+/** Botones de "¿Cómo vas a pagar?" — Cuenta corriente solo si ya está aprobada. */
+async function opcionesMetodoPago(telefono: string): Promise<{ id: string; title: string }[]> {
+  const opciones = [{ id: 'metodo_transferencia', title: '💸 Transferencia' }];
+  if (await tieneCuentaCorrienteAprobada(telefono)) {
+    opciones.push({ id: 'metodo_cuenta_corriente', title: '📋 Cuenta corriente' });
+  }
+  return opciones;
+}
+
 /** Pedidos abiertos (cotizados o confirmados) de un teléfono, más recientes primero. */
 async function pedidosAbiertos(telefono: string): Promise<PedidoCandidato[]> {
   return query<PedidoCandidato>(
@@ -153,6 +174,12 @@ async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   const to = m.from;
 
   if (m.seleccionId === 'metodo_cuenta_corriente') {
+    // Defensa además de ocultar el botón: si llega igual (ej. un botón viejo
+    // en el chat de alguien que ya no la tiene), no se lo dejamos pasar.
+    if (!(await tieneCuentaCorrienteAprobada(to))) {
+      await sendButtons(to, 'Esa opción no está disponible para vos — elegí transferencia. 👇', await opcionesMetodoPago(to));
+      return;
+    }
     return iniciarCuentaCorriente(m);
   }
 
@@ -167,10 +194,7 @@ async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     return;
   }
 
-  await sendButtons(to, 'Elegí una de las dos opciones de abajo. 👇', [
-    { id: 'metodo_transferencia', title: '💸 Transferencia' },
-    { id: 'metodo_cuenta_corriente', title: '📋 Cuenta corriente' },
-  ]);
+  await sendButtons(to, 'Elegí una de las opciones de abajo. 👇', await opcionesMetodoPago(to));
 }
 
 /**
@@ -327,25 +351,48 @@ async function registrarComprobante(
   const pedidoId = pedido?.id ?? null;
 
   let pendienteId: string | null = null;
+  let rechazadoId: string | null = null;
+
   if (pedidoId) {
-    const [pendiente] = await query<{ id: string }>(
-      `SELECT id FROM pagos WHERE pedido_id = $1 AND estado = 'pendiente' ORDER BY creado_en DESC LIMIT 1`,
+    const [existente] = await query<{ id: string; estado: string }>(
+      `SELECT id, estado FROM pagos WHERE pedido_id = $1 AND estado IN ('pendiente', 'rechazado') ORDER BY creado_en DESC LIMIT 1`,
       [pedidoId],
     );
-    pendienteId = pendiente?.id ?? null;
+    if (existente?.estado === 'pendiente') pendienteId = existente.id;
+    else if (existente?.estado === 'rechazado') rechazadoId = existente.id;
+  } else {
+    const [existente] = await query<{ id: string; estado: string }>(
+      `SELECT id, estado FROM pagos WHERE cliente_telefono = $1 AND estado IN ('pendiente', 'rechazado') ORDER BY creado_en DESC LIMIT 1`,
+      [to],
+    );
+    if (existente?.estado === 'pendiente') pendienteId = existente.id;
+    else if (existente?.estado === 'rechazado') rechazadoId = existente.id;
   }
+
   const esAdjunto = pendienteId !== null;
+  const esReenviado = !esAdjunto && rechazadoId !== null;
 
   let pagoId: string;
+
   if (esAdjunto) {
     pagoId = pendienteId as string;
     await query(
       `INSERT INTO pagos_adjuntos (pago_id, url_comprobante, media_id) VALUES ($1,$2,$3)`,
       [pagoId, rutaCifrada, mediaId],
     );
-    // Este INSERT viene del webhook, no de la API del panel: no pasa por
-    // broadcastCambios, así que la pestaña Pagos quedaba desactualizada
-    // hasta hacer F5 (igual criterio que chofer.flow.ts).
+    emitRecursoActualizado('pagos');
+  } else if (esReenviado) {
+    pagoId = rechazadoId as string;
+    await query(
+      `UPDATE pagos
+          SET url_comprobante = $1,
+              media_id = $2,
+              estado = 'pendiente',
+              motivo_rechazo = NULL,
+              actualizado_en = now()
+        WHERE id = $3`,
+      [rutaCifrada, mediaId, pagoId],
+    );
     emitRecursoActualizado('pagos');
   } else {
     const [pago] = await query<{ id: string }>(
@@ -357,16 +404,28 @@ async function registrarComprobante(
     pagoId = pago.id;
   }
 
-  // Alerta para el panel + push en tiempo real. Si es un adjunto de un pago
-  // que ya tenía alerta abierta, el ON CONFLICT la deja como está (mismo
-  // pagoId = misma referencia_id) en vez de duplicarla.
-  const [alerta] = await query(
-    `INSERT INTO alertas (tipo, referencia_id, mensaje)
-     VALUES ('pago_pendiente_validacion', $1, $2)
-     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [pagoId, `Nuevo comprobante de ${to} pendiente de validar`],
-  );
+  // Alerta para el panel + push en tiempo real.
+  let alerta: any;
+  if (esReenviado) {
+    await query(`UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'pago_pendiente_validacion' AND referencia_id = $1`, [pagoId]);
+    const [nuevaAlerta] = await query(
+      `INSERT INTO alertas (tipo, referencia_id, mensaje, estado)
+       VALUES ('pago_pendiente_validacion', $1, $2, 'nueva')
+       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+      [pagoId, `Nuevo comprobante reenviado de ${to} pendiente de validar`],
+    );
+    alerta = nuevaAlerta;
+  } else {
+    const [nuevaAlerta] = await query(
+      `INSERT INTO alertas (tipo, referencia_id, mensaje)
+       VALUES ('pago_pendiente_validacion', $1, $2)
+       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+      [pagoId, `Nuevo comprobante de ${to} pendiente de validar`],
+    );
+    alerta = nuevaAlerta;
+  }
+
   if (alerta) {
     emitAlerta({
       ...alerta,
@@ -385,17 +444,18 @@ async function registrarComprobante(
     to,
     esAdjunto
       ? '✅ ¡Recibido! Sumamos este comprobante a tu solicitud que ya estaba *pendiente de validación*.\n' +
-        'En cuanto la confirmemos te mandamos el *ticket* con el contenedor asignado. 📦\n\n' +
+        'En cuanto la confirmemos te mandamos el *ticket*. 📦\n\n' +
+        '_Si en un rato no tenés novedades, escribí *asesor*._'
+      : esReenviado
+      ? '✅ ¡Recibido! Tu nuevo comprobante fue enviado y quedó *pendiente de validación* por un operador.\n' +
+        'En cuanto lo confirmemos te mandamos el *ticket*. 📦\n\n' +
         '_Si en un rato no tenés novedades, escribí *asesor*._'
       : '✅ ¡Recibido! Tu comprobante quedó *pendiente de validación* por un operador.\n' +
-        'En cuanto lo confirmemos te mandamos el *ticket* con el contenedor asignado. 📦\n\n' +
+        'En cuanto lo confirmemos te mandamos el *ticket*. 📦\n\n' +
         '_Si en un rato no tenés novedades, escribí *asesor*._',
   );
 
-  // A nombre de quién es la transferencia (para poder conciliarla) — solo se
-  // pregunta una vez por solicitud: si es un adjunto de una solicitud que ya
-  // pasó por acá, se salta directo a la pregunta de factura en vez de repetirla.
-  if (esAdjunto) {
+  if (esAdjunto || esReenviado) {
     await preguntarFactura(to, pagoId);
   } else {
     await setSesion({ telefono: to, flujo: 'pago', paso: 'esperando_titular', contexto: { pagoId } });

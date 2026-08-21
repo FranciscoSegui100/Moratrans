@@ -4,7 +4,7 @@ import { uploadMedia, sendDocument } from '../modules/whatsapp/graphApi';
 
 export interface DatosTicket {
   ticketId: string;
-  contenedor: string;
+  contenedor?: string | null;
   zona: string;
   precio?: number | string;
   moneda?: string;
@@ -28,7 +28,7 @@ function generarTicketPDF(d: DatosTicket): Promise<Buffer> {
 
     const filas: [string, string][] = [
       ['N° de Ticket', d.ticketId],
-      ['Contenedor asignado', d.contenedor],
+      ['Contenedor asignado', d.contenedor ? d.contenedor : 'A asignar al planificar la ruta'],
       ['Zona / Departamento', d.zona],
       ['Precio', d.precio != null ? `${d.moneda ?? ''} ${Number(d.precio).toLocaleString('es-AR')}`.trim() : '—'],
       ['Cliente', d.clienteTelefono],
@@ -41,7 +41,7 @@ function generarTicketPDF(d: DatosTicket): Promise<Buffer> {
 
     doc.moveDown(2);
     doc.fontSize(9).fillColor('#888').text(
-      'Este ticket confirma la reserva del contenedor. Conservalo para el retiro/entrega.',
+      'Este ticket confirma la recepción y validación de tu pedido.',
       { align: 'center' },
     );
 
@@ -55,10 +55,14 @@ export async function enviarTicketPorWhatsApp(d: DatosTicket): Promise<void> {
   const filename = `ticket_${d.ticketId}.pdf`;
   await subirArchivo(buffer, `tickets/${filename}`, 'application/pdf');
   const mediaId = await uploadMedia(buffer, 'application/pdf', filename);
+  const caption = d.contenedor
+    ? `✅ ¡Pago validado! Tu contenedor asignado es ${d.contenedor}.`
+    : `✅ ¡Pago validado! Tu pedido fue confirmado y registrado exitosamente.`;
+
   await sendDocument(
     d.clienteTelefono,
     mediaId,
     filename,
-    `✅ ¡Pago validado! Tu contenedor asignado es ${d.contenedor}.`,
+    caption,
   );
 }

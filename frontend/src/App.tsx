@@ -18,12 +18,7 @@ import { Viajes } from './pages/Viajes';
 import { Rutas } from './pages/Rutas';
 import { Contenedores } from './pages/Contenedores';
 import { Tarifas } from './pages/Tarifas';
-import { Ubicaciones } from './pages/Ubicaciones';
 import { Usuarios } from './pages/Usuarios';
-import { Seguridad } from './pages/Seguridad';
-import { MfaSetup } from './pages/MfaSetup';
-import { MfaSetupEmail } from './pages/MfaSetupEmail';
-import { Auditoria } from './pages/Auditoria';
 
 // Datos ya vistos se muestran al instante desde caché al volver a una
 // pestaña (sin esperar el fetch), y se revalidan solos en segundo plano.
@@ -50,14 +45,6 @@ export default function App() {
               <Route path="/reset-password" element={<SetPassword titulo="Elegí tu nueva contraseña" />} />
               <Route path="/aceptar-invitacion" element={<SetPassword titulo="Activá tu cuenta" />} />
               <Route
-                path="/seguridad/activar-verificacion"
-                element={<ProtectedRoute><MfaSetup /></ProtectedRoute>}
-              />
-              <Route
-                path="/seguridad/activar-verificacion-email"
-                element={<ProtectedRoute><MfaSetupEmail /></ProtectedRoute>}
-              />
-              <Route
                 path="/*"
                 element={
                   <ProtectedRoute>
@@ -74,10 +61,7 @@ export default function App() {
                         <Route path="/clientes/:telefono" element={<ClienteDetalle />} />
                         <Route path="/contenedores"  element={<Contenedores />} />
                         <Route path="/tarifas"       element={<Tarifas />} />
-                        <Route path="/ubicaciones"   element={<Ubicaciones />} />
                         <Route path="/usuarios"      element={<Usuarios />} />
-                        <Route path="/seguridad"     element={<Seguridad />} />
-                        <Route path="/auditoria"     element={<Auditoria />} />
                       </Routes>
                     </Layout>
                   </ProtectedRoute>

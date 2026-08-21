@@ -56,7 +56,13 @@ export function initSocket(server: HttpServer): IOServer {
 }
 
 // Emite un evento a la sala de alertas (usado por el cron y por eventos de negocio).
+// El log de tamaño de sala queda en Railway: si algún día una alerta no le
+// llega a nadie en vivo (aunque sí quede guardada en la tabla), esto permite
+// confirmar si el emit salió con 0 sockets conectados en ese momento en vez
+// de tener que adivinar.
 export function emitAlerta(payload: unknown): void {
+  const sala = io?.sockets.adapter.rooms.get('alertas');
+  console.log(`[socket] emitAlerta tipo=${(payload as any)?.tipo ?? '?'} sockets_en_sala=${sala?.size ?? 0}`);
   io?.to('alertas').emit('nueva_alerta', payload);
 }
 
