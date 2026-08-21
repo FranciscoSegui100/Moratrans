@@ -72,14 +72,12 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
 
   // Si el usuario escribió "Ya pagué" (o "pago"/"pagar"/etc, ver messageRouter)
   // sin adjuntar nada aún: antes de pedirle el comprobante, preguntamos cómo
-  // va a pagar (algunos clientes tienen cuenta corriente con nosotros y no
-  // transfieren en el momento — ver iniciarCuentaCorriente).
+  // va a pagar — pero "Cuenta corriente" solo se ofrece a quien ya la tiene
+  // *aprobada*; para el resto es directo por transferencia (la cuenta
+  // corriente se habilita aparte, no se autopide desde acá).
   if (m.tipo === 'text') {
     await setSesion({ ...sesion, flujo: 'pago', paso: 'elegir_metodo_pago', contexto: {} });
-    await sendButtons(to, '💳 ¿Cómo vas a pagar?', [
-      { id: 'metodo_transferencia', title: '💸 Transferencia' },
-      { id: 'metodo_cuenta_corriente', title: '📋 Cuenta corriente' },
-    ]);
+    await sendButtons(to, '💳 ¿Cómo vas a pagar?', await opcionesMetodoPago(to));
     return;
   }
 
@@ -136,6 +134,29 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   }
 }
 
+/**
+ * ¿Este teléfono ya tiene cuenta corriente aprobada? Se usa para decidir si
+ * se le ofrece esa opción de pago — un cliente ocasional no la ve, solo
+ * transferencia (la cuenta corriente se habilita aparte, ej. desde el panel
+ * de Clientes, no autopidiéndola desde este flujo).
+ */
+async function tieneCuentaCorrienteAprobada(telefono: string): Promise<boolean> {
+  const [cliente] = await query<{ cuenta_corriente_estado: string }>(
+    'SELECT cuenta_corriente_estado FROM clientes WHERE telefono = $1',
+    [telefono],
+  );
+  return cliente?.cuenta_corriente_estado === 'aprobada';
+}
+
+/** Botones de "¿Cómo vas a pagar?" — Cuenta corriente solo si ya está aprobada. */
+async function opcionesMetodoPago(telefono: string): Promise<{ id: string; title: string }[]> {
+  const opciones = [{ id: 'metodo_transferencia', title: '💸 Transferencia' }];
+  if (await tieneCuentaCorrienteAprobada(telefono)) {
+    opciones.push({ id: 'metodo_cuenta_corriente', title: '📋 Cuenta corriente' });
+  }
+  return opciones;
+}
+
 /** Pedidos abiertos (cotizados o confirmados) de un teléfono, más recientes primero. */
 async function pedidosAbiertos(telefono: string): Promise<PedidoCandidato[]> {
   return query<PedidoCandidato>(
@@ -153,6 +174,12 @@ async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   const to = m.from;
 
   if (m.seleccionId === 'metodo_cuenta_corriente') {
+    // Defensa además de ocultar el botón: si llega igual (ej. un botón viejo
+    // en el chat de alguien que ya no la tiene), no se lo dejamos pasar.
+    if (!(await tieneCuentaCorrienteAprobada(to))) {
+      await sendButtons(to, 'Esa opción no está disponible para vos — elegí transferencia. 👇', await opcionesMetodoPago(to));
+      return;
+    }
     return iniciarCuentaCorriente(m);
   }
 
@@ -167,10 +194,7 @@ async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     return;
   }
 
-  await sendButtons(to, 'Elegí una de las dos opciones de abajo. 👇', [
-    { id: 'metodo_transferencia', title: '💸 Transferencia' },
-    { id: 'metodo_cuenta_corriente', title: '📋 Cuenta corriente' },
-  ]);
+  await sendButtons(to, 'Elegí una de las opciones de abajo. 👇', await opcionesMetodoPago(to));
 }
 
 /**
