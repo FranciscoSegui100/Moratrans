@@ -55,8 +55,15 @@ CREATE TYPE tipo_alerta AS ENUM (
   'cuenta_corriente_solicitada',
   'recambio_solicitado',
   'retiro_solicitado',
-  'entrega_solicitada'
+  'entrega_solicitada',
+  'alargue_solicitado'
 );
+
+-- 'flete' = pago normal (ligado a un pedido). 'alargue_retiro' = paga el 50%
+-- de su último pago validado para sumar 5 días al vencimiento de un
+-- contenedor que ya tiene — no crea ticket ni reserva nada (ver
+-- alargarRetiro.flow.ts y POST /api/pagos/:id/validar).
+CREATE TYPE tipo_pago AS ENUM ('flete', 'alargue_retiro');
 
 -- Cuenta corriente: clientes que pagan a fin de mes o cuando se juntan
 -- varios retiros, en vez de transferir antes de cada uno (ver pago.flow.ts).
@@ -213,6 +220,10 @@ CREATE TABLE pagos (
   -- no tiene url_comprobante, pero igual pasa por la misma validación manual
   -- (fn_validar_pago) antes de reservar contenedor y crear el ticket.
   es_cuenta_corriente BOOLEAN NOT NULL DEFAULT FALSE,
+  -- 'flete' (default) o 'alargue_retiro' — ver comentario de tipo_pago arriba.
+  tipo             tipo_pago   NOT NULL DEFAULT 'flete',
+  -- Solo se usa cuando tipo = 'alargue_retiro': qué contenedor extender.
+  contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
   estado           estado_pago NOT NULL DEFAULT 'pendiente',
   validado_por     UUID REFERENCES usuarios(id) ON DELETE SET NULL,
   motivo_rechazo   TEXT,

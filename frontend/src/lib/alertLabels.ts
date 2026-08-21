@@ -13,4 +13,5 @@ export const tipoLabel: Record<string, string> = {
   cuenta_corriente_solicitada: 'Pago a cuenta corriente',
   recambio_solicitado:        'Pide un recambio',
   retiro_solicitado:          'Pide que retiren un contenedor',
+  alargue_solicitado:         'Pide alargar el retiro',
 };
