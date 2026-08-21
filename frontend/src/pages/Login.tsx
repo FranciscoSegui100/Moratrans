@@ -123,7 +123,7 @@ export function Login() {
         <div className="login-logo">
           <div className="login-logo-mark">MT</div>
           <h1>Moratrans</h1>
-          <p>Panel de gestión logística · test deploy 21/08</p>
+          <p>Panel de gestión logística</p>
         </div>
 
         <form onSubmit={onSubmit} className="login-form">
