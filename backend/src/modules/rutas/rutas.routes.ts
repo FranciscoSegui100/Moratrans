@@ -72,7 +72,20 @@ async function calcularDisponibilidadRuta(
     [rutaId],
   );
   const disponiblesAlInicio: string[] = (
-    await ejecutar(`SELECT numero FROM contenedores WHERE estado = 'disponible'`, [])
+    await ejecutar(
+      `SELECT c.numero
+         FROM contenedores c
+        WHERE c.estado = 'disponible'
+          AND c.numero NOT IN (
+            SELECT v.contenedor_numero
+              FROM viajes v
+             WHERE v.contenedor_numero IS NOT NULL
+               AND v.ruta_id IS NOT NULL
+               AND v.ruta_id <> $1
+               AND v.estado IN ('programado', 'en_curso')
+          )`,
+      [rutaId],
+    )
   ).map((r: { numero: string }) => r.numero);
 
   const capacidadRows: { capacidad_llenos: number; capacidad_vacios: number }[] = await ejecutar(

@@ -190,10 +190,11 @@ function simularAbordo(visitas: Visita[], disponiblesAlInicio: string[]): { disp
   return { disp: [...disp], pend: [...pend] };
 }
 
-function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, choferes, onCambio }: {
+function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDia, choferes, onCambio }: {
   rutaId: string;
   contenedoresDisponibles: Contenedor[];
   rutasDelDia: Ruta[];
+  viajesDelDia: ViajePendiente[];
   choferes: Chofer[];
   onCambio: () => void;
 }) {
@@ -220,7 +221,20 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, choferes, o
 
   const visitas = ruta ? agruparVisitas(ruta.paradas) : [];
   const editable = ruta?.estado === 'planificada' || ruta?.estado === 'en_curso';
-  const abordo = simularAbordo(visitas, contenedoresDisponibles.map((c) => c.numero));
+
+  // Los contenedores asignados a OTRAS rutas del día no están disponibles para esta ruta
+  const asignadosAOtrasRutas = new Set<string>();
+  for (const v of viajesDelDia) {
+    if (v.ruta_id && v.ruta_id !== rutaId && v.contenedor_numero) {
+      asignadosAOtrasRutas.add(v.contenedor_numero);
+    }
+  }
+
+  const stockEmpresaDisponible = contenedoresDisponibles
+    .map((c) => c.numero)
+    .filter((num) => !asignadosAOtrasRutas.has(num));
+
+  const abordo = simularAbordo(visitas, stockEmpresaDisponible);
 
   async function agregarVaciado(e: React.FormEvent) {
     e.preventDefault();
@@ -773,6 +787,7 @@ export function Rutas() {
                 rutaId={rutaSeleccionada}
                 contenedoresDisponibles={contenedoresDisponibles}
                 rutasDelDia={rutas}
+                viajesDelDia={viajesDelDia}
                 choferes={choferes}
                 onCambio={recargarListas}
               />
