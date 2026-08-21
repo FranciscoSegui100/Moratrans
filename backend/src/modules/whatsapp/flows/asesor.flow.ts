@@ -6,7 +6,7 @@ import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
 // Cantidad de veces que el cliente tiene que pedir un asesor antes de escalar.
-const INTENTOS_PARA_ESCALAR = 5;
+const INTENTOS_PARA_ESCALAR = 3;
 
 /**
  * Cuenta cuántas veces el cliente pidió hablar con un asesor (persistido en

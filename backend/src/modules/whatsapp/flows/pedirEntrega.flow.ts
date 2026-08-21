@@ -86,7 +86,7 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
   if (m.seleccionId !== 'entrega_cliente_si') {
-    await sendText(to, 'Elegí "✅ Sí, es correcta" o "↩️ Volver a enviar".');
+    await sendText(to, 'Elegí "✅ Sí, es correcta" o "↩️ Volver a enviar".\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
 
