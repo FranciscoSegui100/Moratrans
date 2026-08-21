@@ -49,7 +49,7 @@ export async function handlePedirRetiro(m: MensajeEntrante, sesion: Sesion): Pro
 async function manejarEleccion(m: MensajeEntrante): Promise<void> {
   const to = m.from;
   if (m.tipo !== 'interactive_list' || !m.seleccionId?.startsWith('ret:')) {
-    await sendText(to, 'Por favor, elegí uno de la lista de arriba. 👆');
+    await sendText(to, 'Por favor, elegí uno de la lista de arriba. 👆\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
   const numero = m.seleccionId.replace('ret:', '');
@@ -87,7 +87,7 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
   if (m.seleccionId !== 'retiro_cliente_si') {
-    await sendText(to, 'Elegí "✅ Sí, confirmar" o "↩️ Cancelar".');
+    await sendText(to, 'Elegí "✅ Sí, confirmar" o "↩️ Cancelar".\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
 

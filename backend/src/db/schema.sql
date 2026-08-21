@@ -282,7 +282,8 @@ CREATE TABLE sesiones_chat (
   flujo         TEXT,                          -- 'cotizacion' | 'pago' | 'chofer' | null
   paso          TEXT,                          -- estado dentro del flujo
   contexto      JSONB NOT NULL DEFAULT '{}',   -- datos temporales del flujo (incluye modoHumano)
-  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+  avisado_en    TIMESTAMPTZ                    -- cuándo se avisó "se va a cerrar el chat" (null = no avisado)
 );
 
 -- ---------------------------------------------------------------------

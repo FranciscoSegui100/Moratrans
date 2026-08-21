@@ -60,7 +60,7 @@ export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promis
 async function manejarEleccionContenedor(m: MensajeEntrante): Promise<void> {
   const to = m.from;
   if (m.tipo !== 'interactive_list' || !m.seleccionId?.startsWith('rec:')) {
-    await sendText(to, 'Por favor, elegí uno de la lista de arriba. 👆');
+    await sendText(to, 'Por favor, elegí uno de la lista de arriba. 👆\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
   const numero = m.seleccionId.replace('rec:', '');
@@ -98,7 +98,7 @@ async function manejarConfirmacionContenedor(m: MensajeEntrante, sesion: Sesion)
     return;
   }
   if (m.seleccionId !== 'recambio_si') {
-    await sendText(to, 'Elegí "✅ Sí, confirmar" o "↩️ Cancelar".');
+    await sendText(to, 'Elegí "✅ Sí, confirmar" o "↩️ Cancelar".\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
   await pedirConfirmacionUbicacion(to, sesion);
@@ -139,7 +139,7 @@ async function manejarConfirmacionUbicacion(m: MensajeEntrante, sesion: Sesion):
     return;
   }
   if (m.seleccionId !== 'ubicacion_recambio_si') {
-    await sendText(to, 'Elegí "✅ Sí, es correcta" o "↩️ Corregirla".');
+    await sendText(to, 'Elegí "✅ Sí, es correcta" o "↩️ Corregirla".\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
   await confirmarYPedirPago(m, sesion);

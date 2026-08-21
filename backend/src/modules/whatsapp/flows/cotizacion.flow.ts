@@ -8,7 +8,10 @@ import type { Sesion } from '../session.store';
 
 /**
  * Flujo de cotización (menú cerrado):
- *   inicio -> elegir_departamento -> confirmar -> ubicacion -> [precio]
+ *   inicio -> elegir_departamento -> ubicacion -> confirmar_ubicacion -> [precio]
+ * (elegir de una lista interactiva ya es una elección explícita: no hace
+ * falta un paso extra de "¿confirmás?" después, a diferencia de la ubicación
+ * -que sí puede venir de texto libre mal tipeado o un GPS mal tirado-).
  * Las tarifas se consultan SIEMPRE desde tarifas_departamento.
  */
 export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -35,37 +38,14 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
     return;
   }
 
-  // Paso 1: recibió la selección del departamento -> pedir confirmación explícita.
+  // Paso 1: recibió la selección del departamento (elegir de la lista ya es
+  // una confirmación explícita) -> pedimos directo la ubicación de entrega.
   if (sesion.paso === 'elegir_departamento') {
     if (!m.seleccionId?.startsWith('depto:')) {
-      await sendText(to, 'Por favor, elegí una opción de la lista.');
+      await sendText(to, 'Por favor, elegí una opción de la lista.\n\n_Escribí *menú* para volver al inicio._');
       return;
     }
     const departamento = m.seleccionId.replace('depto:', '');
-    await sendButtons(
-      to,
-      `📍 Elegiste *${departamento}*. ¿Confirmamos este destino para cotizar?`,
-      [
-        { id: 'confirmar_depto', title: '✅ Sí, confirmar' },
-        { id: 'cancelar_depto', title: '↩️ Elegir otro' },
-      ],
-    );
-    await setSesion({ ...sesion, paso: 'confirmar', contexto: { departamento } });
-    return;
-  }
-
-  // Paso 2: confirmación del departamento -> ahora pedimos la ubicación de entrega.
-  if (sesion.paso === 'confirmar') {
-    if (m.seleccionId === 'cancelar_depto') {
-      await setSesion({ ...sesion, paso: 'inicio', contexto: {} });
-      return handleCotizacion(m, { ...sesion, paso: 'inicio', contexto: {} });
-    }
-    if (m.seleccionId !== 'confirmar_depto') {
-      await sendText(to, 'Elegí "✅ Sí, confirmar" o "↩️ Elegir otro".');
-      return;
-    }
-
-    const departamento = sesion.contexto.departamento as string;
     await sendLocationRequest(
       to,
       `📍 Última cosa: contanos la dirección de entrega.\n\n` +
@@ -133,7 +113,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       return;
     }
     if (m.seleccionId !== 'ubicacion_si') {
-      await sendText(to, 'Elegí "✅ Sí, es correcta" o "↩️ Volver a enviar".');
+      await sendText(to, 'Elegí "✅ Sí, es correcta" o "↩️ Volver a enviar".\n\n_Escribí *menú* para volver al inicio._');
       return;
     }
 

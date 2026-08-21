@@ -232,7 +232,7 @@ async function iniciarCuentaCorriente(m: MensajeEntrante): Promise<void> {
 async function manejarEleccionPedidoCC(m: MensajeEntrante, _sesion: Sesion): Promise<void> {
   const to = m.from;
   if (m.tipo !== 'interactive_list' || !m.seleccionId?.startsWith('pedido:')) {
-    await sendText(to, 'Por favor, elegí una de las cotizaciones de la lista de arriba. 👆');
+    await sendText(to, 'Por favor, elegí una de las cotizaciones de la lista de arriba. 👆\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
   const pedidoId = m.seleccionId.replace('pedido:', '');
@@ -310,7 +310,7 @@ async function manejarEleccionPedido(m: MensajeEntrante, sesion: Sesion): Promis
   const mediaId = (sesion.contexto?.mediaId as string | null) ?? null;
 
   if (!rutaCifrada || m.tipo !== 'interactive_list' || !m.seleccionId?.startsWith('pedido:')) {
-    await sendText(to, 'Por favor, elegí una de las cotizaciones de la lista de arriba. 👆');
+    await sendText(to, 'Por favor, elegí una de las cotizaciones de la lista de arriba. 👆\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
 
