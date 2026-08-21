@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowUp, ArrowDown, Plus, X, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, ArrowUp, ArrowDown, Plus, X, RefreshCw, CheckCircle2, Truck } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -122,7 +122,7 @@ const ETIQUETA_ESTADO: Record<Ruta['estado'], { texto: string; clase: string }> 
 
 const iniciales = (nombre: string) => nombre.split(',')[0].slice(0, 2).toUpperCase();
 
-// ── Detalle de una ruta (paradas, cola, confirmación) ────────────────────
+// ── Detalle de una ruta (paradas, confirmación, vaciados) ─────────────────────
 
 interface ParadaViaje {
   tipo_parada: 'viaje';
@@ -174,10 +174,10 @@ function agruparVisitas(paradas: Parada[]): Visita[] {
 }
 
 /**
- * Simulación puramente visual de "qué contenedores están a bordo ahora
- * mismo" (recorre toda la ruta ya armada). Es solo para el chip informativo
- * de arriba del panel — la disponibilidad real que valida cada parada de
- * entrega viene de `disponibles`, calculada por el backend.
+  Simulación puramente visual de "qué contenedores están a bordo ahora
+  mismo" (recorre toda la ruta ya armada). Es solo para el chip informativo
+  de arriba del panel — la disponibilidad real que valida cada parada de
+  entrega viene de `disponibles`, calculada por el backend.
  */
 function simularAbordo(visitas: Visita[], disponiblesAlInicio: string[]): { disp: string[]; pend: string[] } {
   const disp = new Set(disponiblesAlInicio);
@@ -190,11 +190,11 @@ function simularAbordo(visitas: Visita[], disponiblesAlInicio: string[]): { disp
   return { disp: [...disp], pend: [...pend] };
 }
 
-function DetalleRuta({ rutaId, cola, contenedoresDisponibles, rutasDelDia, onCambio }: {
+function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, choferes, onCambio }: {
   rutaId: string;
-  cola: ViajePendiente[];
   contenedoresDisponibles: Contenedor[];
   rutasDelDia: Ruta[];
+  choferes: Chofer[];
   onCambio: () => void;
 }) {
   const { show } = useToast();
@@ -219,20 +219,8 @@ function DetalleRuta({ rutaId, cola, contenedoresDisponibles, rutasDelDia, onCam
   };
 
   const visitas = ruta ? agruparVisitas(ruta.paradas) : [];
-  // La ruta nunca se "cierra" al confirmar: sigue aceptando trabajo nuevo
-  // mientras esté 'planificada' o 'en_curso'. Solo se bloquea al finalizarla
-  // o cancelarla.
   const editable = ruta?.estado === 'planificada' || ruta?.estado === 'en_curso';
   const abordo = simularAbordo(visitas, contenedoresDisponibles.map((c) => c.numero));
-
-  async function agregarParada(viajeId: string) {
-    try {
-      await api.post(`/api/rutas/${rutaId}/paradas`, { viaje_id: viajeId });
-      cargar();
-    } catch (err: any) {
-      show('error', 'No se pudo agregar la parada', err.response?.data?.error);
-    }
-  }
 
   async function agregarVaciado(e: React.FormEvent) {
     e.preventDefault();
@@ -251,12 +239,33 @@ function DetalleRuta({ rutaId, cola, contenedoresDisponibles, rutasDelDia, onCam
   }
 
   async function quitarParada(v: Visita) {
-    if (!confirm('¿Quitar esta parada de la ruta? Vuelve a la cola sin rutear.')) return;
+    if (!confirm('¿Quitar esta parada de la ruta? Vuelve a la bolsa de pedidos.')) return;
     try {
       await api.delete(`/api/rutas/${rutaId}/paradas/${v.tipoParada}/${v.id}`);
       cargar();
     } catch (err: any) {
       show('error', 'No se pudo quitar la parada', err.response?.data?.error);
+    }
+  }
+
+  async function moverParadaA(tipo: 'viaje' | 'vaciado', paradaId: string, choferId: string) {
+    let rutaDestino = rutasDelDia.find((r) => r.chofer_id === choferId);
+    if (!rutaDestino) {
+      try {
+        const res = await api.post<Ruta>('/api/rutas', { fecha: ruta?.fecha, chofer_id: choferId });
+        rutaDestino = res.data;
+      } catch (err: any) {
+        show('error', 'No se pudo crear la ruta de destino', err.response?.data?.error);
+        return;
+      }
+    }
+    try {
+      await api.post(`/api/rutas/${rutaId}/paradas/${tipo}/${paradaId}/mover`, { ruta_destino_id: rutaDestino.id });
+      const nombreDestino = choferes.find((c) => c.id === choferId)?.nombre ?? 'chofer';
+      show('success', 'Parada movida', `Se movió la parada a la ruta de ${nombreDestino}.`);
+      cargar();
+    } catch (err: any) {
+      show('error', 'No se pudo mover la parada', err.response?.data?.error);
     }
   }
 
@@ -345,49 +354,41 @@ function DetalleRuta({ rutaId, cola, contenedoresDisponibles, rutasDelDia, onCam
           <div className="t">{ruta.chofer_nombre ?? 'Sin chofer'}</div>
           <div className="s">Patente {ruta.patente ?? '—'} · {ruta.fecha}</div>
         </div>
-        <span className={`badge ${estado.clase}`}>{estado.texto}</span>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <select className="form-select" style={{ width: 'auto', fontSize: '0.8rem' }} value={ruta.estado} onChange={(e) => cambiarEstado(e.target.value)}>
+            <option value="planificada">Planificada</option>
+            <option value="en_curso">En curso</option>
+            <option value="finalizada">Finalizada</option>
+            <option value="cancelada">Cancelada</option>
+          </select>
+          <span className={`badge ${estado.clase}`}>{estado.texto}</span>
+        </div>
       </div>
 
       <RoleGate roles={['admin', 'operador']}>
-        <div className="detail-cols">
-          <div className="dcol left">
-            <div className="dcol-title"><span>Pedidos sin rutear</span><span>{cola.length}</span></div>
-            {cola.length === 0 && <div className="rc-empty">No hay pedidos pendientes.</div>}
-            {cola.map((v) => (
-              <div key={v.id} className="qrow">
-                <div>
-                  <div className="cli">{v.destino_direccion ?? v.zona ?? v.cliente_telefono ?? '—'}</div>
-                  <div className="sub">
-                    {v.grupo_id ? 'Recambio' : v.tipo}
-                    {v.contenedor_numero ? ` · ${v.contenedor_numero}` : ''}
-                  </div>
-                </div>
-                {editable && (
-                  <button className="addbtn" onClick={() => agregarParada(v.id)} title="Agregar a esta ruta">+</button>
-                )}
-              </div>
-            ))}
+        <div style={{ padding: '16px 18px' }}>
+          <div className="abordo-label" style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+            Stock simulado a bordo:
+          </div>
+          <div className="abordo">
+            {abordo.disp.length === 0 && abordo.pend.length === 0 && <span className="cchip none">nada a bordo todavía</span>}
+            {abordo.disp.map((c) => <span key={c} className="cchip">{c}</span>)}
+            {abordo.pend.map((c) => <span key={c} className="cchip pend">{c} · sin vaciar</span>)}
           </div>
 
-          <div className="dcol">
-            <div className="abordo-label">Contenedores a bordo disponibles ahora:</div>
-            <div className="abordo">
-              {abordo.disp.length === 0 && abordo.pend.length === 0 && <span className="cchip none">nada a bordo todavía</span>}
-              {abordo.disp.map((c) => <span key={c} className="cchip">{c}</span>)}
-              {abordo.pend.map((c) => <span key={c} className="cchip pend">{c} · sin vaciar</span>)}
+          {ruta.advertencias.length > 0 && (
+            <div className="rc-warn" style={{ marginTop: '10px', marginBottom: '8px', flexDirection: 'column', alignItems: 'flex-start', gap: '4px', background: 'var(--warning-bg)', padding: '8px 12px', borderRadius: 'var(--radius)' }}>
+              {ruta.advertencias.map((a, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <AlertTriangle size={14} strokeWidth={2} /> {a.mensaje}
+                </div>
+              ))}
             </div>
+          )}
 
-            {ruta.advertencias.length > 0 && (
-              <div className="rc-warn" style={{ marginTop: '8px', marginBottom: '4px', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
-                {ruta.advertencias.map((a, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <AlertTriangle size={13} strokeWidth={2} /> {a.mensaje}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {visitas.length === 0 && <div className="rc-empty">Todavía no hay paradas — agregá desde la cola de la izquierda.</div>}
+          {visitas.length === 0 && <div className="rc-empty" style={{ margin: '16px 0' }}>Todavía no hay paradas en esta ruta — asigná desde la bolsa a la izquierda.</div>}
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
             {visitas.map((v, idx) => {
               const disponibles = v.entrega?.disponibles ?? [];
               const necesitaContenedor = !!v.entrega;
@@ -467,43 +468,64 @@ function DetalleRuta({ rutaId, cola, contenedoresDisponibles, rutasDelDia, onCam
                       </>
                     )}
                   </div>
+
                   <div className="arrows">
-                    <button disabled={idx === 0 || !editable} onClick={() => mover(idx, -1)}><ArrowUp size={12} strokeWidth={2} /></button>
-                    <button disabled={idx === visitas.length - 1 || !editable} onClick={() => mover(idx, 1)}><ArrowDown size={12} strokeWidth={2} /></button>
+                    <button disabled={idx === 0 || !editable} onClick={() => mover(idx, -1)} title="Subir orden"><ArrowUp size={12} strokeWidth={2} /></button>
+                    <button disabled={idx === visitas.length - 1 || !editable} onClick={() => mover(idx, 1)} title="Bajar orden"><ArrowDown size={12} strokeWidth={2} /></button>
                   </div>
+
                   {editable && (
-                    <button className="addbtn" onClick={() => quitarParada(v)} title="Quitar de la ruta" style={{ marginLeft: '4px' }}><X size={13} strokeWidth={2} /></button>
+                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginLeft: '6px' }}>
+                      <select
+                        className="form-select"
+                        style={{ fontSize: '0.72rem', padding: '2px 6px', width: '110px' }}
+                        defaultValue=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            moverParadaA(v.tipoParada, v.id, e.target.value);
+                            e.target.value = '';
+                          }
+                        }}
+                        title="Reasignar parada a otro chofer"
+                      >
+                        <option value="" disabled>Mover a...</option>
+                        {choferes.filter((c) => c.id !== ruta.chofer_id).map((c) => (
+                          <option key={c.id} value={c.id}>{c.nombre}</option>
+                        ))}
+                      </select>
+                      <button className="addbtn" onClick={() => quitarParada(v)} title="Quitar de la ruta"><X size={13} strokeWidth={2} /></button>
+                    </div>
                   )}
                 </div>
               );
             })}
-
-            {editable && (
-              <div style={{ marginTop: '10px' }}>
-                {agregandoVaciado ? (
-                  <form onSubmit={agregarVaciado} className="form-row">
-                    <div className="form-group">
-                      <label className="form-label">Vaciadero</label>
-                      <select className="form-select" value={vaciadoForm.ubicacion_id} onChange={(e) => setVaciadoForm({ ...vaciadoForm, ubicacion_id: e.target.value })}>
-                        <option value="">— Elegir —</option>
-                        {vaciaderos.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
-                      </select>
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Notas</label>
-                      <input className="form-input" value={vaciadoForm.notas} onChange={(e) => setVaciadoForm({ ...vaciadoForm, notas: e.target.value })} />
-                    </div>
-                    <button type="submit" className="btn btn-primary btn-sm">Agregar</button>
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAgregandoVaciado(false)}>Cancelar</button>
-                  </form>
-                ) : (
-                  <button className="btn btn-ghost" onClick={() => setAgregandoVaciado(true)}>
-                    <Plus size={14} strokeWidth={2} /> Agregar vaciado
-                  </button>
-                )}
-              </div>
-            )}
           </div>
+
+          {editable && (
+            <div style={{ marginTop: '14px' }}>
+              {agregandoVaciado ? (
+                <form onSubmit={agregarVaciado} className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">Vaciadero</label>
+                    <select className="form-select" value={vaciadoForm.ubicacion_id} onChange={(e) => setVaciadoForm({ ...vaciadoForm, ubicacion_id: e.target.value })}>
+                      <option value="">— Elegir —</option>
+                      {vaciaderos.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Notas</label>
+                    <input className="form-input" value={vaciadoForm.notas} onChange={(e) => setVaciadoForm({ ...vaciadoForm, notas: e.target.value })} />
+                  </div>
+                  <button type="submit" className="btn btn-primary btn-sm">Agregar</button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAgregandoVaciado(false)}>Cancelar</button>
+                </form>
+              ) : (
+                <button className="btn btn-ghost" onClick={() => setAgregandoVaciado(true)}>
+                  <Plus size={14} strokeWidth={2} /> Agregar vaciado
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="detail-foot">
@@ -511,12 +533,6 @@ function DetalleRuta({ rutaId, cola, contenedoresDisponibles, rutasDelDia, onCam
             {visitas.length === 0 ? '' : invalid ? `${invalid} parada(s) sin contenedor válido` : '✓ todas las paradas resueltas'}
           </span>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-            <select className="form-select" style={{ width: 'auto' }} value={ruta.estado} onChange={(e) => cambiarEstado(e.target.value)}>
-              <option value="planificada">Planificada</option>
-              <option value="en_curso">En curso</option>
-              <option value="finalizada">Finalizada</option>
-              <option value="cancelada">Cancelada</option>
-            </select>
             {editable && visitas.length > 0 && (
               <button className="btn btn-primary" onClick={confirmarRuta} disabled={confirmando}>
                 <CheckCircle2 size={16} strokeWidth={1.75} /> {confirmando ? 'Confirmando...' : 'Confirmar ruta'}
@@ -529,7 +545,7 @@ function DetalleRuta({ rutaId, cola, contenedoresDisponibles, rutasDelDia, onCam
   );
 }
 
-// ── Página principal: tarjetas por chofer + detalle de la seleccionada ───
+// ── Página principal: layout 2 columnas (Bolsa a la izquierda, Choferes a la derecha) ────
 
 export function Rutas() {
   const queryClient = useQueryClient();
@@ -545,8 +561,6 @@ export function Rutas() {
     queryKey: ['rutas', fecha],
     queryFn: () => api.get<Ruta[]>(`/api/rutas?fecha=${fecha}`).then((r) => r.data),
   });
-  // Cola de pedidos sin rutear ("la bolsa"): no se filtra por `fecha` a
-  // propósito — un pedido de hoy puede terminar en la ruta de otro día.
   const { data: cola = [] } = useQuery({
     queryKey: ['rutas', 'bolsa'],
     queryFn: () => api.get<ViajePendiente[]>('/api/rutas/bolsa').then((r) => r.data),
@@ -565,6 +579,18 @@ export function Rutas() {
   const statsRutas = statsPorRuta(viajesDelDia);
   const visitasDelDia = agruparPendientes(viajesDelDia).length;
   const ruteados = agruparPendientes(viajesDelDia.filter((v) => v.ruta_id)).length;
+
+  // Agrupamiento por zona de los pedidos sin rutear
+  const visitasPorZona = (() => {
+    const map = new Map<string, VisitaPendiente[]>();
+    for (const v of visitasPendientes) {
+      const zona = v.zona ?? (v.destino_direccion ? v.destino_direccion.split(',')[0] : 'Sin zona');
+      const lista = map.get(zona) ?? [];
+      lista.push(v);
+      map.set(zona, lista);
+    }
+    return map;
+  })();
 
   // Selecciona la primera ruta del día automáticamente cuando cambia la fecha o cargan los datos.
   useEffect(() => {
@@ -588,14 +614,24 @@ export function Rutas() {
     }
   }
 
-  const zonasPendientes = (() => {
-    const conteo = new Map<string, number>();
-    for (const v of visitasPendientes) {
-      const zona = v.zona ?? v.destino_direccion ?? 'Sin zona';
-      conteo.set(zona, (conteo.get(zona) ?? 0) + 1);
+  async function asignarAChofer(visita: VisitaPendiente, choferId: string) {
+    if (!choferId) return;
+    try {
+      let ruta = rutas.find((r) => r.chofer_id === choferId);
+      if (!ruta) {
+        const res = await api.post<Ruta>('/api/rutas', { fecha, chofer_id: choferId });
+        ruta = res.data;
+      }
+      const viajeId = visita.entrega?.id ?? visita.retiro?.id ?? visita.id;
+      await api.post(`/api/rutas/${ruta.id}/paradas`, { viaje_id: viajeId });
+      const nombreChofer = choferes.find((c) => c.id === choferId)?.nombre ?? 'chofer';
+      show('success', 'Pedido asignado', `Asignado a la ruta de ${nombreChofer}.`);
+      setRutaSeleccionada(ruta.id);
+      recargarListas();
+    } catch (err: any) {
+      show('error', 'No se pudo asignar el pedido', err.response?.data?.error || 'Error desconocido');
     }
-    return [...conteo.entries()].map(([zona, n]) => (n > 1 ? `${zona} (×${n})` : zona)).join(' · ');
-  })();
+  }
 
   return (
     <div>
@@ -614,65 +650,142 @@ export function Rutas() {
         <div className="stat"><div className="l">Choferes activos</div><div className="n">{choferes.length}</div></div>
       </div>
 
-      <div className="section-title">Rutas por chofer</div>
-      <div className="routes-grid">
-        {choferes.map((chofer) => {
-          const ruta = rutas.find((r) => r.chofer_id === chofer.id);
-          if (!ruta) {
-            return (
-              <button key={chofer.id} className="route-card" onClick={() => armarRuta(chofer.id)}>
-                <div className="rc-head">
-                  <div className="rc-av">{iniciales(chofer.nombre)}</div>
-                  <div><div className="rc-nm">{chofer.nombre}</div><div className="rc-pat">—</div></div>
-                  <span className="badge vacia">Vacía</span>
-                </div>
-                <div className="rc-lines">
-                  <div className="rc-empty">Sin ruta armada</div>
-                  <div className="rc-cta">+ Armar ruta</div>
-                </div>
-              </button>
-            );
-          }
-          const stats = statsRutas.get(ruta.id) ?? { paradas: 0, ent: 0, ret: 0, rec: 0, warn: 0 };
-          const estado = ETIQUETA_ESTADO[ruta.estado];
-          const sel = ruta.id === rutaSeleccionada;
-          return (
-            <button
-              key={chofer.id}
-              className={`route-card${sel ? ' sel' : ''}${stats.warn ? ' warn' : ''}`}
-              onClick={() => setRutaSeleccionada(ruta.id)}
-            >
-              <div className="rc-head">
-                <div className="rc-av">{iniciales(chofer.nombre)}</div>
-                <div><div className="rc-nm">{chofer.nombre}</div><div className="rc-pat">{ruta.patente ?? '—'}</div></div>
-                <span className={`badge ${estado.clase}`}>{estado.texto}</span>
-              </div>
-              <div className="rc-lines">
-                <div className="rc-line"><span>Paradas</span><span className="v">{stats.paradas}</span></div>
-                <div className="rc-line"><span>Ent · ret · rec</span><span className="v">{stats.ent} · {stats.ret} · {stats.rec}</span></div>
-                {stats.warn > 0 && (
-                  <div className="rc-warn"><AlertTriangle size={13} strokeWidth={2} /> {stats.warn} parada{stats.warn > 1 ? 's' : ''} sin contenedor</div>
-                )}
-                <div className="rc-cta">{sel ? 'Editando ahora ↓' : 'Abrir y editar →'}</div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+      {/* Grid principal en 2 columnas: Bolsa (Izquierda) | Choferes y Detalle (Derecha) */}
+      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '20px', alignItems: 'start' }}>
+        
+        {/* COLUMNA IZQUIERDA: Bolsa de pedidos sin rutear */}
+        <div className="card" style={{ padding: '16px 18px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid var(--border)', paddingBottom: '10px' }}>
+            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>📦 Pedidos sin rutear</span>
+            </div>
+            <span className="badge programado" style={{ fontSize: '0.75rem' }}>{visitasPendientes.length}</span>
+          </div>
 
-      {visitasPendientes.length > 0 && (
-        <div className="unassigned">
-          <span className="t"><AlertTriangle size={16} strokeWidth={2} /> {visitasPendientes.length} pedido{visitasPendientes.length > 1 ? 's' : ''} todavía sin chofer asignado</span>
-          <span className="z">{zonasPendientes}</span>
+          {visitasPendientes.length === 0 ? (
+            <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes en la bolsa.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: 'calc(100vh - 240px)', overflowY: 'auto', paddingRight: '4px' }}>
+              {[...visitasPorZona.entries()].map(([zona, items]) => (
+                <div key={zona} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', background: 'var(--bg-surface)', padding: '4px 8px', borderRadius: 'var(--radius-sm)' }}>
+                    📍 {zona} ({items.length})
+                  </div>
+                  {items.map((visita) => (
+                    <div key={visita.id} className="qrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <div className="cli" style={{ fontSize: '0.82rem', fontWeight: 600 }}>{visita.destino_direccion ?? 'Sin dirección'}</div>
+                          <div className="sub" style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>
+                            {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
+                            {visita.cliente_telefono ? ` · 📞 ${visita.cliente_telefono}` : ''}
+                          </div>
+                        </div>
+                        <span className={`tag ${visita.entrega && visita.retiro ? 'recambio' : visita.entrega ? 'entrega' : 'retiro'}`} style={{ fontSize: '0.68rem', padding: '2px 6px' }}>
+                          {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '2px' }}>
+                        <select
+                          className="form-select"
+                          style={{ fontSize: '0.76rem', padding: '4px 8px', width: '100%' }}
+                          defaultValue=""
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              asignarAChofer(visita, e.target.value);
+                              e.target.value = '';
+                            }
+                          }}
+                        >
+                          <option value="" disabled>+ Asignar a chofer...</option>
+                          {choferes.map((c) => (
+                            <option key={c.id} value={c.id}>{c.nombre}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
 
-      {rutaSeleccionada && (
-        <>
-          <div className="section-title">Ruta seleccionada</div>
-          <DetalleRuta rutaId={rutaSeleccionada} cola={cola} contenedoresDisponibles={contenedoresDisponibles} rutasDelDia={rutas} onCambio={recargarListas} />
-        </>
-      )}
+        {/* COLUMNA DERECHA: Rutas por Chofer + Detalle de Ruta */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div>
+            <div className="section-title" style={{ marginBottom: '10px', fontSize: '0.9rem', fontWeight: 700 }}>
+              Choferes y Rutas del Día
+            </div>
+            <div className="routes-grid">
+              {choferes.map((chofer) => {
+                const ruta = rutas.find((r) => r.chofer_id === chofer.id);
+                if (!ruta) {
+                  return (
+                    <button key={chofer.id} className="route-card" onClick={() => armarRuta(chofer.id)}>
+                      <div className="rc-head">
+                        <div className="rc-av">{iniciales(chofer.nombre)}</div>
+                        <div><div className="rc-nm">{chofer.nombre}</div><div className="rc-pat">—</div></div>
+                        <span className="badge vacia">Vacía</span>
+                      </div>
+                      <div className="rc-lines">
+                        <div className="rc-empty">Sin ruta armada</div>
+                        <div className="rc-cta">+ Armar ruta</div>
+                      </div>
+                    </button>
+                  );
+                }
+                const stats = statsRutas.get(ruta.id) ?? { paradas: 0, ent: 0, ret: 0, rec: 0, warn: 0 };
+                const estado = ETIQUETA_ESTADO[ruta.estado];
+                const sel = ruta.id === rutaSeleccionada;
+                return (
+                  <button
+                    key={chofer.id}
+                    className={`route-card${sel ? ' sel' : ''}${stats.warn ? ' warn' : ''}`}
+                    onClick={() => setRutaSeleccionada(ruta.id)}
+                  >
+                    <div className="rc-head">
+                      <div className="rc-av">{iniciales(chofer.nombre)}</div>
+                      <div><div className="rc-nm">{chofer.nombre}</div><div className="rc-pat">{ruta.patente ?? '—'}</div></div>
+                      <span className={`badge ${estado.clase}`}>{estado.texto}</span>
+                    </div>
+                    <div className="rc-lines">
+                      <div className="rc-line"><span>Paradas</span><span className="v">{stats.paradas}</span></div>
+                      <div className="rc-line"><span>Ent · ret · rec</span><span className="v">{stats.ent} · {stats.ret} · {stats.rec}</span></div>
+                      {stats.warn > 0 && (
+                        <div className="rc-warn"><AlertTriangle size={13} strokeWidth={2} /> {stats.warn} parada{stats.warn > 1 ? 's' : ''} sin contenedor</div>
+                      )}
+                      <div className="rc-cta">{sel ? 'Editando ahora ↓' : 'Abrir y editar →'}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {rutaSeleccionada ? (
+            <div>
+              <div className="section-title" style={{ marginBottom: '10px', fontSize: '0.9rem', fontWeight: 700 }}>
+                Detalle y Armado de Ruta
+              </div>
+              <DetalleRuta
+                rutaId={rutaSeleccionada}
+                contenedoresDisponibles={contenedoresDisponibles}
+                rutasDelDia={rutas}
+                choferes={choferes}
+                onCambio={recargarListas}
+              />
+            </div>
+          ) : (
+            <div className="card empty-state" style={{ padding: '40px 20px' }}>
+              <div className="empty-state-title">Ninguna ruta seleccionada</div>
+              <div className="empty-state-text">Hacé clic en un chofer arriba para ver y armar su ruta, o asignale pedidos directamente desde la bolsa a la izquierda.</div>
+            </div>
+          )}
+        </div>
+
+      </div>
     </div>
   );
 }
