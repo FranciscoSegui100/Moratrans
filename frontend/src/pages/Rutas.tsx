@@ -75,6 +75,8 @@ function agruparPendientes(viajes: ViajePendiente[]): VisitaPendiente[] {
       };
       porGrupo.set(v.grupo_id, visita);
     }
+    if (!visita.destino_direccion && v.destino_direccion) visita.destino_direccion = v.destino_direccion;
+    if (!visita.zona && v.zona) visita.zona = v.zona;
     if (v.tipo === 'entrega') visita.entrega = v;
     if (v.tipo === 'retiro') visita.retiro = v;
   }
@@ -685,20 +687,28 @@ export function Rutas() {
                   <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', background: 'var(--bg-surface)', padding: '4px 8px', borderRadius: 'var(--radius-sm)' }}>
                     📍 {zona} ({items.length})
                   </div>
-                  {items.map((visita) => (
-                    <div key={visita.id} className="qrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                          <div className="cli" style={{ fontSize: '0.82rem', fontWeight: 600 }}>{visita.destino_direccion ?? 'Sin dirección'}</div>
-                          <div className="sub" style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>
-                            {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
-                            {visita.cliente_telefono ? ` · 📞 ${visita.cliente_telefono}` : ''}
+                  {items.map((visita) => {
+                    const direccionPedido = visita.destino_direccion
+                      || visita.entrega?.destino_direccion
+                      || visita.retiro?.destino_direccion
+                      || (visita.zona ? `Zona ${visita.zona}` : 'Dirección sin especificar');
+
+                    return (
+                      <div key={visita.id} className="qrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                          <div>
+                            <div className="cli" style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: '1.25' }}>
+                              📍 {direccionPedido}
+                            </div>
+                            <div className="sub" style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '3px' }}>
+                              {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
+                              {visita.cliente_telefono ? ` · 📞 ${visita.cliente_telefono}` : ''}
+                            </div>
                           </div>
+                          <span className={`tag ${visita.entrega && visita.retiro ? 'recambio' : visita.entrega ? 'entrega' : 'retiro'}`} style={{ fontSize: '0.68rem', padding: '2px 6px', flexShrink: 0 }}>
+                            {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
+                          </span>
                         </div>
-                        <span className={`tag ${visita.entrega && visita.retiro ? 'recambio' : visita.entrega ? 'entrega' : 'retiro'}`} style={{ fontSize: '0.68rem', padding: '2px 6px' }}>
-                          {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
-                        </span>
-                      </div>
 
                       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '2px' }}>
                         <select
@@ -717,9 +727,10 @@ export function Rutas() {
                             <option key={c.id} value={c.id}>{c.nombre}</option>
                           ))}
                         </select>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ))}
             </div>
