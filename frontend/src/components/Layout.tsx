@@ -13,8 +13,6 @@ import {
   DollarSign,
   MapPin,
   ShieldCheck,
-  Lock,
-  History,
   LogOut,
   MessageCircle,
 } from 'lucide-react';
@@ -39,8 +37,6 @@ const nav: { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] }
   { to: '/tarifas', label: 'Tarifas', icon: DollarSign },
   { to: '/ubicaciones', label: 'Ubicaciones', icon: MapPin },
   { to: '/usuarios', label: 'Usuarios', icon: ShieldCheck, roles: ['admin'] },
-  { to: '/seguridad', label: 'Seguridad', icon: Lock },
-  { to: '/auditoria', label: 'Auditoría', icon: History, roles: ['admin'] },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
