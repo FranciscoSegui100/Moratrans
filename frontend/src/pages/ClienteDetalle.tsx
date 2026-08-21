@@ -106,10 +106,10 @@ export function ClienteDetalle() {
     queryFn: () => api.get<ViajeCliente[]>(`/api/clientes/${encodeURIComponent(telefono)}/viajes`).then((r) => r.data),
     enabled: !!telefono,
   });
-  // TEMPORAL: si es cuenta corriente y todavía no tiene viajes reales, se
-  // muestran de ejemplo para previsualizar cómo queda la tabla con datos.
+  // TEMPORAL: si todavía no tiene viajes reales, se muestran de ejemplo
+  // para previsualizar cómo queda la tabla con datos. BORRAR cuando ya no haga falta.
   const esCC = cliente?.cuenta_corriente_estado === 'aprobada' || cliente?.cuenta_corriente_estado === 'pendiente';
-  const viajes = viajesReales.length === 0 && esCC ? viajesDeEjemplo() : viajesReales;
+  const viajes = viajesReales.length === 0 ? viajesDeEjemplo() : viajesReales;
 
   // Ya vienen ordenados por fecha DESC desde el backend: agrupar preservando
   // ese orden deja los meses más recientes arriba sin tener que reordenar.
