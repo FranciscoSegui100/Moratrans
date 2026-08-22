@@ -189,10 +189,13 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
   // ofrece solo Cotizar, que además salta el selector de departamento y pide
   // ubicación GPS directo (ver handleCotizacion en cotizacion.flow.ts).
   if (!cliente && !tieneContenedor) {
+    // El header de una lista de WhatsApp (a diferencia del body) no admite
+    // markdown y tiene un límite más chico — mismo estilo corto y sin
+    // formato que el resto de los sendList del código (ver más abajo).
     await sendList(
       to,
-      '👋 ¡Hola! Soy el asistente de *MoraTrans* 🚚.',
-      'Para arrancar, pedime una cotización del flete 👇',
+      '👋 ¡Hola!',
+      'Soy el asistente de *MoraTrans* 🚚. Para arrancar, pedime una cotización del flete 👇',
       'Ver opciones',
       [{ id: 'opt_cotizar', title: '🧮 Cotizar', description: 'Precio del flete por tu ubicación' }],
     );
