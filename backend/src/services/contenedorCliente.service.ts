@@ -9,9 +9,18 @@ export interface ContenedorCliente {
 }
 
 /**
- * Contenedores actualmente entregados a este teléfono, según su entrega
- * activa más reciente. Usado por los flujos de recambio y de pedir retiro
- * (el cliente elige entre SUS contenedores, no cualquiera).
+ * Contenedores actualmente entregados a este teléfono, según su entrega más
+ * reciente. Usado por los flujos de recambio, pedir retiro, alargar retiro y
+ * el menú principal (el cliente elige entre SUS contenedores, no cualquiera).
+ *
+ * `contenedores.estado = 'entregado'` es la fuente de verdad de "lo tiene
+ * ahora" — el join contra `viajes` es solo para sacarle la zona/dirección a
+ * esa entrega. Por eso NO se filtra por `viajes.estado IN
+ * ('programado','en_curso')`: un operador puede marcar esa fila como
+ * 'completado' desde el panel (Viajes > Estado) una vez confirmada la
+ * entrega, y antes eso hacía desaparecer al contenedor de acá — dejaba sin
+ * efecto recambio/retiro/alargar retiro y el menú reducido para ese cliente
+ * sin ningún error visible. Solo se descarta 'cancelado' (entrega que nunca pasó).
  */
 export async function contenedoresDelCliente(telefono: string): Promise<ContenedorCliente[]> {
   return query<ContenedorCliente>(
@@ -20,7 +29,7 @@ export async function contenedoresDelCliente(telefono: string): Promise<Contened
        CROSS JOIN LATERAL (
          SELECT v.zona, v.destino_direccion, v.destino_lat, v.destino_lng, v.cliente_telefono
            FROM viajes v
-          WHERE v.contenedor_numero = c.numero AND v.tipo = 'entrega' AND v.estado IN ('programado', 'en_curso')
+          WHERE v.contenedor_numero = c.numero AND v.tipo = 'entrega' AND v.estado <> 'cancelado'
           ORDER BY v.creado_en DESC LIMIT 1
        ) ultima
       WHERE c.estado = 'entregado' AND ultima.cliente_telefono = $1
