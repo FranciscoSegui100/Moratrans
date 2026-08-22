@@ -5,6 +5,7 @@ import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { reverseGeocode } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
+import { manejarRespuestaInvalida } from '../estados';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -94,7 +95,7 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
   if (m.seleccionId !== 'entrega_cliente_si') {
-    await sendText(to, 'Elegí "✅ Sí, es correcta" o "↩️ Volver a enviar".\n\n_Escribí *menú* para volver al inicio._');
+    await manejarRespuestaInvalida(m, 'Elegí "✅ Sí, es correcta" o "↩️ Volver a enviar".\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
 

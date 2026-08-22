@@ -6,23 +6,25 @@ import { encrypt, encryptBuffer } from '../../../services/crypto.service';
 import { subirArchivo } from '../../../services/storage.service';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { datosBancarios, opcionesMetodoPago, tieneCuentaCorrienteAprobada } from './pago.flow';
+import { manejarRespuestaInvalida } from '../estados';
+import { escalarAAsesor } from './asesor.flow';
+import { DIAS_ALARGUE, COSTO_ALARGUE_FIJO } from '../../../config/bot.config';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
-/** Fijo: no se le pregunta al cliente cuántos días — siempre son 5. */
-const DIAS_ALARGUE = 5;
-
 /**
- * "Alargar retiro": un cliente que ya tiene un contenedor entregado paga el
- * 50% de su último pago validado para sumar 5 días más al vencimiento. Sigue
+ * "Alargar retiro": un cliente que ya tiene un contenedor entregado paga un
+ * costo fijo (ver bot.config.ts) para sumar 5 días más al vencimiento. Sigue
  * el mismo circuito que cualquier pago (comprobante + validación de un
  * operador, o cuenta corriente si la tiene) — la extensión recién se aplica
- * cuando se valida, ver POST /api/pagos/:id/validar.
+ * cuando se valida, ver POST /api/pagos/:id/validar. Solo se puede pedir UNA
+ * vez por ciclo (desde la última entrega/recambio del contenedor); si el
+ * cliente quiere más, se deriva a un asesor en vez de dejarlo repetir.
  */
 export async function handleAlargarRetiro(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
 
-  if (sesion.paso === 'elegir_contenedor_alargue') return manejarEleccionContenedor(m);
+  if (sesion.paso === 'elegir_contenedor_alargue') return manejarEleccionContenedor(m, sesion);
   if (sesion.paso === 'confirmar_alargue') return manejarConfirmacion(m, sesion);
   if (sesion.paso === 'elegir_metodo_alargue') return manejarMetodo(m, sesion);
   if (sesion.paso === 'esperando_comprobante_alargue') return manejarComprobante(m, sesion);
@@ -36,7 +38,7 @@ export async function handleAlargarRetiro(m: MensajeEntrante, sesion: Sesion): P
     );
     return;
   }
-  if (conts.length === 1) return pedirConfirmacion(to, conts[0]);
+  if (conts.length === 1) return pedirConfirmacion(to, conts[0], sesion);
   await setSesion({ telefono: to, flujo: 'alargar_retiro', paso: 'elegir_contenedor_alargue', contexto: {} });
   await sendList(
     to,
@@ -47,10 +49,10 @@ export async function handleAlargarRetiro(m: MensajeEntrante, sesion: Sesion): P
   );
 }
 
-async function manejarEleccionContenedor(m: MensajeEntrante): Promise<void> {
+async function manejarEleccionContenedor(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
   if (m.tipo !== 'interactive_list' || !m.seleccionId?.startsWith('alarg:')) {
-    await sendText(to, 'Por favor, elegí uno de la lista de arriba. 👆');
+    await manejarRespuestaInvalida(m, 'Por favor, elegí uno de la lista de arriba. 👆');
     return;
   }
   const numero = m.seleccionId.replace('alarg:', '');
@@ -60,45 +62,48 @@ async function manejarEleccionContenedor(m: MensajeEntrante): Promise<void> {
     await sendText(to, '🙁 Ese contenedor ya no está disponible. Escribí *menú* para volver a empezar.');
     return;
   }
-  await pedirConfirmacion(to, cont);
+  await pedirConfirmacion(to, cont, sesion);
 }
 
-/** El 50% del monto del último pago validado de este cliente (cualquier contenedor). */
-async function calcularCosto(telefono: string): Promise<{ costo: number; moneda: string | null } | null> {
-  const [ultimo] = await query<{ precio: string; moneda: string | null }>(
-    `SELECT pe.precio, td.moneda
-       FROM pagos p
-       JOIN pedidos pe ON pe.id = p.pedido_id
-       LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
-      WHERE p.cliente_telefono = $1 AND p.estado = 'validado' AND p.tipo = 'flete' AND pe.precio IS NOT NULL
-      ORDER BY p.creado_en DESC LIMIT 1`,
-    [telefono],
+/**
+ * ¿Ya se usó el alargue en el ciclo actual de este contenedor? El "ciclo"
+ * arranca en la última entrega/recambio (viaje tipo 'entrega' más reciente,
+ * no cancelado) — un recambio nuevo abre un ciclo nuevo, así que vuelve a
+ * habilitar la extensión.
+ */
+async function yaUsoElAlargueEsteCiclo(numero: string): Promise<boolean> {
+  const [ultimaEntrega] = await query<{ creado_en: string }>(
+    `SELECT creado_en FROM viajes WHERE contenedor_numero = $1 AND tipo = 'entrega' AND estado <> 'cancelado' ORDER BY creado_en DESC LIMIT 1`,
+    [numero],
   );
-  if (!ultimo) return null;
-  const costo = Math.round(Number(ultimo.precio) * 0.5 * 100) / 100;
-  return { costo, moneda: ultimo.moneda };
+  const desde = ultimaEntrega?.creado_en ?? '1970-01-01';
+  const [existente] = await query<{ id: string }>(
+    `SELECT id FROM pagos WHERE contenedor_numero = $1 AND tipo = 'alargue_retiro' AND estado <> 'rechazado' AND creado_en >= $2 LIMIT 1`,
+    [numero, desde],
+  );
+  return !!existente;
 }
 
-async function pedirConfirmacion(to: string, cont: ContenedorCliente): Promise<void> {
-  const base = await calcularCosto(to);
-  if (!base) {
-    await clearSesion(to);
-    await sendText(
+async function pedirConfirmacion(to: string, cont: ContenedorCliente, sesion: Sesion): Promise<void> {
+  if (await yaUsoElAlargueEsteCiclo(cont.numero)) {
+    await escalarAAsesor(
       to,
-      '🙁 No pudimos calcular el costo del alargue automáticamente (no encontramos un pago anterior validado). Escribí *asesor* para coordinarlo.',
+      sesion,
+      `${to} quiere extender de nuevo el retiro del contenedor ${cont.numero} (ya usó su extensión de este ciclo)`,
     );
     return;
   }
+
   await setSesion({
     telefono: to,
     flujo: 'alargar_retiro',
     paso: 'confirmar_alargue',
-    contexto: { numero: cont.numero, costo: base.costo, moneda: base.moneda },
+    contexto: { numero: cont.numero, costo: COSTO_ALARGUE_FIJO },
   });
   await sendButtons(
     to,
-    `⏳ Extender *${DIAS_ALARGUE} días* más el retiro del contenedor *${cont.numero}* cuesta *${base.moneda ?? ''} ${base.costo.toLocaleString('es-AR')}*` +
-      ' (50% de tu último pago).\n\n¿Confirmás?',
+    `⏳ Extender *${DIAS_ALARGUE} días* más el retiro del contenedor *${cont.numero}* cuesta *ARS ${COSTO_ALARGUE_FIJO.toLocaleString('es-AR')}*.\n\n` +
+      'Solo se puede pedir una vez por contenedor. ¿Confirmás?',
     [
       { id: 'alargue_si', title: '✅ Sí, confirmar' },
       { id: 'alargue_no', title: '↩️ Cancelar' },
@@ -114,7 +119,7 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
   if (m.seleccionId !== 'alargue_si') {
-    await sendText(to, 'Elegí "✅ Sí, confirmar" o "↩️ Cancelar".');
+    await manejarRespuestaInvalida(m, 'Elegí "✅ Sí, confirmar" o "↩️ Cancelar".');
     return;
   }
   await setSesion({ ...sesion, paso: 'elegir_metodo_alargue' });
@@ -174,7 +179,7 @@ async function registrarAlargue(
 ): Promise<void> {
   const numero = sesion.contexto.numero as string;
   const costo = sesion.contexto.costo as number;
-  const moneda = (sesion.contexto.moneda as string | null) ?? null;
+  const moneda = 'ARS';
 
   const [row] = await query<{ id: string }>(
     `INSERT INTO pagos (cliente_telefono, tipo, contenedor_numero, monto, url_comprobante, media_id, es_cuenta_corriente, estado)

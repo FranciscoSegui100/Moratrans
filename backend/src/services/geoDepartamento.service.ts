@@ -47,7 +47,8 @@ export async function estaDentroDeDepartamento(
 export async function detectarDepartamento(lat: number, lng: number): Promise<string | null> {
   const filas = await query<{ departamento: string; limite_geografico: Anillo }>(
     `SELECT departamento, limite_geografico FROM tarifas_departamento
-      WHERE limite_geografico IS NOT NULL AND activo = TRUE`,
+      WHERE limite_geografico IS NOT NULL AND activo = TRUE
+      ORDER BY prioridad ASC, departamento ASC`,
   );
   for (const fila of filas) {
     if (puntoEnPoligono(lat, lng, fila.limite_geografico)) return fila.departamento;
@@ -55,27 +56,42 @@ export async function detectarDepartamento(lat: number, lng: number): Promise<st
   return null;
 }
 
-/**
- * Heurística de texto libre (sin GPS, no se puede geocodificar gratis): si
- * el cliente escribió el nombre de OTRO departamento activo dentro de la
- * dirección, es una señal de que puede haberse equivocado al elegir el
- * departamento de la cotización. No bloquea nada — solo agrega un aviso a
- * la confirmación de dirección.
- */
-export async function departamentoMencionadoDistinto(
-  texto: string,
-  departamentoSeleccionado: string,
-): Promise<string | null> {
-  const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const t = normalizar(texto);
-  const selNorm = normalizar(departamentoSeleccionado);
+const RADIO_TIERRA_KM = 6371;
 
-  const filas = await query<{ departamento: string }>(
-    'SELECT departamento FROM tarifas_departamento WHERE activo = TRUE',
+function distanciaHaversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const aRad = (Math.PI / 180) * (lat2 - lat1);
+  const bRad = (Math.PI / 180) * (lng2 - lng1);
+  const h =
+    Math.sin(aRad / 2) ** 2 +
+    Math.cos((Math.PI / 180) * lat1) * Math.cos((Math.PI / 180) * lat2) * Math.sin(bRad / 2) ** 2;
+  return RADIO_TIERRA_KM * 2 * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Caso borde "punto fuera de todas las zonas": en vez de inventar un precio,
+ * se le avisa al cliente qué tan lejos está de la base más cercana (depósito
+ * o vaciadero con coordenadas cargadas, ver migración 0029) antes de
+ * derivarlo a un asesor. `null` si no hay ninguna ubicación propia con
+ * lat/lng cargado todavía (no bloquea el resto del flujo, solo no se puede
+ * mostrar la distancia).
+ */
+export async function distanciaALaBaseMasCercana(
+  lat: number,
+  lng: number,
+): Promise<{ nombre: string; distanciaKm: number } | null> {
+  const bases = await query<{ nombre: string; lat: number; lng: number }>(
+    `SELECT nombre, lat, lng FROM ubicaciones WHERE activo = TRUE AND lat IS NOT NULL AND lng IS NOT NULL`,
   );
-  for (const { departamento } of filas) {
-    const dNorm = normalizar(departamento);
-    if (dNorm !== selNorm && t.includes(dNorm)) return departamento;
+  if (bases.length === 0) return null;
+
+  let masCercana = bases[0];
+  let distanciaMin = distanciaHaversineKm(lat, lng, bases[0].lat, bases[0].lng);
+  for (const base of bases.slice(1)) {
+    const d = distanciaHaversineKm(lat, lng, base.lat, base.lng);
+    if (d < distanciaMin) {
+      distanciaMin = d;
+      masCercana = base;
+    }
   }
-  return null;
+  return { nombre: masCercana.nombre, distanciaKm: Math.round(distanciaMin * 10) / 10 };
 }

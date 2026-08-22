@@ -1,15 +1,19 @@
 import { query } from '../../../config/db';
-import { sendText, motivoErrorWa } from '../graphApi';
+import { sendText, sendButtons, motivoErrorWa } from '../graphApi';
 import { enviarExcelClientePorWhatsApp } from '../../reportes/reportes.service';
+import { ID_ASESOR_DIRECTO } from '../estados';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
 /**
- * Detalle de movimientos: solo para clientes con cuenta corriente aprobada
- * (mismo criterio que "Pedir entrega", ver pedirEntrega.flow.ts) — es una
- * acción de un solo paso, no necesita sesión/flujo propio: genera el mismo
- * Excel que ya arma el botón del panel (ver clientes.routes.ts) y se lo
- * manda directo por WhatsApp.
+ * Detalle de movimientos ("resumen de cuenta" en el menú): solo para
+ * clientes con cuenta corriente aprobada (mismo criterio que "Pedir
+ * entrega", ver pedirEntrega.flow.ts) — es una acción de un solo paso, no
+ * necesita sesión/flujo propio: genera el mismo Excel que ya arma el botón
+ * del panel (ver clientes.routes.ts) y se lo manda directo por WhatsApp.
+ * Si lo pide un cliente común, se le explica y se le ofrece un asesor —
+ * regla explícita del dueño (ver estados.ts::ID_ASESOR_DIRECTO, mismo botón
+ * que usa el mecanismo de reintentos para escalar directo).
  */
 export async function handleDetalleMovimientos(m: MensajeEntrante, _sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -19,11 +23,9 @@ export async function handleDetalleMovimientos(m: MensajeEntrante, _sesion: Sesi
     [to],
   );
   if (cliente?.cuenta_corriente_estado !== 'aprobada') {
-    await sendText(
-      to,
-      '📊 El detalle de movimientos es para clientes con *cuenta corriente aprobada*.\n\n' +
-        'Escribí *asesor* si creés que ya deberías tener cuenta corriente.',
-    );
+    await sendButtons(to, '📊 El resumen de cuenta es para clientes con *cuenta corriente aprobada*. Si creés que ya deberías tenerla:', [
+      { id: ID_ASESOR_DIRECTO, title: '🙋 Hablar con asesor' },
+    ]);
     return;
   }
 

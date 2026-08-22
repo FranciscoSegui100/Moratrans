@@ -40,6 +40,8 @@ export async function getSesion(telefono: string): Promise<Sesion> {
  * a NULL: si ya se había mandado el aviso de "se va a cerrar el chat" pero el
  * cliente respondió antes de que se cerrara, el cron de inactividad tiene que
  * volver a contar los 5 min desde esta actividad, no desde el aviso viejo.
+ * También resetea `intentos_invalidos` a 0: llegar acá significa que la
+ * respuesta SÍ era válida para el estado actual (ver registrarIntentoInvalido).
  */
 export async function setSesion(s: Sesion): Promise<void> {
   await query(
@@ -50,7 +52,8 @@ export async function setSesion(s: Sesion): Promise<void> {
            paso = EXCLUDED.paso,
            contexto = EXCLUDED.contexto,
            actualizado_en = now(),
-           avisado_en = NULL`,
+           avisado_en = NULL,
+           intentos_invalidos = 0`,
     [s.telefono, s.flujo, s.paso, JSON.stringify(s.contexto)],
   );
 }
@@ -58,4 +61,23 @@ export async function setSesion(s: Sesion): Promise<void> {
 /** Limpia la sesión (fin de flujo). */
 export async function clearSesion(telefono: string): Promise<void> {
   await query('DELETE FROM sesiones_chat WHERE telefono = $1', [telefono]);
+}
+
+/**
+ * Suma 1 a `intentos_invalidos` (respuesta que no corresponde al estado
+ * actual) y devuelve el contador ya actualizado. No toca flujo/paso/contexto
+ * — el cliente sigue en el mismo estado, solo cambia cuántas veces seguidas
+ * le erró. Usado por estados.ts::manejarRespuestaInvalida. `setSesion`
+ * resetea este contador a 0 en cualquier transición válida.
+ */
+export async function registrarIntentoInvalido(telefono: string): Promise<number> {
+  const rows = await query<{ intentos_invalidos: number }>(
+    `INSERT INTO sesiones_chat (telefono, intentos_invalidos)
+     VALUES ($1, 1)
+     ON CONFLICT (telefono) DO UPDATE
+       SET intentos_invalidos = sesiones_chat.intentos_invalidos + 1
+     RETURNING intentos_invalidos`,
+    [telefono],
+  );
+  return rows[0].intentos_invalidos;
 }

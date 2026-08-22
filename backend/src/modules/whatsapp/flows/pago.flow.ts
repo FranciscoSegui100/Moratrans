@@ -7,6 +7,7 @@ import { encrypt, encryptBuffer } from '../../../services/crypto.service';
 import { subirArchivo } from '../../../services/storage.service';
 import { obtenerOCrearCliente } from '../../../services/clientes.service';
 import { env } from '../../../config/env';
+import { manejarRespuestaInvalida } from '../estados';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -243,7 +244,7 @@ async function iniciarCuentaCorriente(m: MensajeEntrante): Promise<void> {
 async function manejarEleccionPedidoCC(m: MensajeEntrante, _sesion: Sesion): Promise<void> {
   const to = m.from;
   if (m.tipo !== 'interactive_list' || !m.seleccionId?.startsWith('pedido:')) {
-    await sendText(to, 'Por favor, elegí una de las cotizaciones de la lista de arriba. 👆\n\n_Escribí *menú* para volver al inicio._');
+    await manejarRespuestaInvalida(m, 'Por favor, elegí una de las cotizaciones de la lista de arriba. 👆\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
   const pedidoId = m.seleccionId.replace('pedido:', '');
@@ -321,7 +322,7 @@ async function manejarEleccionPedido(m: MensajeEntrante, sesion: Sesion): Promis
   const mediaId = (sesion.contexto?.mediaId as string | null) ?? null;
 
   if (!rutaCifrada || m.tipo !== 'interactive_list' || !m.seleccionId?.startsWith('pedido:')) {
-    await sendText(to, 'Por favor, elegí una de las cotizaciones de la lista de arriba. 👆\n\n_Escribí *menú* para volver al inicio._');
+    await manejarRespuestaInvalida(m, 'Por favor, elegí una de las cotizaciones de la lista de arriba. 👆\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
 

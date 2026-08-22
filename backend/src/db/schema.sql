@@ -23,7 +23,11 @@ CREATE TYPE estado_contenedor AS ENUM (
 );
 
 CREATE TYPE estado_pedido AS ENUM (
-  'nuevo', 'cotizado', 'confirmado', 'en_proceso', 'completado', 'cancelado'
+  'nuevo', 'cotizado', 'confirmado', 'en_proceso', 'completado', 'cancelado',
+  -- La ubicación del cliente no cayó dentro de ninguna zona de cobertura: no
+  -- se inventa precio, un operador lo tiene que liberar a mano (ver
+  -- geoDepartamento.service.ts y migración 0031).
+  'fuera_de_zona'
 );
 
 CREATE TYPE estado_pago AS ENUM (
@@ -157,7 +161,10 @@ CREATE TABLE tarifas_departamento (
   -- geoDepartamento.service.ts para detectar cuando la ubicación que
   -- comparte el cliente no coincide con el departamento que cotizó (ver
   -- migración 0025). NULL = sin polígono cargado, no se valida ese depto.
-  limite_geografico JSONB
+  limite_geografico JSONB,
+  -- Orden de evaluación cuando dos polígonos se superponen: detectarDepartamento
+  -- recorre por prioridad ascendente y se queda con la primera que matchea.
+  prioridad INT NOT NULL DEFAULT 0
 );
 
 -- ---------------------------------------------------------------------
@@ -203,6 +210,11 @@ CREATE TABLE pedidos (
   -- ej. "🌅 Mañana (8 a 12hs)") — no confundir con viajes.hora_estimada, que
   -- es el compromiso que arma el operador, no lo que pidió el cliente.
   horario_preferido TEXT,
+  numero_pedido    SERIAL,                       -- identificador corto para mostrarle al cliente
+  tipo_lugar       TEXT CHECK (tipo_lugar IN ('casa', 'obra', 'comercio', 'consorcio')),
+  en_via_publica   BOOLEAN,                       -- si va sobre la vía pública, hace falta permiso municipal
+  fecha_entrega    DATE,                          -- día hábil elegido por el cliente
+  fecha_retiro_estimada DATE,                     -- = fecha_entrega + 7 días, calculada al confirmar
   estado           estado_pedido NOT NULL DEFAULT 'nuevo',
   -- 'recambio': se cotiza y se cobra igual que una entrega, pero al validar
   -- el pago se crea el par retiro(lleno)+entrega(vacío) en vez de una sola
@@ -292,7 +304,11 @@ CREATE TABLE sesiones_chat (
   paso          TEXT,                          -- estado dentro del flujo
   contexto      JSONB NOT NULL DEFAULT '{}',   -- datos temporales del flujo (incluye modoHumano)
   actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
-  avisado_en    TIMESTAMPTZ                    -- cuándo se avisó "se va a cerrar el chat" (null = no avisado)
+  avisado_en    TIMESTAMPTZ,                   -- cuándo se avisó "se va a cerrar el chat" (null = no avisado)
+  -- Respuestas seguidas que no corresponden al estado actual (ver
+  -- estados.ts::manejarRespuestaInvalida). Se resetea a 0 en cualquier
+  -- transición válida (setSesion).
+  intentos_invalidos INT NOT NULL DEFAULT 0
 );
 
 -- ---------------------------------------------------------------------
@@ -319,6 +335,10 @@ CREATE TABLE ubicaciones (
   tipo      tipo_ubicacion NOT NULL,
   nombre    TEXT NOT NULL,
   direccion TEXT NOT NULL,
+  -- Opcional (NULL = sin cargar): usado para calcular la distancia cuando un
+  -- cliente comparte una ubicación fuera de todas las zonas de cobertura.
+  lat       NUMERIC(9,6),
+  lng       NUMERIC(9,6),
   activo    BOOLEAN NOT NULL DEFAULT TRUE,
   creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
 );

@@ -1,0 +1,11 @@
+-- Nuevo estado para cuando el cliente comparte una ubicación que no cae
+-- dentro de NINGUNA zona de cobertura (ver caso borde 2 de verificación de
+-- ubicación). El pedido queda en este estado -en vez de cotizarse con un
+-- precio inventado- hasta que un operador lo libere a mano (le asigna zona
+-- y precio manualmente desde el panel).
+--
+-- ALTER TYPE ... ADD VALUE no puede usarse en la misma transacción en la que
+-- se agrega (ver migrate.ts: cada archivo corre en su propia transacción) —
+-- por eso esto va solo en esta migración, separado de cualquier INSERT/UPDATE
+-- que lo use.
+ALTER TYPE estado_pedido ADD VALUE IF NOT EXISTS 'fuera_de_zona';

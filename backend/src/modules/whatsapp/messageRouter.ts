@@ -11,6 +11,30 @@ import { handlePedirEntrega } from './flows/pedirEntrega.flow';
 import { handleDetalleMovimientos } from './flows/movimientos.flow';
 import { handleAlargarRetiro } from './flows/alargarRetiro.flow';
 import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
+import { esAsesorDirecto, manejarAsesorDirecto } from './estados';
+import type { Sesion } from './session.store';
+
+/**
+ * Submenú "Gestionar mi contenedor": unifica retiro anticipado, recambio y
+ * extensión (antes eran 3 botones sueltos en el menú principal). Es un
+ * mensaje de un solo paso, sin flujo/paso propio — cada opción dispara
+ * directo el flow correspondiente por su seleccionId de siempre.
+ */
+async function enviarMenuGestionar(to: string): Promise<void> {
+  await sendList(
+    to,
+    '🛠️ Gestionar mi contenedor',
+    '¿Qué necesitás hacer con tu contenedor?',
+    'Ver opciones',
+    [
+      { id: 'opt_pedir_retiro', title: '📥 Retiro anticipado', description: 'Se llenó antes de tiempo: que lo pasen a buscar' },
+      { id: 'opt_recambio', title: '🔄 Recambio', description: 'Cambiar el contenedor lleno por uno vacío' },
+      { id: 'opt_alargar_retiro', title: '⏳ Extender 5 días', description: 'Sumar 5 días más antes de que lo retiremos' },
+      { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
+    ],
+  );
+  await setSesion({ telefono: to, flujo: 'menu', paso: null, contexto: {} });
+}
 
 /** Mensaje normalizado, agnóstico del formato crudo de Meta. */
 export interface MensajeEntrante {
@@ -104,6 +128,13 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   // escriba "menú" (arriba) o el operador marque la alerta como resuelta.
   const enModoHumano = !!sesion.contexto?.modoHumano;
 
+  // 2.a) Botón "Hablar con asesor" ofrecido tras 2 respuestas inválidas
+  // seguidas (ver estados.ts): escala directo, sin el conteo de 3 pedidos
+  // espontáneos que sí tiene pideAsesor() más abajo.
+  if (!enModoHumano && esAsesorDirecto(m)) {
+    return manejarAsesorDirecto(m, sesion);
+  }
+
   if (!enModoHumano && m.tipo !== 'image' && m.tipo !== 'document' && pideAsesor(m)) {
     return handleAsesor(m, sesion);
   }
@@ -131,7 +162,9 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   if (sesion.flujo === 'alargar_retiro') return handleAlargarRetiro(m, sesion);
 
   // 5) Comandos de arranque
-  if (m.seleccionId === 'opt_cotizar' || t.includes('cotiz')) return handleCotizacion(m, { ...sesion, flujo: 'cotizacion', paso: null });
+  if (m.seleccionId === 'opt_cotizar' || t.includes('cotiz') || t.includes('nuevo contenedor') || t.includes('pedir contenedor')) {
+    return iniciarPedirContenedor(m, sesion);
+  }
   if (
     m.seleccionId === 'opt_pagar' ||
     t.includes('pago') ||
@@ -141,23 +174,20 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   ) {
     return handlePago(m, { ...sesion, flujo: 'pago', paso: null });
   }
+  if (m.seleccionId === 'opt_gestionar' || t.includes('gestionar')) {
+    return enviarMenuGestionar(m.from);
+  }
   if (m.seleccionId === 'opt_recambio' || t.includes('recambio')) {
     return handleRecambio(m, { ...sesion, flujo: 'recambio', paso: null });
   }
   if (m.seleccionId === 'opt_pedir_retiro' || t.includes('retiro') || t.includes('retirar')) {
     return handlePedirRetiro(m, { ...sesion, flujo: 'pedir_retiro', paso: null });
   }
-  if (m.seleccionId === 'opt_pedir_entrega' || t.includes('entrega')) {
-    return handlePedirEntrega(m, { ...sesion, flujo: 'pedir_entrega', paso: null });
-  }
-  if (m.seleccionId === 'opt_detalle_movimientos' || t.includes('movimiento')) {
+  if (m.seleccionId === 'opt_detalle_movimientos' || t.includes('movimiento') || t.includes('resumen')) {
     return handleDetalleMovimientos(m, sesion);
   }
-  if (m.seleccionId === 'opt_alargar_retiro' || t.includes('alargar')) {
+  if (m.seleccionId === 'opt_alargar_retiro' || t.includes('alargar') || t.includes('extender')) {
     return handleAlargarRetiro(m, { ...sesion, flujo: 'alargar_retiro', paso: null });
-  }
-  if (m.seleccionId === 'opt_pedir_nuevo_contenedor' || t.includes('nuevo contenedor') || t.includes('otro contenedor')) {
-    return handlePedirNuevoContenedor(m, { ...sesion, flujo: 'cotizacion', paso: null });
   }
 
   // 6) Fallback
@@ -165,112 +195,90 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
 }
 
 /**
- * Identifica al cliente por su teléfono (ver clientes.service.ts) y arma un
- * menú distinto según quién es:
- *  - Cliente nuevo (nunca cotizó/pagó, sin contenedor): menú de un solo paso
- *    con "Cotizar" + "Asesor" — ver más abajo.
- *  - Cliente ocasional (sin cuenta corriente) que YA tiene un contenedor:
- *    "Cotizar" y "Ya pagué" no tienen sentido a la vista — lo que puede
- *    querer es un contenedor más ("Nuevo contenedor", ver
- *    handlePedirNuevoContenedor en cotizacion.flow.ts), retiro/recambio del
- *    que ya tiene, o alargarlo.
- *  - Cuenta corriente aprobada: lo saluda por su nombre, sin "Cotizar" (no le
- *    hace falta pedir precio) y con dos opciones exclusivas — "Pedir
- *    entrega" y "Detalle de movimientos" — que un cliente ocasional no ve.
- *  - Cualquier otro (conocido, sin contenedor todavía — ej. cotización
- *    pendiente de pago): menú completo de siempre.
+ * "Cotizar" / "Pedir un contenedor" son la misma entrada (ver diagrama
+ * aprobado) — el camino exacto depende de quién es el cliente:
+ *  - Cuenta corriente aprobada: no paga antes, usa el circuito directo de
+ *    "Pedir entrega" (sin comprobante, se confirma solo).
+ *  - Ocasional que YA tiene un contenedor: ofrece reusar la última ubicación
+ *    verificada en vez de arrancar de cero (handlePedirNuevoContenedor).
+ *  - Resto (cliente nuevo o sin contenedor todavía): flujo completo de
+ *    cotización con verificación de ubicación desde cero.
+ */
+async function iniciarPedirContenedor(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const [cliente] = await query<{ cuenta_corriente_estado: string }>(
+    'SELECT cuenta_corriente_estado FROM clientes WHERE telefono = $1',
+    [m.from],
+  );
+  if (cliente?.cuenta_corriente_estado === 'aprobada') {
+    return handlePedirEntrega(m, { ...sesion, flujo: 'pedir_entrega', paso: null });
+  }
+  if ((await contenedoresDelCliente(m.from)).length > 0) {
+    return handlePedirNuevoContenedor(m, { ...sesion, flujo: 'cotizacion', paso: null });
+  }
+  return handleCotizacion(m, { ...sesion, flujo: 'cotizacion', paso: null });
+}
+
+/**
+ * Menú principal, mismo esquema de 5 ítems para todos (ver diagrama
+ * aprobado) — solo cambian el saludo y qué ítems se muestran:
+ *  - "Cotizar" / "Pedir un contenedor": siempre visible, un solo botón (ver
+ *    iniciarPedirContenedor — el camino interno varía según el cliente).
+ *  - "Gestionar mi contenedor": solo si ya tiene uno entregado.
+ *  - "Enviar comprobante de pago": siempre visible.
+ *  - "Resumen de cuenta": solo cuenta corriente aprobada. Si un cliente
+ *    común lo pide por texto libre, handleDetalleMovimientos ya le explica
+ *    que es exclusivo de cuenta corriente y ofrece asesor.
+ *  - "Asesor": siempre.
  */
 async function enviarMenuPrincipal(to: string): Promise<void> {
   const [cliente] = await query<{ nombre: string; cuenta_corriente_estado: string }>(
     'SELECT nombre, cuenta_corriente_estado FROM clientes WHERE telefono = $1',
     [to],
   );
-  // "Alargar retiro" solo tiene sentido si el cliente ya tiene un contenedor
-  // entregado — a diferencia de retiro/recambio (que también lo exigen, pero
-  // recién avisan al entrar al flujo), acá directamente no se ofrece.
   const tieneContenedor = (await contenedoresDelCliente(to)).length > 0;
   const esCuentaCorriente = cliente?.cuenta_corriente_estado === 'aprobada';
 
-  // Igual que al final de la función: deja rastro en sesiones_chat para que
-  // el cron de inactividad (jobs/inactividadChat.cron.ts) pueda avisar/cerrar
-  // aunque el cliente se haya quedado parado en un menú reducido.
-  const marcarMenuEnviado = () => setSesion({ telefono: to, flujo: 'menu', paso: null, contexto: {} });
-
-  // Primer contacto real: nunca cotizó/pagó (sin fila en `clientes`, ver
-  // esClienteNuevo() en clientes.service.ts — se recalcula acá mismo en vez
-  // de llamarla para no repetir el SELECT de `cliente` que ya tenemos) y sin
-  // contenedor. El resto de las opciones no tiene sentido todavía — se le
-  // ofrece solo Cotizar, que además salta el selector de departamento y pide
-  // ubicación GPS directo (ver handleCotizacion en cotizacion.flow.ts).
-  if (!cliente && !tieneContenedor) {
-    // El header de una lista de WhatsApp (a diferencia del body) no admite
-    // markdown y tiene un límite más chico — mismo estilo corto y sin
-    // formato que el resto de los sendList del código (ver más abajo).
+  // Cuenta corriente: menú propio, no el genérico. No "cotiza" (no paga en
+  // el momento, el pedido se confirma solo y se acumula en su cuenta), así
+  // que el copy no puede ser el mismo que el de un cliente que sí necesita
+  // ver un precio antes de decidir — y como es una relación recurrente
+  // (varios contenedores a lo largo del tiempo), se le ofrece todo lo que
+  // puede necesitar sin tener que escribir texto libre para encontrarlo.
+  if (esCuentaCorriente) {
     await sendList(
       to,
-      '👋 ¡Hola!',
-      'Soy el asistente de *MoraTrans* 🚚. Para arrancar, pedime una cotización del flete 👇',
+      `👋 ¡Hola, ${cliente.nombre}!`,
+      'Soy el asistente de *MoraTrans* 🚚. Tenés *cuenta corriente activa* — ¿en qué te ayudo hoy?\n\n' +
+        '_Escribí *menú* cuando quieras volver acá, y *asesor* si preferís hablar con una persona._',
       'Ver opciones',
       [
-        { id: 'opt_cotizar', title: '🧮 Cotizar', description: 'Precio del flete por tu ubicación' },
+        { id: 'opt_cotizar', title: '📦 Pedir contenedor', description: 'Se confirma solo, se suma a tu cuenta corriente' },
+        ...(tieneContenedor
+          ? [{ id: 'opt_gestionar', title: '🛠️ Gestionar', description: 'Retiro anticipado, recambio o extensión' }]
+          : []),
+        { id: 'opt_detalle_movimientos', title: '📊 Resumen de cuenta', description: 'Detalle de tus entregas/retiros por Excel' },
+        { id: 'opt_pagar', title: '💸 Enviar comprobante', description: 'Si querés transferir algo a cuenta ahora' },
         { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
       ],
     );
-    await marcarMenuEnviado();
+    await setSesion({ telefono: to, flujo: 'menu', paso: null, contexto: {} });
     return;
   }
-
-  // Cliente ocasional que ya tiene un contenedor entregado: menú reducido,
-  // centrado en lo que puede necesitar de acá en más.
-  if (tieneContenedor && !esCuentaCorriente) {
-    await sendList(
-      to,
-      '👋 ¡Hola!',
-      'Soy el asistente de *MoraTrans* 🚚. ¿En qué te ayudo hoy?\n\n_Escribí *asesor* si preferís hablar con una persona._',
-      'Ver opciones',
-      [
-        { id: 'opt_pedir_nuevo_contenedor', title: '📦 Nuevo contenedor', description: 'Pedir un contenedor más' },
-        { id: 'opt_pedir_retiro', title: '📥 Pedir retiro', description: 'Se llenó antes de tiempo: que lo pasen a buscar' },
-        { id: 'opt_recambio', title: '🔄 Pedir recambio', description: 'Cambiar el contenedor lleno por uno vacío' },
-        { id: 'opt_alargar_retiro', title: '⏳ Alargar retiro', description: 'Sumar 5 días más antes de que lo retiremos' },
-        { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
-      ],
-    );
-    await marcarMenuEnviado();
-    return;
-  }
-
-  const saludo = esCuentaCorriente ? `👋 ¡Hola, ${cliente.nombre}!` : '👋 ¡Hola!';
-  const bajada = esCuentaCorriente
-    ? 'Soy el asistente de *MoraTrans* 🚚. Tenés *cuenta corriente activa* — ¿en qué te ayudo hoy?\n\n'
-    : 'Soy el asistente de *MoraTrans* 🚚. ¿En qué te ayudo hoy?\n\n';
 
   const opciones = [
-    ...(esCuentaCorriente ? [] : [{ id: 'opt_cotizar', title: '🧮 Cotizar', description: 'Precio del flete por departamento' }]),
-    { id: 'opt_pagar', title: '💸 Ya pagué', description: 'Quiero enviar mi comprobante de pago' },
-    ...(esCuentaCorriente
-      ? [
-          { id: 'opt_pedir_entrega', title: '📦 Pedir entrega', description: 'Cuenta corriente: pedir un contenedor sin pagar antes' },
-          // Título a propósito corto: WhatsApp rechaza el mensaje de lista
-          // ENTERO si algún row.title supera 24 caracteres — "📊 Detalle de
-          // movimientos" quedaba justo en el límite (o por encima, según
-          // cómo cuenten el emoji) y tiraba abajo todo el menú principal de
-          // cuenta corriente sin avisarle nada al cliente.
-          { id: 'opt_detalle_movimientos', title: '📊 Movimientos', description: 'Recibir el detalle de tus entregas/retiros por Excel' },
-        ]
-      : []),
-    { id: 'opt_pedir_retiro', title: '📥 Pedir retiro', description: 'Se llenó antes de tiempo: que lo pasen a buscar' },
-    { id: 'opt_recambio', title: '🔄 Pedir recambio', description: 'Cambiar el contenedor lleno por uno vacío' },
+    { id: 'opt_cotizar', title: '🧮 Cotizar', description: 'Pedir un contenedor — el precio depende de la zona' },
     ...(tieneContenedor
-      ? [{ id: 'opt_alargar_retiro', title: '⏳ Alargar retiro', description: 'Sumar 5 días más antes de que lo retiremos' }]
+      ? [{ id: 'opt_gestionar', title: '🛠️ Gestionar', description: 'Retiro anticipado, recambio o extensión' }]
       : []),
+    { id: 'opt_pagar', title: '💸 Enviar comprobante', description: 'Mandar el comprobante de un pago' },
     { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
   ];
 
   await sendList(
     to,
-    saludo,
-    bajada + '_Escribí *menú* cuando quieras volver acá, y *asesor* si preferís hablar con una persona._',
+    '👋 ¡Hola!',
+    'Soy el asistente de *MoraTrans* 🚚. ¿En qué te ayudo hoy?\n\n' +
+      '_Escribí *menú* cuando quieras volver acá, y *asesor* si preferís hablar con una persona._',
     'Ver opciones',
     opciones,
   );
@@ -281,5 +289,5 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
   // por `flujo IS NOT NULL`. 'menu' no matchea ningún flujo real en el paso 4
   // de enrutar(), así que la próxima respuesta se interpreta como comando
   // normal (paso 5), pero mientras tanto el cron sí puede avisar/cerrar.
-  await marcarMenuEnviado();
+  await setSesion({ telefono: to, flujo: 'menu', paso: null, contexto: {} });
 }

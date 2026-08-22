@@ -6,40 +6,86 @@ import { obtenerOCrearCliente, esClienteNuevo } from '../../../services/clientes
 import {
   estaDentroDeDepartamento,
   detectarDepartamento,
-  departamentoMencionadoDistinto,
+  distanciaALaBaseMasCercana,
 } from '../../../services/geoDepartamento.service';
-import { reverseGeocode } from '../../../services/geocoding.service';
+import { reverseGeocode, forwardGeocode, CandidatoDireccion } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { contenedoresDelCliente } from '../../../services/contenedorCliente.service';
+import { proximosDiasHabiles, formatearFechaLarga, sumarDias } from '../../../services/diasHabiles.service';
+import { manejarRespuestaInvalida } from '../estados';
+import { escalarAAsesor } from './asesor.flow';
+import { TIPOS_LUGAR, DIAS_ALQUILER_ANTES_RETIRO } from '../../../config/bot.config';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
 /**
- * Flujo de cotización (menú cerrado):
- *   inicio -> elegir_departamento -> ubicacion -> [confirmar_departamento_detectado, si el GPS
- *   no matchea el departamento elegido] -> confirmar_ubicacion -> horario -> [precio]
- * (elegir de una lista interactiva ya es una elección explícita: no hace
- * falta un paso extra de "¿confirmás?" después, a diferencia de la ubicación
- * -que sí puede venir de texto libre mal tipeado o un GPS mal tirado-).
- * Las tarifas se consultan SIEMPRE desde tarifas_departamento.
+ * Flujo de cotización / pedido (menú cerrado):
+ *   inicio -> elegir_departamento -> ubicacion -> [elegir_candidato_direccion, si escribió
+ *   texto y hay >1 resultado] -> [confirmar_departamento_detectado, si el GPS no matchea
+ *   el departamento elegido] -> confirmar_ubicacion (capa 4) -> tipo_lugar -> emplazamiento
+ *   -> dia_entrega -> horario -> [crea el pedido]
  *
- * Cliente nuevo (ver esClienteNuevo() en clientes.service.ts): se salta el
- * selector de departamento — no tiene por qué conocer los nombres — y en vez
- * de eso el paso 0 pasa directo a `ubicacion_verificar`, que exige GPS real
- * (no texto) y detecta el departamento a partir de las coordenadas. Si
- * verifica, converge en el mismo paso `horario` que el flujo normal.
+ * Nunca se cierra un pedido con una dirección escrita sola (regla del
+ * dueño): el texto solo sirve para geocodificar candidatos de referencia
+ * (forwardGeocode) — siempre se vuelve a pedir el pin GPS después.
  *
- * handlePedirNuevoContenedor(): tercera entrada a este mismo flujo (mismo
- * flujo='cotizacion'), para un cliente ocasional que ya tiene un contenedor
- * y quiere uno más — en vez de departamento o GPS directo, pregunta
- * misma/otra dirección (elegir_ubicacion_nuevo); "otra" reusa
- * `ubicacion_verificar` tal cual.
+ * Cliente nuevo (ver esClienteNuevo()): se salta el selector de
+ * departamento -> `ubicacion_verificar`, que exige GPS real y detecta el
+ * departamento a partir de las coordenadas. Si verifica, converge en
+ * `confirmar_ubicacion` igual que el resto (la capa 4 aplica siempre).
+ *
+ * handlePedirNuevoContenedor(): cliente ocasional con contenedor que pide
+ * otro — misma dirección (ya verificada antes, no se repite capa 4) u otra
+ * (reusa `ubicacion_verificar`).
  */
 
+/** Precio activo de una zona, o null si no está cargada/activa. */
+async function tarifaDeZona(departamento: string): Promise<{ precio: string; moneda: string } | null> {
+  const [tarifa] = await query<{ precio: string; moneda: string }>(
+    'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+    [departamento],
+  );
+  return tarifa ?? null;
+}
+
 /**
- * Arma el mensaje de "confirmá la dirección" y guarda el paso final antes de
- * cotizar. Se llama tanto desde el flujo normal como después de resolver un
- * departamento que no coincidía con la ubicación (ver geoDepartamento.service.ts).
+ * Caso borde "punto fuera de todas las zonas de cobertura": nunca se
+ * inventa un precio. Se registra el pedido en un estado especial para que
+ * un operador lo libere a mano, se avisa la distancia a la base más
+ * cercana si se puede calcular, y se deriva directo a un asesor.
+ */
+async function manejarFueraDeZona(
+  m: MensajeEntrante,
+  sesion: Sesion,
+  departamentoOriginal: string | null,
+  destinoLat: number,
+  destinoLng: number,
+  destinoDireccion: string | null,
+): Promise<void> {
+  const to = m.from;
+  const distancia = await distanciaALaBaseMasCercana(destinoLat, destinoLng);
+
+  const [pedido] = await query<{ numero_pedido: number }>(
+    `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, estado, destino_lat, destino_lng, destino_direccion)
+     VALUES ($1,$2,$3,'fuera_de_zona',$4,$5,$6) RETURNING numero_pedido`,
+    [to, m.nombrePerfil ?? null, departamentoOriginal ?? 'sin_zona', destinoLat, destinoLng, destinoDireccion],
+  );
+  obtenerOCrearCliente(to, m.nombrePerfil).catch((e) => console.error('Error dando de alta al cliente:', e));
+
+  await sendText(
+    to,
+    `📍 Tu ubicación está fuera de las zonas que cubrimos hoy` +
+      (distancia ? ` (a unos *${distancia.distanciaKm} km* de ${distancia.nombre}).` : '.') +
+      `\n\nAnotamos tu pedido *#${pedido.numero_pedido}* — un asesor lo va a revisar para ver si podemos coordinarlo igual.`,
+  );
+  await escalarAAsesor(to, sesion, `${to} pidió un contenedor fuera de zona (pedido #${pedido.numero_pedido})`);
+}
+
+/**
+ * Capa 4 — doble confirmación explícita, con la pregunta puntual del dueño:
+ * distingue "acá va el contenedor" de "acá estoy yo escribiendo". Muestra
+ * dirección + zona + precio antes de preguntar. Deja el pedido a un paso de
+ * cerrarse recién cuando el cliente confirma.
  */
 async function avanzarAConfirmarUbicacion(
   to: string,
@@ -55,12 +101,16 @@ async function avanzarAConfirmarUbicacion(
       ? `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`
       : (destinoDireccion as string);
 
+  const tarifa = await tarifaDeZona(departamento);
+  const lineaPrecio = tarifa ? `\nPrecio: *${tarifa.moneda} ${Number(tarifa.precio).toLocaleString('es-AR')}*` : '';
+
   await sendButtons(
     to,
-    `${avisoExtra ? avisoExtra + '\n\n' : ''}📍 Confirmá la dirección de entrega:\n\n${resumenUbicacion}\n\n¿Es correcta?`,
+    `${avisoExtra ? avisoExtra + '\n\n' : ''}📍 Dirección: ${resumenUbicacion}\nZona: *${departamento}*${lineaPrecio}\n\n` +
+      `¿Este es el lugar donde va el contenedor, o es desde donde me estás escribiendo?`,
     [
-      { id: 'ubicacion_si', title: '✅ Sí, es correcta' },
-      { id: 'ubicacion_no', title: '↩️ Volver a enviar' },
+      { id: 'ubicacion_es_destino', title: '📍 Es el destino' },
+      { id: 'ubicacion_no', title: '↩️ Mandar otra' },
     ],
   );
   await setSesion({
@@ -70,41 +120,61 @@ async function avanzarAConfirmarUbicacion(
   });
 }
 
+/** Paso "tipo de lugar" — primer dato que el GPS no da (caso borde). */
+async function pedirTipoLugar(to: string, sesion: Sesion): Promise<void> {
+  await sendList(to, '🏗️ Tipo de lugar', '¿Qué tipo de lugar es la dirección de entrega?', 'Ver opciones', TIPOS_LUGAR);
+  await setSesion({ ...sesion, paso: 'tipo_lugar' });
+}
+
+/** Paso "¿va dentro del terreno o sobre la vía pública?" — segundo dato que el GPS no da. */
+async function pedirEmplazamiento(to: string, sesion: Sesion): Promise<void> {
+  await sendButtons(to, '🚧 ¿El contenedor va a quedar adentro del terreno, o sobre la vía pública (vereda/calle)?', [
+    { id: 'emplazamiento_terreno', title: '🏡 Adentro del terreno' },
+    { id: 'emplazamiento_via_publica', title: '🚧 Vía pública' },
+  ]);
+  await setSesion({ ...sesion, paso: 'emplazamiento' });
+}
+
+/** Paso "elegir día de entrega" — próximos días hábiles, sin domingos. */
+async function pedirDiaEntrega(to: string, sesion: Sesion): Promise<void> {
+  const dias = proximosDiasHabiles();
+  await sendList(
+    to,
+    '📅 Día de entrega',
+    '¿Qué día preferís que te llevemos el contenedor?',
+    'Ver días',
+    dias.map((d) => ({ id: `dia:${d.fecha}`, title: d.etiqueta })),
+  );
+  await setSesion({ ...sesion, paso: 'dia_entrega' });
+}
+
 /**
- * Verificación de ubicación para un cliente nuevo (ver esClienteNuevo()):
- * exige GPS real (no texto, no un pin con nombre inventado por el cliente),
- * detecta el departamento a partir de las coordenadas
- * (geoDepartamento.service.ts) y valida que tengamos tarifa activa ahí. Si
- * todo eso da bien, converge directo en el paso `horario` del flujo normal
- * -no hace falta un "¿confirmás la dirección?" aparte, la verificación ya
- * cumplió ese rol-. Si algo falla, se vuelve a pedir la ubicación sin salir
- * del flujo (el cliente sigue viendo solo "Cotizar" en el menú).
+ * Verificación de ubicación para un cliente nuevo o para "otra dirección"
+ * (handlePedirNuevoContenedor): exige GPS real, detecta el departamento por
+ * coordenadas. Si no cae en ninguna zona conocida -> caso borde "fuera de
+ * zona". Si cae en una zona sin tarifa activa, se le avisa. Si todo da bien,
+ * converge en la MISMA confirmación de capa 4 que el flujo normal — la
+ * pregunta de "¿es el destino o desde donde escribís?" aplica siempre, un
+ * GPS válido no reemplaza esa confirmación.
  */
-async function manejarUbicacionVerificar(m: MensajeEntrante): Promise<void> {
+async function manejarUbicacionVerificar(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
 
   if (m.tipo !== 'location' || m.lat == null || m.lng == null) {
     await sendLocationRequest(
       to,
-      '📍 Para verificar tu ubicación necesito que la compartas con el botón de "Enviar ubicación" — no alcanza con escribirla. ¿Podés mandarla?',
+      '📍 Para verificar tu ubicación necesito que la compartas parada en el lugar de entrega, con el botón de "Enviar ubicación" — no alcanza con escribirla. ¿Podés mandarla?',
     );
     return;
   }
 
   const departamento = await detectarDepartamento(m.lat, m.lng);
   if (!departamento) {
-    await sendLocationRequest(
-      to,
-      '🙁 No pudimos verificar que esa ubicación esté dentro de una zona que cubrimos. Volvé a compartir tu ubicación (o escribí *asesor* si necesitás ayuda).',
-    );
-    return;
+    return manejarFueraDeZona(m, sesion, null, m.lat, m.lng, m.ubicacionDireccion || m.ubicacionNombre || null);
   }
 
-  const tarifa = await query<{ precio: string }>(
-    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
-    [departamento],
-  );
-  if (tarifa.length === 0) {
+  const tarifa = await tarifaDeZona(departamento);
+  if (!tarifa) {
     await sendLocationRequest(
       to,
       `🙁 Detectamos tu ubicación en *${departamento}*, pero no tenemos tarifa activa ahí todavía. Volvé a compartir tu ubicación, o escribí *asesor* para coordinarlo.`,
@@ -117,13 +187,7 @@ async function manejarUbicacionVerificar(m: MensajeEntrante): Promise<void> {
     destinoDireccion = await reverseGeocode(m.lat, m.lng);
   }
 
-  await pedirHorarioPreferido(to, '🕐 ¿En qué franja horaria preferís que te llevemos el contenedor?');
-  await setSesion({
-    telefono: to,
-    flujo: 'cotizacion',
-    paso: 'horario',
-    contexto: { departamento, destinoLat: m.lat, destinoLng: m.lng, destinoDireccion },
-  });
+  await avanzarAConfirmarUbicacion(to, sesion, departamento, m.lat, m.lng, destinoDireccion);
 }
 
 const BOTONES_UBICACION_NUEVO = [
@@ -132,14 +196,12 @@ const BOTONES_UBICACION_NUEVO = [
 ];
 
 /**
- * "Pedir nuevo contenedor": para un cliente OCASIONAL (sin cuenta corriente)
- * que ya tiene un contenedor entregado y quiere uno más — se cobra y se paga
- * igual que cualquier entrega nueva (comprobante + validación de un
- * operador), no como "Pedir entrega" (que es exclusivo de cuenta corriente).
- * En vez de preguntar el departamento desde cero, se le pregunta si es a la
- * misma dirección donde ya tiene un contenedor o a otra — si es a otra, se
- * verifica la ubicación igual que a un cliente nuevo (GPS + detección de
- * departamento, ver manejarUbicacionVerificar).
+ * "Pedir nuevo contenedor": cliente ocasional con un contenedor entregado
+ * que quiere uno más — se cobra y se paga igual que cualquier entrega nueva
+ * (comprobante + validación de un operador), no como "Pedir entrega"
+ * (exclusivo de cuenta corriente). En vez de arrancar de cero, ofrece
+ * reusar la ubicación ya verificada de su contenedor actual (caso borde
+ * "cliente que ya pidió antes") o verificar una nueva.
  */
 export async function handlePedirNuevoContenedor(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -163,6 +225,7 @@ export async function handlePedirNuevoContenedor(m: MensajeEntrante, sesion: Ses
   await sendButtons(to, '📦 ¿A dónde llevamos el contenedor nuevo?', BOTONES_UBICACION_NUEVO);
 }
 
+/** "Misma dirección" ya fue verificada en una entrega anterior -> se salta la capa 4, va directo a tipo de lugar. */
 async function manejarEleccionUbicacionNuevo(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
 
@@ -170,12 +233,12 @@ async function manejarEleccionUbicacionNuevo(m: MensajeEntrante, sesion: Sesion)
     await setSesion({ telefono: to, flujo: 'cotizacion', paso: 'ubicacion_verificar', contexto: {} });
     await sendLocationRequest(
       to,
-      '📍 Compartí la ubicación del lugar donde va el contenedor nuevo — tocá el botón de "Enviar ubicación". No alcanza con escribirla.',
+      '📍 Compartí la ubicación del lugar donde va el contenedor nuevo, parada en el sitio de entrega — tocá el botón de "Enviar ubicación". No alcanza con escribirla.',
     );
     return;
   }
   if (m.seleccionId !== 'nuevo_misma_ubicacion') {
-    await sendButtons(to, 'Elegí una de las opciones de abajo. 👇', BOTONES_UBICACION_NUEVO);
+    await manejarRespuestaInvalida(m, 'Elegí una de las opciones de abajo. 👇');
     return;
   }
 
@@ -190,33 +253,56 @@ async function manejarEleccionUbicacionNuevo(m: MensajeEntrante, sesion: Sesion)
     await sendText(to, '🙁 No tenemos la zona cargada para tu contenedor actual. Escribí *asesor* para coordinarlo.');
     return;
   }
-  const tarifa = await query<{ precio: string }>(
-    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
-    [zona],
-  );
-  if (tarifa.length === 0) {
+  const tarifa = await tarifaDeZona(zona);
+  if (!tarifa) {
     await clearSesion(to);
     await sendText(to, '🙁 No encontramos la tarifa para tu zona. Escribí *asesor* para coordinarlo.');
     return;
   }
 
-  await pedirHorarioPreferido(to, '🕐 ¿En qué franja horaria preferís que te llevemos el contenedor?');
-  await setSesion({
+  await pedirTipoLugar(to, {
     telefono: to,
     flujo: 'cotizacion',
-    paso: 'horario',
+    paso: 'tipo_lugar',
     contexto: { departamento: zona, destinoLat, destinoLng, destinoDireccion },
   });
+}
+
+/** Candidatos de una dirección escrita (forwardGeocode) -> el cliente elige uno como referencia; igual se pide el pin después. */
+async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const { departamento, candidatos } = sesion.contexto as { departamento: string; candidatos: CandidatoDireccion[] };
+
+  if (!m.seleccionId?.startsWith('cand:')) {
+    await manejarRespuestaInvalida(m, 'Por favor, elegí una de las direcciones de la lista. 👆');
+    return;
+  }
+  const idx = Number(m.seleccionId.replace('cand:', ''));
+  const elegido = candidatos[idx];
+  if (!elegido) {
+    await manejarRespuestaInvalida(m, 'Por favor, elegí una de las direcciones de la lista. 👆');
+    return;
+  }
+
+  await sendLocationRequest(
+    to,
+    `📍 Anotado como referencia: ${elegido.direccion}.\n\n` +
+      'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — tocá "Enviar ubicación". No alcanza con escribirla.',
+  );
+  await setSesion({ ...sesion, paso: 'ubicacion', contexto: { departamento, destinoDireccionReferencia: elegido.direccion } });
 }
 
 export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
 
   if (sesion.paso === 'ubicacion_verificar') {
-    return manejarUbicacionVerificar(m);
+    return manejarUbicacionVerificar(m, sesion);
   }
   if (sesion.paso === 'elegir_ubicacion_nuevo') {
     return manejarEleccionUbicacionNuevo(m, sesion);
+  }
+  if (sesion.paso === 'elegir_candidato_direccion') {
+    return manejarEleccionCandidato(m, sesion);
   }
 
   // Paso 0: mostrar la lista de departamentos activos — salvo que sea un
@@ -228,7 +314,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       await setSesion({ telefono: to, flujo: 'cotizacion', paso: 'ubicacion_verificar', contexto: {} });
       await sendLocationRequest(
         to,
-        '📍 Para cotizar necesito verificar tu ubicación — tocá el botón de "Enviar ubicación" y compartí tu ubicación *actual* (GPS). No alcanza con escribirla.',
+        '📍 Para cotizar necesito verificar tu ubicación — tocá el botón de "Enviar ubicación" y compartila parada en el lugar de entrega (GPS actual). No alcanza con escribirla.',
       );
       return;
     }
@@ -252,115 +338,112 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
     return;
   }
 
-  // Paso 1: recibió la selección del departamento (elegir de la lista ya es
-  // una confirmación explícita) -> pedimos directo la ubicación de entrega.
+  // Paso 1: recibió la selección del departamento -> pedimos la ubicación de entrega.
   if (sesion.paso === 'elegir_departamento') {
     if (!m.seleccionId?.startsWith('depto:')) {
-      await sendText(to, 'Por favor, elegí una opción de la lista.\n\n_Escribí *menú* para volver al inicio._');
+      await manejarRespuestaInvalida(m, 'Por favor, elegí una opción de la lista.\n\n_Escribí *menú* para volver al inicio._');
       return;
     }
     const departamento = m.seleccionId.replace('depto:', '');
     await sendLocationRequest(
       to,
-      `📍 Última cosa: contanos la dirección de entrega.\n\n` +
-        `Tocá el botón de abajo para compartir tu *ubicación actual* (GPS), o si preferís, ` +
-        `escribila así:\nEj: _Av. San Martín 1234, Barrio Centro, ${departamento}_`,
+      `📍 Última cosa: compartí la dirección de entrega parada en el lugar exacto, con el botón de "Enviar ubicación" ` +
+        `(GPS). Si preferís, primero escribime la dirección y después te pido igual el pin:\nEj: _Av. San Martín 1234, Barrio Centro, ${departamento}_`,
     );
     await setSesion({ ...sesion, paso: 'ubicacion', contexto: { departamento } });
     return;
   }
 
-  // Paso 3: recibió la ubicación (GPS de WhatsApp o dirección escrita) -> antes
-  // de guardarla, se la mostramos de vuelta y pedimos que la confirme (evita
-  // guardar un pin mal tirado o una dirección mal tipeada sin que nadie lo note).
+  // Paso 2: recibió la ubicación (GPS o dirección escrita).
   if (sesion.paso === 'ubicacion') {
     const departamento = sesion.contexto.departamento as string;
-    let destinoLat: number | null = null;
-    let destinoLng: number | null = null;
-    let destinoDireccion: string | null = null;
 
-    if (m.tipo === 'location') {
-      destinoLat = m.lat ?? null;
-      destinoLng = m.lng ?? null;
-      destinoDireccion = m.ubicacionDireccion || m.ubicacionNombre || null;
-      // Ubicación GPS en vivo (no un pin con nombre): WhatsApp no manda
-      // dirección de texto en ese caso, la resolvemos nosotros.
-      if (!destinoDireccion && destinoLat != null && destinoLng != null) {
-        destinoDireccion = await reverseGeocode(destinoLat, destinoLng);
+    if (m.tipo === 'location' && m.lat != null && m.lng != null) {
+      let destinoDireccion = m.ubicacionDireccion || m.ubicacionNombre || (sesion.contexto.destinoDireccionReferencia as string | undefined) || null;
+      if (!destinoDireccion) {
+        destinoDireccion = await reverseGeocode(m.lat, m.lng);
       }
-    } else if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
-      destinoDireccion = m.texto.trim();
-    } else {
-      await sendText(
-        to,
-        '📍 Necesito la dirección de entrega para poder cotizar: tocá el botón de "Enviar ubicación" ' +
-          'o escribila en un mensaje (ej: _Av. San Martín 1234, Barrio Centro_).',
-      );
-      return;
-    }
 
-    // Con GPS: comparamos contra el polígono del departamento elegido (ver
-    // geoDepartamento.service.ts). Sin este chequeo, nada impedía cotizar
-    // para un departamento y compartir la ubicación de otro -> precio mal
-    // calculado, y después la ruta/el aviso al chofer también mal armados.
-    if (destinoLat != null && destinoLng != null) {
-      const dentro = await estaDentroDeDepartamento(destinoLat, destinoLng, departamento);
+      // Con GPS: comparamos contra el polígono del departamento elegido (ver
+      // geoDepartamento.service.ts). Sin este chequeo, nada impedía cotizar
+      // para un departamento y compartir la ubicación de otro -> precio mal
+      // calculado, y después la ruta/el aviso al chofer también mal armados.
+      const dentro = await estaDentroDeDepartamento(m.lat, m.lng, departamento);
       if (dentro === false) {
-        const detectado = await detectarDepartamento(destinoLat, destinoLng);
+        const detectado = await detectarDepartamento(m.lat, m.lng);
+        if (!detectado) {
+          // Fuera de TODAS las zonas conocidas, no solo la elegida -> caso
+          // borde "fuera de zona": nunca se inventa un precio.
+          return manejarFueraDeZona(m, sesion, departamento, m.lat, m.lng, destinoDireccion);
+        }
         await setSesion({
           ...sesion,
           paso: 'confirmar_departamento_detectado',
-          contexto: { departamento, departamentoDetectado: detectado, destinoLat, destinoLng, destinoDireccion },
+          contexto: { departamento, departamentoDetectado: detectado, destinoLat: m.lat, destinoLng: m.lng, destinoDireccion },
         });
-        if (detectado) {
-          await sendButtons(
-            to,
-            `📍 Notamos algo raro: cotizaste para *${departamento}*, pero tu ubicación parece estar en *${detectado}*.\n\n¿Cuál es el correcto?`,
-            [
-              { id: 'depto_mantener', title: departamento.slice(0, 20) },
-              { id: 'depto_cambiar', title: detectado.slice(0, 20) },
-            ],
-          );
-        } else {
-          await sendButtons(
-            to,
-            `📍 Tu ubicación no parece estar dentro de *${departamento}*, que fue lo que cotizaste.\n\n` +
-              `¿Confirmamos igual con esa dirección, o preferís volver a elegir el departamento?`,
-            [
-              { id: 'depto_confirmar_igual', title: '✅ Confirmar igual' },
-              { id: 'depto_volver', title: '↩️ Elegir depto' },
-            ],
-          );
-        }
-        return;
-      }
-    } else if (destinoDireccion) {
-      // Sin GPS no hay coordenadas para comparar contra el polígono — lo
-      // único que se puede chequear gratis es si el cliente escribió el
-      // nombre de OTRO departamento en la dirección. Es solo un aviso, no
-      // bloquea (puede ser una calle con nombre parecido, un falso positivo).
-      const otro = await departamentoMencionadoDistinto(destinoDireccion, departamento);
-      if (otro) {
-        await avanzarAConfirmarUbicacion(
+        await sendButtons(
           to,
-          sesion,
-          departamento,
-          destinoLat,
-          destinoLng,
-          destinoDireccion,
-          `⚠️ Notamos que escribiste *${otro}* en la dirección, pero cotizaste para *${departamento}* — revisá antes de confirmar.`,
+          `📍 Notamos algo raro: cotizaste para *${departamento}*, pero tu ubicación parece estar en *${detectado}*.\n\n¿Cuál es el correcto?`,
+          [
+            { id: 'depto_mantener', title: departamento.slice(0, 20) },
+            { id: 'depto_cambiar', title: detectado.slice(0, 20) },
+          ],
         );
         return;
       }
+
+      await avanzarAConfirmarUbicacion(to, sesion, departamento, m.lat, m.lng, destinoDireccion);
+      return;
     }
 
-    await avanzarAConfirmarUbicacion(to, sesion, departamento, destinoLat, destinoLng, destinoDireccion);
+    if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
+      // Nunca se cierra un pedido solo con texto (regla del dueño): esto es
+      // solo para geocodificar candidatos de referencia. Siempre se vuelve
+      // a pedir el pin GPS después, sin importar cuántos resultados haya.
+      const candidatos = await forwardGeocode(m.texto.trim());
+
+      if (candidatos.length === 0) {
+        await sendText(
+          to,
+          '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad), ' +
+            'o directamente tocá el botón de "Enviar ubicación" para mandar el pin.',
+        );
+        return;
+      }
+      if (candidatos.length === 1) {
+        await sendLocationRequest(
+          to,
+          `📍 Encontramos: ${candidatos[0].direccion}.\n\n` +
+            'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — no alcanza con escribirla.',
+        );
+        await setSesion({
+          ...sesion,
+          paso: 'ubicacion',
+          contexto: { departamento, destinoDireccionReferencia: candidatos[0].direccion },
+        });
+        return;
+      }
+      await sendList(
+        to,
+        '📍 ¿Cuál es?',
+        'Encontramos varias direcciones parecidas — elegí la más cercana (después igual te pido el pin exacto):',
+        'Ver direcciones',
+        candidatos.map((c, i) => ({ id: `cand:${i}`, title: c.direccion.slice(0, 24) })),
+      );
+      await setSesion({ ...sesion, paso: 'elegir_candidato_direccion', contexto: { departamento, candidatos } });
+      return;
+    }
+
+    await sendText(
+      to,
+      '📍 Necesito la dirección de entrega para poder cotizar: tocá el botón de "Enviar ubicación" ' +
+        'o escribila en un mensaje (ej: _Av. San Martín 1234, Barrio Centro_).',
+    );
     return;
   }
 
-  // Paso 3b: el GPS no caía dentro del departamento cotizado -> el cliente
-  // decide si el que había elegido es el correcto, o si nos quedamos con el
-  // que sí matchea la ubicación real (ver geoDepartamento.service.ts).
+  // Paso 2b: el GPS no caía dentro del departamento cotizado (pero sí de OTRO
+  // conocido) -> el cliente decide cuál es el correcto.
   if (sesion.paso === 'confirmar_departamento_detectado') {
     const { departamento, departamentoDetectado, destinoLat, destinoLng, destinoDireccion } = sesion.contexto as {
       departamento: string;
@@ -370,53 +453,18 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       destinoDireccion: string | null;
     };
 
-    if (m.seleccionId === 'depto_volver') {
-      return handleCotizacion(m, { ...sesion, paso: 'inicio', contexto: {} });
-    }
-    if (m.seleccionId === 'depto_mantener' || m.seleccionId === 'depto_confirmar_igual') {
+    if (m.seleccionId === 'depto_mantener') {
       return avanzarAConfirmarUbicacion(to, sesion, departamento, destinoLat, destinoLng, destinoDireccion);
     }
     if (m.seleccionId === 'depto_cambiar' && departamentoDetectado) {
       return avanzarAConfirmarUbicacion(to, sesion, departamentoDetectado, destinoLat, destinoLng, destinoDireccion);
     }
-    await sendText(to, 'Elegí una de las opciones de arriba.\n\n_Escribí *menú* para volver al inicio._');
+    await manejarRespuestaInvalida(m, 'Elegí una de las opciones de arriba.\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
 
-  // Paso 4: confirmó (o no) la ubicación -> recién ahí se cotiza y se cierra.
+  // Paso 3 (capa 4): confirmó (o no) que ahí va el contenedor.
   if (sesion.paso === 'confirmar_ubicacion') {
-    const departamento = sesion.contexto.departamento as string;
-
-    if (m.seleccionId === 'ubicacion_no') {
-      await sendLocationRequest(
-        to,
-        '📍 Dale, mandámela de nuevo: tocá "Enviar ubicación" o escribí la dirección.',
-      );
-      await setSesion({ ...sesion, paso: 'ubicacion', contexto: { departamento } });
-      return;
-    }
-    if (m.seleccionId !== 'ubicacion_si') {
-      await sendText(to, 'Elegí "✅ Sí, es correcta" o "↩️ Volver a enviar".\n\n_Escribí *menú* para volver al inicio._');
-      return;
-    }
-
-    const { destinoLat, destinoLng, destinoDireccion } = sesion.contexto as {
-      destinoLat: number | null;
-      destinoLng: number | null;
-      destinoDireccion: string | null;
-    };
-    await pedirHorarioPreferido(to, '🕐 ¿En qué franja horaria preferís que te llevemos el contenedor?');
-    await setSesion({ ...sesion, paso: 'horario', contexto: { departamento, destinoLat, destinoLng, destinoDireccion } });
-    return;
-  }
-
-  // Paso 5: eligió la franja horaria -> recién ahí se cotiza y se cierra.
-  if (sesion.paso === 'horario') {
-    const opcion = OPCIONES_HORARIO.find((o) => o.id === m.seleccionId);
-    if (!opcion) {
-      await pedirHorarioPreferido(to, 'Elegí una de las opciones de abajo. 👇');
-      return;
-    }
     const { departamento, destinoLat, destinoLng, destinoDireccion } = sesion.contexto as {
       departamento: string;
       destinoLat: number | null;
@@ -424,24 +472,104 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       destinoDireccion: string | null;
     };
 
-    const tarifa = await query<{ precio: string; moneda: string }>(
-      'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
-      [departamento],
-    );
-    if (tarifa.length === 0) {
+    if (m.seleccionId === 'ubicacion_no') {
+      await sendLocationRequest(
+        to,
+        '📍 Dale, mandámela de nuevo: tocá "Enviar ubicación" parada en el lugar de entrega.',
+      );
+      await setSesion({ ...sesion, paso: 'ubicacion', contexto: { departamento } });
+      return;
+    }
+    if (m.seleccionId !== 'ubicacion_es_destino') {
+      await manejarRespuestaInvalida(
+        m,
+        'Elegí "📍 Es el destino" o "↩️ Mandar otra".\n\n_Escribí *menú* para volver al inicio._',
+      );
+      return;
+    }
+
+    await pedirTipoLugar(to, { ...sesion, contexto: { departamento, destinoLat, destinoLng, destinoDireccion } });
+    return;
+  }
+
+  // Paso 4: tipo de lugar (dato que el GPS no da).
+  if (sesion.paso === 'tipo_lugar') {
+    const opcion = TIPOS_LUGAR.find((o) => o.id === m.seleccionId);
+    if (!opcion) {
+      await manejarRespuestaInvalida(m, 'Por favor, elegí una opción de la lista. 👆');
+      return;
+    }
+    await pedirEmplazamiento(to, { ...sesion, contexto: { ...sesion.contexto, tipoLugar: opcion.id.replace('lugar_', '') } });
+    return;
+  }
+
+  // Paso 5: ¿va adentro del terreno o sobre la vía pública?
+  if (sesion.paso === 'emplazamiento') {
+    if (m.seleccionId === 'emplazamiento_via_publica') {
+      await sendText(
+        to,
+        '⚠️ Ojo: si el contenedor va sobre la vereda o la calle, hace falta el *permiso municipal de ocupación de vía pública*. ' +
+          'Lo tenés que gestionar vos — nosotros seguimos con la coordinación igual.',
+      );
+      await pedirDiaEntrega(to, { ...sesion, contexto: { ...sesion.contexto, enViaPublica: true } });
+      return;
+    }
+    if (m.seleccionId === 'emplazamiento_terreno') {
+      await pedirDiaEntrega(to, { ...sesion, contexto: { ...sesion.contexto, enViaPublica: false } });
+      return;
+    }
+    await manejarRespuestaInvalida(m, 'Elegí "🏡 Adentro del terreno" o "🚧 Vía pública".');
+    return;
+  }
+
+  // Paso 6: día de entrega (próximos días hábiles, sin domingos).
+  if (sesion.paso === 'dia_entrega') {
+    if (!m.seleccionId?.startsWith('dia:')) {
+      await manejarRespuestaInvalida(m, 'Por favor, elegí uno de los días de la lista. 👆');
+      return;
+    }
+    const fechaEntrega = m.seleccionId.replace('dia:', '');
+    await pedirHorarioPreferido(to, `🕐 ¿En qué franja horaria preferís que te lo llevemos el ${formatearFechaLarga(fechaEntrega)}?`);
+    await setSesion({ ...sesion, paso: 'horario', contexto: { ...sesion.contexto, fechaEntrega } });
+    return;
+  }
+
+  // Paso 7: eligió la franja horaria -> recién ahí se crea el pedido y se cierra.
+  if (sesion.paso === 'horario') {
+    const opcion = OPCIONES_HORARIO.find((o) => o.id === m.seleccionId);
+    if (!opcion) {
+      await pedirHorarioPreferido(to, 'Elegí una de las opciones de abajo. 👇');
+      return;
+    }
+    const { departamento, destinoLat, destinoLng, destinoDireccion, tipoLugar, enViaPublica, fechaEntrega } = sesion.contexto as {
+      departamento: string;
+      destinoLat: number | null;
+      destinoLng: number | null;
+      destinoDireccion: string | null;
+      tipoLugar: string | null;
+      enViaPublica: boolean | null;
+      fechaEntrega: string;
+    };
+
+    const tarifa = await tarifaDeZona(departamento);
+    if (!tarifa) {
       await sendText(to, '🙁 Esa tarifa ya no está disponible. Escribí *Cotizar* para reintentar.');
       await clearSesion(to);
       return;
     }
+    const { precio, moneda } = tarifa;
+    const fechaRetiroEstimada = sumarDias(fechaEntrega, DIAS_ALQUILER_ANTES_RETIRO);
 
-    const { precio, moneda } = tarifa[0];
-
-    // Registrar el pedido en estado "cotizado" (traza para el panel), con la ubicación de entrega
-    // y el nombre que el cliente tiene puesto en su WhatsApp (lo manda Meta solo, no hace falta pedirlo).
-    await query(
-      `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_lat, destino_lng, destino_direccion, horario_preferido)
-       VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7,$8)`,
-      [to, m.nombrePerfil ?? null, departamento, precio, destinoLat, destinoLng, destinoDireccion, opcion.title],
+    const [pedido] = await query<{ numero_pedido: number }>(
+      `INSERT INTO pedidos (
+         cliente_telefono, cliente_nombre, zona, precio, estado, destino_lat, destino_lng, destino_direccion,
+         horario_preferido, tipo_lugar, en_via_publica, fecha_entrega, fecha_retiro_estimada
+       ) VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7,$8,$9,$10,$11,$12)
+       RETURNING numero_pedido`,
+      [
+        to, m.nombrePerfil ?? null, departamento, precio, destinoLat, destinoLng, destinoDireccion,
+        opcion.title, tipoLugar ?? null, enViaPublica ?? null, fechaEntrega, fechaRetiroEstimada,
+      ],
     );
     // Alta/actualización en el padrón de clientes (ver clientes.service.ts) —
     // así la pantalla Clientes del panel refleja a todo el que cotizó, no
@@ -450,11 +578,13 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
 
     await sendText(
       to,
-      `📦 *Cotización — ${departamento}*\n` +
-        `Precio del flete: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
-        `Entrega en: ${destinoDireccion ?? `📍 ubicación compartida (${destinoLat}, ${destinoLng})`}\n` +
-        `Franja horaria: ${opcion.title}\n\n` +
-        `Para reservar, hacé el pago con estos datos:\n\n` +
+      `📦 *Pedido #${pedido.numero_pedido} — ${departamento}*\n` +
+        `Dirección: ${destinoDireccion ?? `ubicación compartida (${destinoLat}, ${destinoLng})`}\n` +
+        `Fecha de entrega: ${formatearFechaLarga(fechaEntrega)}\n` +
+        `Franja horaria: ${opcion.title}\n` +
+        `Importe: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
+        `Fecha estimada de retiro: ${formatearFechaLarga(fechaRetiroEstimada)}\n\n` +
+        `Para reservarlo, hacé el pago con estos datos:\n\n` +
         `${datosBancarios()}\n\n` +
         `Y enviános el comprobante por este chat 📎\n` +
         `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +

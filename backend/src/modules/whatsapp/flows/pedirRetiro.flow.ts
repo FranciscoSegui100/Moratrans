@@ -4,15 +4,18 @@ import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
+import { proximosDiasHabiles, formatearFechaLarga } from '../../../services/diasHabiles.service';
+import { manejarRespuestaInvalida } from '../estados';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
 /**
  * El cliente llenó el contenedor antes de lo previsto y pide que lo pasen a
- * buscar, sin esperar una fecha ya programada — caso distinto (e inverso) a
- * "cancelar retiro". Si ya había un retiro 'programado' para ese contenedor
- * lo adelanta a hoy en vez de duplicarlo; si no había ninguno, crea uno
- * nuevo y alerta al panel para que se le asigne chofer.
+ * buscar, eligiendo qué día — sin costo, no se descuenta del alquiler (a
+ * diferencia de "cancelar retiro", que es otro caso). Si ya había un retiro
+ * 'programado' para ese contenedor lo reprograma a la fecha elegida en vez
+ * de duplicarlo; si no había ninguno, crea uno nuevo y alerta al panel para
+ * que se le asigne chofer.
  */
 export async function handlePedirRetiro(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -22,6 +25,9 @@ export async function handlePedirRetiro(m: MensajeEntrante, sesion: Sesion): Pro
   }
   if (sesion.paso === 'confirmar_retiro_cliente') {
     return manejarConfirmacion(m, sesion);
+  }
+  if (sesion.paso === 'elegir_dia_retiro') {
+    return manejarDia(m, sesion);
   }
 
   const conts = await contenedoresDelCliente(to);
@@ -49,7 +55,7 @@ export async function handlePedirRetiro(m: MensajeEntrante, sesion: Sesion): Pro
 async function manejarEleccion(m: MensajeEntrante): Promise<void> {
   const to = m.from;
   if (m.tipo !== 'interactive_list' || !m.seleccionId?.startsWith('ret:')) {
-    await sendText(to, 'Por favor, elegí uno de la lista de arriba. 👆\n\n_Escribí *menú* para volver al inicio._');
+    await manejarRespuestaInvalida(m, 'Por favor, elegí uno de la lista de arriba. 👆\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
   const numero = m.seleccionId.replace('ret:', '');
@@ -87,17 +93,36 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
   if (m.seleccionId !== 'retiro_cliente_si') {
-    await sendText(to, 'Elegí "✅ Sí, confirmar" o "↩️ Cancelar".\n\n_Escribí *menú* para volver al inicio._');
+    await manejarRespuestaInvalida(m, 'Elegí "✅ Sí, confirmar" o "↩️ Cancelar".\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
+
+  const dias = proximosDiasHabiles();
+  await sendList(
+    to,
+    '📅 Día de retiro',
+    '¿Qué día preferís que pasemos a buscarlo? Sin costo, no se descuenta de tu alquiler.',
+    'Ver días',
+    dias.map((d) => ({ id: `dia:${d.fecha}`, title: d.etiqueta })),
+  );
+  await setSesion({ ...sesion, paso: 'elegir_dia_retiro' });
+}
+
+async function manejarDia(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  if (!m.seleccionId?.startsWith('dia:')) {
+    await manejarRespuestaInvalida(m, 'Por favor, elegí uno de los días de la lista. 👆');
+    return;
+  }
+  const fecha = m.seleccionId.replace('dia:', '');
 
   const numero = sesion.contexto.numero as string;
   const zona = (sesion.contexto.zona as string | null) ?? null;
   const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
 
-  // ¿Ya había un retiro para este contenedor? Se adelanta a hoy en vez de
-  // duplicarlo (el índice único de alertas también evita una segunda
-  // 'retiro_solicitado' abierta para el mismo contenedor).
+  // ¿Ya había un retiro para este contenedor? Se reprograma a la fecha
+  // elegida en vez de duplicarlo (el índice único de alertas también evita
+  // una segunda 'retiro_solicitado' abierta para el mismo contenedor).
   const [existente] = await query<{ id: string; estado: string; chofer_id: string | null }>(
     `SELECT id, estado, chofer_id FROM viajes
       WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
@@ -113,7 +138,7 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
 
   let choferId: string | null = null;
   if (existente) {
-    await query(`UPDATE viajes SET fecha = CURRENT_DATE WHERE id = $1`, [existente.id]);
+    await query(`UPDATE viajes SET fecha = $1 WHERE id = $2`, [fecha, existente.id]);
     choferId = existente.chofer_id;
   } else {
     // Vaciadero adonde se lleva el lleno (si hay uno solo activo cargado; si
@@ -121,15 +146,15 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     const vaciadero = await resolverUbicacion('vaciadero');
     await query(
       `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, ubicacion_id, ubicacion_direccion)
-       VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'Pedido de retiro por WhatsApp (cliente)', $5, $6)`,
-      [numero, to, zona, destino, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+       VALUES ('retiro', $1, $2, $3, $4, $5, 'Pedido de retiro por WhatsApp (cliente)', $6, $7)`,
+      [fecha, numero, to, zona, destino, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
     );
     const [alerta] = await query(
       `INSERT INTO alertas (tipo, referencia_id, mensaje)
        VALUES ('retiro_solicitado', $1, $2)
        ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
        RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [numero, `${to} pidió que retiremos el contenedor ${numero}`],
+      [numero, `${to} pidió que retiremos el contenedor ${numero} el ${fecha}`],
     );
     if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
   }
@@ -140,7 +165,7 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     if (chofer?.telefono) {
       sendText(
         chofer.telefono,
-        `📥 El cliente pidió que adelantemos el retiro del contenedor *${numero}* para hoy.`,
+        `📥 El cliente pidió el retiro del contenedor *${numero}* para el ${formatearFechaLarga(fecha)}.`,
       ).catch((e) => console.error('Error avisando retiro adelantado al chofer:', motivoErrorWa(e)));
     }
   }
@@ -148,6 +173,6 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
   await clearSesion(to);
   await sendText(
     to,
-    `✅ ¡Listo! Coordinamos el retiro del contenedor *${numero}* a la brevedad.\n\n_Si en un rato no tenés novedades, escribí *asesor*._`,
+    `✅ ¡Listo! Coordinamos el retiro del contenedor *${numero}* para el *${formatearFechaLarga(fecha)}*.\n\n_Si en un rato no tenés novedades, escribí *asesor*._`,
   );
 }
