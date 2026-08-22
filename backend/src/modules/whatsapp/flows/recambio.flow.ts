@@ -3,6 +3,7 @@ import { sendText, sendButtons, sendList, sendLocationRequest } from '../graphAp
 import { clearSesion, setSesion } from '../session.store';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { datosBancarios } from './pago.flow';
+import { reverseGeocode } from '../../../services/geocoding.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -78,7 +79,13 @@ async function pedirConfirmacionContenedor(to: string, cont: ContenedorCliente):
     telefono: to,
     flujo: 'recambio',
     paso: 'confirmar_recambio',
-    contexto: { numero: cont.numero, zona: cont.zona, destinoDireccion: cont.destino_direccion },
+    contexto: {
+      numero: cont.numero,
+      zona: cont.zona,
+      destinoDireccion: cont.destino_direccion,
+      destinoLat: cont.destino_lat,
+      destinoLng: cont.destino_lng,
+    },
   });
   await sendButtons(
     to,
@@ -148,12 +155,16 @@ async function manejarConfirmacionUbicacion(m: MensajeEntrante, sesion: Sesion):
 async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
   let destinoDireccion: string | null = null;
+  let destinoLat: number | null = null;
+  let destinoLng: number | null = null;
 
   if (m.tipo === 'location') {
-    destinoDireccion =
-      m.ubicacionDireccion ||
-      m.ubicacionNombre ||
-      (m.lat != null && m.lng != null ? `https://www.google.com/maps?q=${m.lat},${m.lng}` : null);
+    destinoLat = m.lat ?? null;
+    destinoLng = m.lng ?? null;
+    destinoDireccion = m.ubicacionDireccion || m.ubicacionNombre || null;
+    if (!destinoDireccion && destinoLat != null && destinoLng != null) {
+      destinoDireccion = await reverseGeocode(destinoLat, destinoLng);
+    }
   } else if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
     destinoDireccion = m.texto.trim();
   } else {
@@ -164,7 +175,7 @@ async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promis
     return;
   }
 
-  const nuevaSesion: Sesion = { ...sesion, contexto: { ...sesion.contexto, destinoDireccion } };
+  const nuevaSesion: Sesion = { ...sesion, contexto: { ...sesion.contexto, destinoDireccion, destinoLat, destinoLng } };
   await setSesion(nuevaSesion);
   await pedirConfirmacionUbicacion(to, nuevaSesion);
 }
@@ -174,6 +185,8 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
   const numero = sesion.contexto.numero as string;
   const zona = (sesion.contexto.zona as string | null) ?? null;
   const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
+  const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
+  const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
 
   if (!zona) {
     await clearSesion(to);
@@ -193,9 +206,9 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
   const { precio, moneda } = tarifa[0];
 
   await query(
-    `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_direccion, tipo, contenedor_recambio_numero)
-     VALUES ($1,$2,$3,$4,'confirmado',$5,'recambio',$6)`,
-    [to, m.nombrePerfil ?? null, zona, precio, destino, numero],
+    `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_direccion, destino_lat, destino_lng, tipo, contenedor_recambio_numero)
+     VALUES ($1,$2,$3,$4,'confirmado',$5,$6,$7,'recambio',$8)`,
+    [to, m.nombrePerfil ?? null, zona, precio, destino, destinoLat, destinoLng, numero],
   );
 
   await clearSesion(to);

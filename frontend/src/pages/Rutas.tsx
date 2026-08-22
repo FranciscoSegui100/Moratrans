@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowUp, ArrowDown, Plus, X, RefreshCw, CheckCircle2, Tr
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
+import { DireccionMaps } from '../components/DireccionMaps';
 
 interface Ruta {
   id: string;
@@ -27,6 +28,8 @@ interface ViajePendiente {
   zona: string | null;
   contenedor_numero: string | null;
   destino_direccion: string | null;
+  destino_lat: string | null;
+  destino_lng: string | null;
   cliente_telefono: string | null;
   chofer_id?: string | null;
   ruta_id?: string | null;
@@ -40,6 +43,8 @@ interface VisitaPendiente {
   fecha: string;
   zona: string | null;
   destino_direccion: string | null;
+  destino_lat: string | null;
+  destino_lng: string | null;
   cliente_telefono: string | null;
   chofer_id: string | null;
   entrega?: ViajePendiente;
@@ -55,6 +60,8 @@ function agruparPendientes(viajes: ViajePendiente[]): VisitaPendiente[] {
         fecha: v.fecha,
         zona: v.zona,
         destino_direccion: v.destino_direccion,
+        destino_lat: v.destino_lat,
+        destino_lng: v.destino_lng,
         cliente_telefono: v.cliente_telefono,
         chofer_id: v.chofer_id ?? null,
       };
@@ -70,12 +77,18 @@ function agruparPendientes(viajes: ViajePendiente[]): VisitaPendiente[] {
         fecha: v.fecha,
         zona: v.zona,
         destino_direccion: v.destino_direccion,
+        destino_lat: v.destino_lat,
+        destino_lng: v.destino_lng,
         cliente_telefono: v.cliente_telefono,
         chofer_id: v.chofer_id ?? null,
       };
       porGrupo.set(v.grupo_id, visita);
     }
-    if (!visita.destino_direccion && v.destino_direccion) visita.destino_direccion = v.destino_direccion;
+    if (!visita.destino_direccion && v.destino_direccion) {
+      visita.destino_direccion = v.destino_direccion;
+      visita.destino_lat = v.destino_lat;
+      visita.destino_lng = v.destino_lng;
+    }
     if (!visita.zona && v.zona) visita.zona = v.zona;
     if (v.tipo === 'entrega') visita.entrega = v;
     if (v.tipo === 'retiro') visita.retiro = v;
@@ -133,6 +146,8 @@ interface ParadaViaje {
   viaje_tipo: 'entrega' | 'retiro';
   contenedor_numero: string | null;
   destino_direccion: string | null;
+  destino_lat: string | null;
+  destino_lng: string | null;
   zona: string | null;
   cliente_telefono: string | null;
   grupo_id: string | null;
@@ -426,7 +441,13 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
                     {v.entrega && v.retiro && (
                       <>
                         <div className="stop-top">
-                          <div className="stop-cli">{v.retiro.destino_direccion ?? v.entrega.destino_direccion}</div>
+                          <div className="stop-cli">
+                            <DireccionMaps
+                              direccion={v.retiro.destino_direccion ?? v.entrega.destino_direccion}
+                              lat={v.retiro.destino_lat ?? v.entrega.destino_lat}
+                              lng={v.retiro.destino_lng ?? v.entrega.destino_lng}
+                            />
+                          </div>
                           <span className="tag recambio"><RefreshCw size={11} strokeWidth={2} /> Recambio</span>
                         </div>
                         <div className="stop-sub">Lleno a retirar: {v.retiro.contenedor_numero}</div>
@@ -452,7 +473,9 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
                     {v.entrega && !v.retiro && (
                       <>
                         <div className="stop-top">
-                          <div className="stop-cli">{v.entrega.destino_direccion ?? '—'}</div>
+                          <div className="stop-cli">
+                            <DireccionMaps direccion={v.entrega.destino_direccion} lat={v.entrega.destino_lat} lng={v.entrega.destino_lng} />
+                          </div>
                           <span className="tag entrega">Entrega</span>
                         </div>
                         <div className="sel-row">
@@ -477,7 +500,9 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
                     {v.retiro && !v.entrega && (
                       <>
                         <div className="stop-top">
-                          <div className="stop-cli">{v.retiro.destino_direccion ?? '—'}</div>
+                          <div className="stop-cli">
+                            <DireccionMaps direccion={v.retiro.destino_direccion} lat={v.retiro.destino_lat} lng={v.retiro.destino_lng} />
+                          </div>
                           <span className="tag retiro">Retiro</span>
                         </div>
                         <div className="stop-sub">{v.retiro.contenedor_numero}</div>
@@ -688,17 +713,24 @@ export function Rutas() {
                     📍 {zona} ({items.length})
                   </div>
                   {items.map((visita) => {
-                    const direccionPedido = visita.destino_direccion
-                      || visita.entrega?.destino_direccion
-                      || visita.retiro?.destino_direccion
-                      || (visita.zona ? `Zona ${visita.zona}` : 'Dirección sin especificar');
+                    const fuenteDireccion = visita.destino_direccion
+                      ? visita
+                      : visita.entrega?.destino_direccion
+                      ? visita.entrega
+                      : visita.retiro?.destino_direccion
+                      ? visita.retiro
+                      : null;
+                    const direccionPedido = fuenteDireccion?.destino_direccion
+                      ?? (visita.zona ? `Zona ${visita.zona}` : 'Dirección sin especificar');
 
                     return (
                       <div key={visita.id} className="qrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                           <div>
                             <div className="cli" style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: '1.25' }}>
-                              📍 {direccionPedido}
+                              {fuenteDireccion
+                                ? <DireccionMaps direccion={direccionPedido} lat={fuenteDireccion.destino_lat} lng={fuenteDireccion.destino_lng} />
+                                : `📍 ${direccionPedido}`}
                             </div>
                             <div className="sub" style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '3px' }}>
                               {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}

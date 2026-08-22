@@ -4,6 +4,7 @@ import { ArrowUpFromLine, ArrowDownToLine, RefreshCw } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
+import { DireccionMaps } from '../components/DireccionMaps';
 
 interface Viaje {
   id: string;
@@ -14,6 +15,8 @@ interface Viaje {
   contenedor_numero: string | null;
   contenedor_estado: string | null;
   destino_direccion: string | null;
+  destino_lat: string | null;
+  destino_lng: string | null;
   cliente_telefono: string | null;
   chofer_nombre: string | null;
   chofer_id: string | null;
@@ -375,8 +378,15 @@ export function Viajes() {
                   )}
                 </td>
                 <td>{v.zona ?? '—'}</td>
-                <td style={{ maxWidth: '160px', whiteSpace: 'normal' }}>{v.origen_direccion ?? <span className="text-muted">—</span>}</td>
-                <td style={{ maxWidth: '160px', whiteSpace: 'normal' }}>{v.destino_final_direccion ?? <span className="text-muted">—</span>}</td>
+                <td style={{ maxWidth: '160px', whiteSpace: 'normal' }}>
+                  {/* La dirección del cliente (con lat/lng, si vino de un GPS de WhatsApp) es
+                      origen en un retiro y destino en una entrega — v.destino_lat/lng siempre
+                      corresponden a v.destino_direccion, nunca a la ubicación propia. */}
+                  <DireccionMaps direccion={v.origen_direccion} lat={v.tipo === 'retiro' ? v.destino_lat : null} lng={v.tipo === 'retiro' ? v.destino_lng : null} />
+                </td>
+                <td style={{ maxWidth: '160px', whiteSpace: 'normal' }}>
+                  <DireccionMaps direccion={v.destino_final_direccion} lat={v.tipo === 'entrega' ? v.destino_lat : null} lng={v.tipo === 'entrega' ? v.destino_lng : null} />
+                </td>
                 <td className="mono">
                   {v.contenedor_numero ? (
                     v.contenedor_numero

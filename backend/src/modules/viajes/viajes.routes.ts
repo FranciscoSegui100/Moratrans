@@ -32,6 +32,7 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const rows = await query(
     `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
+            v.destino_lat, v.destino_lng,
             v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id, v.patente, v.grupo_id,
             v.remito, v.importe, v.ubicacion_id, v.ubicacion_direccion, v.ruta_id, v.orden,
             -- Origen/destino final del viaje: la entrega sale del depósito

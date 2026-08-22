@@ -3,6 +3,7 @@ import { sendText, sendButtons, sendLocationRequest } from '../graphApi';
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
+import { reverseGeocode } from '../../../services/geocoding.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -54,6 +55,9 @@ async function manejarDireccion(m: MensajeEntrante, sesion: Sesion): Promise<voi
     destinoLat = m.lat ?? null;
     destinoLng = m.lng ?? null;
     destinoDireccion = m.ubicacionDireccion || m.ubicacionNombre || null;
+    if (!destinoDireccion && destinoLat != null && destinoLng != null) {
+      destinoDireccion = await reverseGeocode(destinoLat, destinoLng);
+    }
   } else if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
     destinoDireccion = m.texto.trim();
   } else {
@@ -74,7 +78,7 @@ async function manejarDireccion(m: MensajeEntrante, sesion: Sesion): Promise<voi
     telefono: to,
     flujo: 'pedir_entrega',
     paso: 'confirmar_entrega_cliente',
-    contexto: { destinoDireccion },
+    contexto: { destinoDireccion, destinoLat, destinoLng },
   });
 }
 
@@ -91,6 +95,8 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
   }
 
   const destinoDireccion = sesion.contexto.destinoDireccion as string | null;
+  const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
+  const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
 
   // Depósito de donde sale el contenedor (si hay uno solo activo cargado; si
   // hay varios, se completa después desde el panel — mismo criterio que el
@@ -98,10 +104,10 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
   const deposito = await resolverUbicacion('deposito');
 
   const [viaje] = await query<{ id: string }>(
-    `INSERT INTO viajes (tipo, fecha, cliente_telefono, destino_direccion, estado, notas, ubicacion_id, ubicacion_direccion)
-     VALUES ('entrega', CURRENT_DATE, $1, $2, 'programado', 'Pedido de entrega por WhatsApp (cuenta corriente)', $3, $4)
+    `INSERT INTO viajes (tipo, fecha, cliente_telefono, destino_direccion, destino_lat, destino_lng, estado, notas, ubicacion_id, ubicacion_direccion)
+     VALUES ('entrega', CURRENT_DATE, $1, $2, $3, $4, 'programado', 'Pedido de entrega por WhatsApp (cuenta corriente)', $5, $6)
      RETURNING id`,
-    [to, destinoDireccion, deposito?.id ?? null, deposito?.direccion ?? null],
+    [to, destinoDireccion, destinoLat, destinoLng, deposito?.id ?? null, deposito?.direccion ?? null],
   );
 
   const [alerta] = await query(

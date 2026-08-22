@@ -371,6 +371,11 @@ CREATE TABLE viajes (
   zona              TEXT,
   -- Dirección del cliente: destino de una entrega, origen de un retiro.
   destino_direccion TEXT,
+  -- Coordenadas GPS de esa dirección, si el cliente la compartió por WhatsApp
+  -- como ubicación (en vez de escribirla) — permiten linkear a Google Maps
+  -- desde el panel aunque no se haya podido resolver una dirección legible.
+  destino_lat       NUMERIC(9,6),
+  destino_lng       NUMERIC(9,6),
   -- Ubicación propia de la empresa usada en este viaje: el depósito (si
   -- tipo='entrega', de donde sale el vacío) o el vaciadero (si
   -- tipo='retiro', adonde se lleva el lleno). ubicacion_direccion es una

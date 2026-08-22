@@ -62,7 +62,8 @@ clientesRouter.post(
 clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
   const mes = (req.query.mes as string) || null;
   const rows = await query(
-    `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion, v.patente,
+    `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
+            v.destino_lat, v.destino_lng, v.patente,
             v.remito, v.importe, v.grupo_id, ch.nombre AS chofer_nombre
        FROM viajes v
        LEFT JOIN choferes ch ON ch.id = v.chofer_id

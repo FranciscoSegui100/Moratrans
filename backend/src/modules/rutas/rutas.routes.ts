@@ -28,6 +28,8 @@ interface ViajeParada {
   tipo: 'entrega' | 'retiro';
   contenedor_numero: string | null;
   destino_direccion: string | null;
+  destino_lat: number | null;
+  destino_lng: number | null;
   zona: string | null;
   cliente_telefono: string | null;
   grupo_id: string | null;
@@ -60,7 +62,7 @@ async function calcularDisponibilidadRuta(
   ejecutar: (sql: string, params: any[]) => Promise<any[]> = query,
 ) {
   const viajes: ViajeParada[] = await ejecutar(
-    `SELECT id, orden, tipo, contenedor_numero, destino_direccion, zona, cliente_telefono,
+    `SELECT id, orden, tipo, contenedor_numero, destino_direccion, destino_lat, destino_lng, zona, cliente_telefono,
             grupo_id, estado, notas, ubicacion_id, origen, completada_en, ruta_confirmada_en
        FROM viajes WHERE ruta_id = $1 ORDER BY orden`,
     [rutaId],
@@ -218,6 +220,7 @@ rutasRouter.get('/bolsa', async (req: Request, res: Response) => {
   if (fecha) { params.push(fecha); conds.push(`v.fecha = $${params.length}`); }
   const rows = await query(
     `SELECT v.id, v.tipo, v.fecha, v.zona, v.contenedor_numero, v.destino_direccion,
+            v.destino_lat, v.destino_lng,
             v.cliente_telefono, v.grupo_id, v.notas, v.creado_en,
             (v.tipo = 'entrega') AS planificable
        FROM viajes v
@@ -248,6 +251,8 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
       viaje_tipo: v.tipo,
       contenedor_numero: v.contenedor_numero,
       destino_direccion: v.destino_direccion,
+      destino_lat: v.destino_lat,
+      destino_lng: v.destino_lng,
       zona: v.zona,
       cliente_telefono: v.cliente_telefono,
       grupo_id: v.grupo_id,

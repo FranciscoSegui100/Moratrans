@@ -329,16 +329,16 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       const grupoId = randomUUID();
       const vaciadero = await resolverUbicacion('vaciadero');
       await query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
-         VALUES ('retiro', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, 'programado', 'Creado al validar el pago (recambio)', $7, $8, $9)`,
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+         VALUES ('retiro', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, $7, $8, 'programado', 'Creado al validar el pago (recambio)', $9, $10, $11)`,
         [venceEn ?? null, choferId ?? null, info!.contenedor_recambio_numero, info?.cliente_telefono ?? null, info?.zona ?? null,
-         info?.destino_direccion ?? null, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+         info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
       );
       await query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
-         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, 'programado', 'Creado al validar el pago (recambio)', $7, $8, $9)`,
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, $7, $8, 'programado', 'Creado al validar el pago (recambio)', $9, $10, $11)`,
         [venceEn ?? null, choferId ?? null, result.contenedor ?? null, info?.cliente_telefono ?? null, info?.zona ?? null,
-         info?.destino_direccion ?? null, grupoId, ubicacion?.id ?? null, ubicacion?.direccion ?? null],
+         info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, grupoId, ubicacion?.id ?? null, ubicacion?.direccion ?? null],
       );
 
       if (choferId && result.contenedor) {
@@ -353,11 +353,11 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
     } else {
       const fechaViaje = fechaEntrega ?? venceEn ?? null;
       await query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas, ubicacion_id, ubicacion_direccion, destino_direccion)
-         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', $6, $7, $8, $9)`,
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas, ubicacion_id, ubicacion_direccion, destino_direccion, destino_lat, destino_lng)
+         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', $6, $7, $8, $9, $10, $11)`,
         [fechaViaje, choferId ?? null, result.contenedor ?? null, info?.cliente_telefono ?? null, info?.zona ?? null,
          result.contenedor ? (result.reservado_ahora ? 'Creado al validar el pago' : 'Reservado al validar el pago; contenedor ocupado, pendiente de que vuelva') : 'Creado al validar el pago (en bolsa sin rutear)',
-         ubicacion?.id ?? null, ubicacion?.direccion ?? null, info?.destino_direccion ?? null],
+         ubicacion?.id ?? null, ubicacion?.direccion ?? null, info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null],
       );
 
       if (choferId && result.contenedor) {

@@ -8,6 +8,7 @@ import {
   detectarDepartamento,
   departamentoMencionadoDistinto,
 } from '../../../services/geoDepartamento.service';
+import { reverseGeocode } from '../../../services/geocoding.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -110,6 +111,11 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       destinoLat = m.lat ?? null;
       destinoLng = m.lng ?? null;
       destinoDireccion = m.ubicacionDireccion || m.ubicacionNombre || null;
+      // Ubicación GPS en vivo (no un pin con nombre): WhatsApp no manda
+      // dirección de texto en ese caso, la resolvemos nosotros.
+      if (!destinoDireccion && destinoLat != null && destinoLng != null) {
+        destinoDireccion = await reverseGeocode(destinoLat, destinoLng);
+      }
     } else if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
       destinoDireccion = m.texto.trim();
     } else {

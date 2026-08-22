@@ -5,6 +5,7 @@ import { ArrowLeft, Download, Send } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
+import { DireccionMaps } from '../components/DireccionMaps';
 
 interface Cliente {
   id: string;
@@ -21,6 +22,8 @@ interface ViajeCliente {
   estado: string;
   zona: string | null;
   destino_direccion: string | null;
+  destino_lat?: string | null;
+  destino_lng?: string | null;
   patente: string | null;
   remito: string | null;
   importe: string | null;
@@ -178,7 +181,11 @@ export function ClienteDetalle() {
                       <td>{v.fecha}</td>
                       <td>Contenedor</td>
                       <td className="mono">{v.patente ?? '—'}</td>
-                      <td>{v.destino_direccion ?? v.zona ?? '—'}</td>
+                      <td>
+                        {v.destino_direccion
+                          ? <DireccionMaps direccion={v.destino_direccion} lat={v.destino_lat} lng={v.destino_lng} />
+                          : (v.zona ?? '—')}
+                      </td>
                       <td>{tipoBulto(v)}</td>
                       <td>1</td>
                       <td className="mono">{v.remito ?? '—'}</td>
