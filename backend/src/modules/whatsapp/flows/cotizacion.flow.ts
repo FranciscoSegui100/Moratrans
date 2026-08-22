@@ -2,7 +2,7 @@ import { query } from '../../../config/db';
 import { sendText, sendList, sendButtons, sendLocationRequest } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
 import { datosBancarios } from './pago.flow';
-import { obtenerOCrearCliente } from '../../../services/clientes.service';
+import { obtenerOCrearCliente, esClienteNuevo } from '../../../services/clientes.service';
 import {
   estaDentroDeDepartamento,
   detectarDepartamento,
@@ -21,6 +21,12 @@ import type { Sesion } from '../session.store';
  * falta un paso extra de "¿confirmás?" después, a diferencia de la ubicación
  * -que sí puede venir de texto libre mal tipeado o un GPS mal tirado-).
  * Las tarifas se consultan SIEMPRE desde tarifas_departamento.
+ *
+ * Cliente nuevo (ver esClienteNuevo() en clientes.service.ts): se salta el
+ * selector de departamento — no tiene por qué conocer los nombres — y en vez
+ * de eso el paso 0 pasa directo a `ubicacion_verificar`, que exige GPS real
+ * (no texto) y detecta el departamento a partir de las coordenadas. Si
+ * verifica, converge en el mismo paso `horario` que el flujo normal.
  */
 
 /**
@@ -57,11 +63,83 @@ async function avanzarAConfirmarUbicacion(
   });
 }
 
+/**
+ * Verificación de ubicación para un cliente nuevo (ver esClienteNuevo()):
+ * exige GPS real (no texto, no un pin con nombre inventado por el cliente),
+ * detecta el departamento a partir de las coordenadas
+ * (geoDepartamento.service.ts) y valida que tengamos tarifa activa ahí. Si
+ * todo eso da bien, converge directo en el paso `horario` del flujo normal
+ * -no hace falta un "¿confirmás la dirección?" aparte, la verificación ya
+ * cumplió ese rol-. Si algo falla, se vuelve a pedir la ubicación sin salir
+ * del flujo (el cliente sigue viendo solo "Cotizar" en el menú).
+ */
+async function manejarUbicacionVerificar(m: MensajeEntrante): Promise<void> {
+  const to = m.from;
+
+  if (m.tipo !== 'location' || m.lat == null || m.lng == null) {
+    await sendLocationRequest(
+      to,
+      '📍 Para verificar tu ubicación necesito que la compartas con el botón de "Enviar ubicación" — no alcanza con escribirla. ¿Podés mandarla?',
+    );
+    return;
+  }
+
+  const departamento = await detectarDepartamento(m.lat, m.lng);
+  if (!departamento) {
+    await sendLocationRequest(
+      to,
+      '🙁 No pudimos verificar que esa ubicación esté dentro de una zona que cubrimos. Volvé a compartir tu ubicación (o escribí *asesor* si necesitás ayuda).',
+    );
+    return;
+  }
+
+  const tarifa = await query<{ precio: string }>(
+    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+    [departamento],
+  );
+  if (tarifa.length === 0) {
+    await sendLocationRequest(
+      to,
+      `🙁 Detectamos tu ubicación en *${departamento}*, pero no tenemos tarifa activa ahí todavía. Volvé a compartir tu ubicación, o escribí *asesor* para coordinarlo.`,
+    );
+    return;
+  }
+
+  let destinoDireccion = m.ubicacionDireccion || m.ubicacionNombre || null;
+  if (!destinoDireccion) {
+    destinoDireccion = await reverseGeocode(m.lat, m.lng);
+  }
+
+  await pedirHorarioPreferido(to, '🕐 ¿En qué franja horaria preferís que te llevemos el contenedor?');
+  await setSesion({
+    telefono: to,
+    flujo: 'cotizacion',
+    paso: 'horario',
+    contexto: { departamento, destinoLat: m.lat, destinoLng: m.lng, destinoDireccion },
+  });
+}
+
 export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
 
-  // Paso 0: mostrar la lista de departamentos activos.
+  if (sesion.paso === 'ubicacion_verificar') {
+    return manejarUbicacionVerificar(m);
+  }
+
+  // Paso 0: mostrar la lista de departamentos activos — salvo que sea un
+  // cliente nuevo (nunca cotizó/pagó, sin contenedor), a quien no le
+  // preguntamos departamento: directamente le pedimos y verificamos la
+  // ubicación GPS (ver manejarUbicacionVerificar).
   if (!sesion.paso || sesion.paso === 'inicio') {
+    if (await esClienteNuevo(to)) {
+      await setSesion({ telefono: to, flujo: 'cotizacion', paso: 'ubicacion_verificar', contexto: {} });
+      await sendLocationRequest(
+        to,
+        '📍 Para cotizar necesito verificar tu ubicación — tocá el botón de "Enviar ubicación" y compartí tu ubicación *actual* (GPS). No alcanza con escribirla.',
+      );
+      return;
+    }
+
     const deptos = await query<{ departamento: string }>(
       'SELECT departamento FROM tarifas_departamento WHERE activo = TRUE ORDER BY departamento LIMIT 10',
     );

@@ -162,23 +162,44 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
 }
 
 /**
- * Identifica al cliente por su teléfono (ver clientes.service.ts) y, si
- * tiene cuenta corriente aprobada, lo saluda por su nombre y le arma un menú
- * distinto: sin "Cotizar" (no le hace falta pedir precio, ya tiene forma de
- * pedir sin pagar antes) y con dos opciones exclusivas — "Pedir entrega" y
- * "Detalle de movimientos" — que un cliente ocasional no ve. Retiro y
- * recambio siguen disponibles para cualquiera.
+ * Identifica al cliente por su teléfono (ver clientes.service.ts) y arma un
+ * menú distinto según quién es:
+ *  - Cliente nuevo (nunca cotizó/pagó, sin contenedor): menú de un solo paso
+ *    con "Cotizar" — ver más abajo.
+ *  - Cuenta corriente aprobada: lo saluda por su nombre, sin "Cotizar" (no le
+ *    hace falta pedir precio) y con dos opciones exclusivas — "Pedir
+ *    entrega" y "Detalle de movimientos" — que un cliente ocasional no ve.
+ *  - Cualquier otro: menú completo de siempre.
+ * Retiro y recambio siguen disponibles para cualquiera que no sea nuevo.
  */
 async function enviarMenuPrincipal(to: string): Promise<void> {
   const [cliente] = await query<{ nombre: string; cuenta_corriente_estado: string }>(
     'SELECT nombre, cuenta_corriente_estado FROM clientes WHERE telefono = $1',
     [to],
   );
-  const esCuentaCorriente = cliente?.cuenta_corriente_estado === 'aprobada';
   // "Alargar retiro" solo tiene sentido si el cliente ya tiene un contenedor
   // entregado — a diferencia de retiro/recambio (que también lo exigen, pero
   // recién avisan al entrar al flujo), acá directamente no se ofrece.
   const tieneContenedor = (await contenedoresDelCliente(to)).length > 0;
+
+  // Primer contacto real: nunca cotizó/pagó (sin fila en `clientes`, ver
+  // esClienteNuevo() en clientes.service.ts — se recalcula acá mismo en vez
+  // de llamarla para no repetir el SELECT de `cliente` que ya tenemos) y sin
+  // contenedor. El resto de las opciones no tiene sentido todavía — se le
+  // ofrece solo Cotizar, que además salta el selector de departamento y pide
+  // ubicación GPS directo (ver handleCotizacion en cotizacion.flow.ts).
+  if (!cliente && !tieneContenedor) {
+    await sendList(
+      to,
+      '👋 ¡Hola! Soy el asistente de *MoraTrans* 🚚.',
+      'Para arrancar, pedime una cotización del flete 👇',
+      'Ver opciones',
+      [{ id: 'opt_cotizar', title: '🧮 Cotizar', description: 'Precio del flete por tu ubicación' }],
+    );
+    return;
+  }
+
+  const esCuentaCorriente = cliente?.cuenta_corriente_estado === 'aprobada';
   const saludo = esCuentaCorriente ? `👋 ¡Hola, ${cliente.nombre}!` : '👋 ¡Hola!';
   const bajada = esCuentaCorriente
     ? 'Soy el asistente de *MoraTrans* 🚚. Tenés *cuenta corriente activa* — ¿en qué te ayudo hoy?\n\n'
