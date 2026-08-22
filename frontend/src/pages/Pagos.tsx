@@ -20,6 +20,8 @@ interface Pago {
   adjuntos_count: number;
   titular_transferencia: string | null;
   es_cuenta_corriente: boolean;
+  tipo: 'flete' | 'alargue_retiro';
+  contenedor_numero: string | null;
 }
 
 interface Adjunto { id: string; creado_en: string; }
@@ -79,8 +81,10 @@ export function Pagos() {
       const { data } = await api.post(`/api/pagos/${id}/validar`, {});
       show(
         'success',
-        'Pago validado',
-        data.reservado_ahora
+        data.tipo === 'alargue_retiro' ? 'Alargue validado' : 'Pago validado',
+        data.tipo === 'alargue_retiro'
+          ? `Contenedor ${data.contenedor} — nuevo vencimiento ${new Date(data.vence_en).toLocaleDateString('es-AR')}`
+          : data.reservado_ahora
           ? `Ticket ${data.ticket_id} — contenedor ${data.contenedor}`
           : `Ticket ${data.ticket_id} — contenedor ${data.contenedor} reservado a futuro, todavía está ocupado`,
       );
@@ -146,11 +150,19 @@ export function Pagos() {
 
                 <div className="pago-info">
                   <div className="pago-phone">{p.cliente_telefono}</div>
-                  <div className="pago-detail">
-                    {p.zona ?? 'Sin zona'} ·{' '}
-                    {p.precio ? `${p.moneda ?? ''} ${Number(p.precio).toLocaleString('es-AR')}`.trim() : 'Sin monto'} ·{' '}
-                    {new Date(p.creado_en).toLocaleString('es-UY')}
-                  </div>
+                  {p.tipo === 'alargue_retiro' ? (
+                    <div className="pago-detail">
+                      ⏳ Alargue de retiro — contenedor <strong>{p.contenedor_numero ?? '—'}</strong> ·{' '}
+                      {p.monto ? `${p.moneda ?? ''} ${Number(p.monto).toLocaleString('es-AR')}`.trim() : 'Sin monto'} ·{' '}
+                      {new Date(p.creado_en).toLocaleString('es-UY')}
+                    </div>
+                  ) : (
+                    <div className="pago-detail">
+                      {p.zona ?? 'Sin zona'} ·{' '}
+                      {p.precio ? `${p.moneda ?? ''} ${Number(p.precio).toLocaleString('es-AR')}`.trim() : 'Sin monto'} ·{' '}
+                      {new Date(p.creado_en).toLocaleString('es-UY')}
+                    </div>
+                  )}
                   {p.titular_transferencia && (
                     <div className="pago-detail">Transferencia a nombre de: <strong>{p.titular_transferencia}</strong></div>
                   )}

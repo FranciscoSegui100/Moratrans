@@ -9,6 +9,8 @@ import { handleRecambio } from './flows/recambio.flow';
 import { handlePedirRetiro } from './flows/pedirRetiro.flow';
 import { handlePedirEntrega } from './flows/pedirEntrega.flow';
 import { handleDetalleMovimientos } from './flows/movimientos.flow';
+import { handleAlargarRetiro } from './flows/alargarRetiro.flow';
+import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
 
 /** Mensaje normalizado, agnóstico del formato crudo de Meta. */
 export interface MensajeEntrante {
@@ -107,7 +109,13 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   }
 
   // 3) Un comprobante (imagen/documento) siempre entra al flujo de pago,
-  // incluso en modo humano: la validación de pagos no debe depender de un operador.
+  // incluso en modo humano: la validación de pagos no debe depender de un
+  // operador. Excepción: si el cliente está a mitad de "alargar retiro"
+  // esperando SU comprobante, que vaya ahí — si no, el pago de flete
+  // interceptaría el comprobante del alargue.
+  if ((m.tipo === 'image' || m.tipo === 'document') && sesion.flujo === 'alargar_retiro') {
+    return handleAlargarRetiro(m, sesion);
+  }
   if (m.tipo === 'image' || m.tipo === 'document') {
     return handlePago(m, sesion);
   }
@@ -120,6 +128,7 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   if (sesion.flujo === 'recambio') return handleRecambio(m, sesion);
   if (sesion.flujo === 'pedir_retiro') return handlePedirRetiro(m, sesion);
   if (sesion.flujo === 'pedir_entrega') return handlePedirEntrega(m, sesion);
+  if (sesion.flujo === 'alargar_retiro') return handleAlargarRetiro(m, sesion);
 
   // 5) Comandos de arranque
   if (m.seleccionId === 'opt_cotizar' || t.includes('cotiz')) return handleCotizacion(m, { ...sesion, flujo: 'cotizacion', paso: null });
@@ -144,6 +153,9 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   if (m.seleccionId === 'opt_detalle_movimientos' || t.includes('movimiento')) {
     return handleDetalleMovimientos(m, sesion);
   }
+  if (m.seleccionId === 'opt_alargar_retiro' || t.includes('alargar')) {
+    return handleAlargarRetiro(m, { ...sesion, flujo: 'alargar_retiro', paso: null });
+  }
 
   // 6) Fallback
   return enviarMenuPrincipal(m.from);
@@ -163,6 +175,10 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
     [to],
   );
   const esCuentaCorriente = cliente?.cuenta_corriente_estado === 'aprobada';
+  // "Alargar retiro" solo tiene sentido si el cliente ya tiene un contenedor
+  // entregado — a diferencia de retiro/recambio (que también lo exigen, pero
+  // recién avisan al entrar al flujo), acá directamente no se ofrece.
+  const tieneContenedor = (await contenedoresDelCliente(to)).length > 0;
   const saludo = esCuentaCorriente ? `👋 ¡Hola, ${cliente.nombre}!` : '👋 ¡Hola!';
   const bajada = esCuentaCorriente
     ? 'Soy el asistente de *MoraTrans* 🚚. Tenés *cuenta corriente activa* — ¿en qué te ayudo hoy?\n\n'
@@ -184,6 +200,9 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
       : []),
     { id: 'opt_pedir_retiro', title: '📥 Pedir retiro', description: 'Se llenó antes de tiempo: que lo pasen a buscar' },
     { id: 'opt_recambio', title: '🔄 Pedir recambio', description: 'Cambiar el contenedor lleno por uno vacío' },
+    ...(tieneContenedor
+      ? [{ id: 'opt_alargar_retiro', title: '⏳ Alargar retiro', description: 'Sumar 5 días más antes de que lo retiremos' }]
+      : []),
     { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
   ];
 

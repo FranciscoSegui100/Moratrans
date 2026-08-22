@@ -140,7 +140,7 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
  * transferencia (la cuenta corriente se habilita aparte, ej. desde el panel
  * de Clientes, no autopidiéndola desde este flujo).
  */
-async function tieneCuentaCorrienteAprobada(telefono: string): Promise<boolean> {
+export async function tieneCuentaCorrienteAprobada(telefono: string): Promise<boolean> {
   const [cliente] = await query<{ cuenta_corriente_estado: string }>(
     'SELECT cuenta_corriente_estado FROM clientes WHERE telefono = $1',
     [telefono],
@@ -149,7 +149,7 @@ async function tieneCuentaCorrienteAprobada(telefono: string): Promise<boolean> 
 }
 
 /** Botones de "¿Cómo vas a pagar?" — Cuenta corriente solo si ya está aprobada. */
-async function opcionesMetodoPago(telefono: string): Promise<{ id: string; title: string }[]> {
+export async function opcionesMetodoPago(telefono: string): Promise<{ id: string; title: string }[]> {
   const opciones = [{ id: 'metodo_transferencia', title: '💸 Transferencia' }];
   if (await tieneCuentaCorrienteAprobada(telefono)) {
     opciones.push({ id: 'metodo_cuenta_corriente', title: '📋 Cuenta corriente' });

@@ -11,7 +11,7 @@ import { sendText, sendButtons, uploadMedia, sendDocument, motivoErrorWa } from 
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { avisarChoferRecambio } from '../viajes/viajes.routes';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
-import { emitAlerta, emitAlertaActualizada } from '../../config/socket';
+import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
 
 export const pagosRouter = Router();
@@ -31,7 +31,7 @@ pagosRouter.get('/', async (req: Request, res: Response) => {
   const estado = (req.query.estado as string) || 'pendiente';
   const rows = await query(
     `SELECT p.id, p.cliente_telefono, p.monto, p.url_comprobante, p.estado, p.creado_en,
-            p.titular_transferencia, p.es_cuenta_corriente,
+            p.titular_transferencia, p.es_cuenta_corriente, p.tipo, p.contenedor_numero,
             pe.zona, pe.precio, td.moneda,
             (SELECT COUNT(*) FROM pagos_adjuntos pa WHERE pa.pago_id = p.id)::int AS adjuntos_count
        FROM pagos p
@@ -189,8 +189,61 @@ async function avisarChoferReservaFutura(choferId: string, contenedor: string, f
  * retiro y la fecha de vencimiento del contenedor. Luego genera y envía el
  * PDF por WhatsApp.
  */
+/**
+ * Cuánto dura un "alargue de retiro" (ver alargarRetiro.flow.ts) — fijo, el
+ * cliente no elige la cantidad de días.
+ */
+const DIAS_ALARGUE = 5;
+
+/**
+ * Un pago 'alargue_retiro' no reserva contenedor ni crea ticket — solo suma
+ * DIAS_ALARGUE al vencimiento del contenedor que el cliente ya tenía. Se
+ * resuelve aparte de fn_validar_pago porque esa función asume que siempre
+ * hay un pedido detrás (no es el caso acá).
+ */
+async function validarAlargue(req: Request, res: Response, pagoId: string): Promise<void> {
+  const [pago] = await query<{ contenedor_numero: string | null; cliente_telefono: string }>(
+    `UPDATE pagos SET estado = 'validado', validado_por = $2
+      WHERE id = $1 AND estado = 'pendiente'
+      RETURNING contenedor_numero, cliente_telefono`,
+    [pagoId, req.user!.id],
+  );
+  if (!pago) {
+    res.status(409).json({ error: 'Pago inexistente o no está pendiente' });
+    return;
+  }
+  if (!pago.contenedor_numero) {
+    res.status(409).json({ error: 'Este alargue no tiene un contenedor asociado' });
+    return;
+  }
+
+  const [cont] = await query<{ vence_en: string }>(
+    `UPDATE contenedores
+        SET vence_en = COALESCE(vence_en, now()) + make_interval(days => $2)
+      WHERE numero = $1
+      RETURNING vence_en`,
+    [pago.contenedor_numero, DIAS_ALARGUE],
+  );
+
+  await query(`UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'alargue_solicitado' AND referencia_id = $1`, [pagoId]);
+  emitAlertaActualizada({ tipo: 'alargue_solicitado', referencia_id: pagoId, estado: 'resuelta' });
+  emitRecursoActualizado('contenedores');
+
+  sendText(
+    pago.cliente_telefono,
+    `✅ ¡Listo! Extendimos *${DIAS_ALARGUE} días* el retiro de tu contenedor *${pago.contenedor_numero}* — ahora vence el ${new Date(cont.vence_en).toLocaleDateString('es-AR')}.`,
+  ).catch((e) => console.error('Error avisando alargue validado:', motivoErrorWa(e)));
+
+  res.json({ ok: true, tipo: 'alargue_retiro', contenedor: pago.contenedor_numero, vence_en: cont.vence_en });
+}
+
 pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const pagoId = req.params.id;
+
+  const [pagoTipo] = await query<{ tipo: string }>('SELECT tipo FROM pagos WHERE id = $1', [pagoId]);
+  if (!pagoTipo) return res.status(404).json({ error: 'Pago inexistente' });
+  if (pagoTipo.tipo === 'alargue_retiro') return validarAlargue(req, res, pagoId);
+
   const parsed = validarSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
   const { diasDemora, choferId, venceEn, contenedorNumero, fechaEntrega, ubicacionId } = parsed.data;
@@ -378,9 +431,9 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
 /** POST /api/pagos/:id/rechazar — marca rechazado y avisa al cliente. */
 pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const motivo = (req.body?.motivo as string) || 'Comprobante no válido';
-  const [pago] = await query<{ cliente_telefono: string; es_cuenta_corriente: boolean }>(
+  const [pago] = await query<{ cliente_telefono: string; es_cuenta_corriente: boolean; tipo: string }>(
     `UPDATE pagos SET estado = 'rechazado', motivo_rechazo = $2, validado_por = $3
-      WHERE id = $1 AND estado = 'pendiente' RETURNING cliente_telefono, es_cuenta_corriente`,
+      WHERE id = $1 AND estado = 'pendiente' RETURNING cliente_telefono, es_cuenta_corriente, tipo`,
     [req.params.id, motivo, req.user!.id],
   );
   if (!pago) return res.status(409).json({ error: 'Pago inexistente o ya procesado' });
@@ -388,7 +441,9 @@ pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), a
   // Comparte referencia_id (= pago.id) con la alerta de transferencia, pero
   // es un tipo distinto (ver migración 0013) — hay que resolver la que
   // corresponda según cómo se pidió pagar.
-  const tipoAlerta = pago.es_cuenta_corriente ? 'cuenta_corriente_solicitada' : 'pago_pendiente_validacion';
+  const tipoAlerta = pago.tipo === 'alargue_retiro'
+    ? 'alargue_solicitado'
+    : pago.es_cuenta_corriente ? 'cuenta_corriente_solicitada' : 'pago_pendiente_validacion';
   await query(`UPDATE alertas SET estado = 'resuelta'
                WHERE tipo = $2 AND referencia_id = $1`, [req.params.id, tipoAlerta]);
   emitAlertaActualizada({ tipo: tipoAlerta, referencia_id: req.params.id, estado: 'resuelta' });
