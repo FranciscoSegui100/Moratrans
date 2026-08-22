@@ -143,6 +143,25 @@ const ETIQUETA_ESTADO: Record<Ruta['estado'], { texto: string; clase: string }> 
 
 const iniciales = (nombre: string) => nombre.split(',')[0].slice(0, 2).toUpperCase();
 
+// Umbral a partir del cual un pedido sin rutear se marca en color de alerta
+// (mismo lenguaje visual que "parada sin contenedor válido"): mismo riesgo
+// que el vencimiento de contenedores que no se revisa a tiempo, aplicado acá.
+const DIAS_ALERTA_COLA = 1;
+
+function diasEspera(fecha: string): number {
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+  const [anio, mes, dia] = fecha.slice(0, 10).split('-').map(Number);
+  const fechaPedido = new Date(anio, mes - 1, dia);
+  return Math.round((hoy.getTime() - fechaPedido.getTime()) / 86_400_000);
+}
+
+function etiquetaEspera(dias: number): string {
+  if (dias <= 0) return 'hoy';
+  if (dias === 1) return 'hace 1 día';
+  return `hace ${dias} días`;
+}
+
 // ── Detalle de una ruta (paradas, confirmación, vaciados) ─────────────────────
 
 interface ParadaViaje {
@@ -634,16 +653,19 @@ export function Rutas() {
   const visitasDelDia = agruparPendientes(viajesDelDia).length;
   const ruteados = agruparPendientes(viajesDelDia.filter((v) => v.ruta_id)).length;
 
-  // Agrupamiento por zona de los pedidos sin rutear
+  // Agrupamiento por zona de los pedidos sin rutear — dentro de cada zona y
+  // entre zonas, el más antiguo primero (la cola no filtra por fecha para no
+  // perder pedidos viejos, así que hay que ordenar para no perderlos de vista).
   const visitasPorZona = (() => {
     const map = new Map<string, VisitaPendiente[]>();
-    for (const v of visitasPendientes) {
+    const ordenadas = [...visitasPendientes].sort((a, b) => a.fecha.localeCompare(b.fecha));
+    for (const v of ordenadas) {
       const zona = v.zona ?? (v.destino_direccion ? v.destino_direccion.split(',')[0] : 'Sin zona');
       const lista = map.get(zona) ?? [];
       lista.push(v);
       map.set(zona, lista);
     }
-    return map;
+    return [...map.entries()].sort((a, b) => a[1][0].fecha.localeCompare(b[1][0].fecha));
   })();
 
   // Selecciona la primera ruta del día automáticamente cuando cambia la fecha o cargan los datos.
@@ -720,7 +742,7 @@ export function Rutas() {
             <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes en la bolsa.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: 'calc(100vh - 240px)', overflowY: 'auto', paddingRight: '4px' }}>
-              {[...visitasPorZona.entries()].map(([zona, items]) => (
+              {visitasPorZona.map(([zona, items]) => (
                 <div key={zona} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', background: 'var(--bg-surface)', padding: '4px 8px', borderRadius: 'var(--radius-sm)' }}>
                     📍 {zona} ({items.length})
@@ -739,6 +761,8 @@ export function Rutas() {
                       ?? visita.entrega?.horario_preferido
                       ?? visita.retiro?.horario_preferido
                       ?? null;
+                    const dias = diasEspera(visita.fecha);
+                    const espera = dias > DIAS_ALERTA_COLA;
 
                     return (
                       <div key={visita.id} className="qrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px' }}>
@@ -753,6 +777,11 @@ export function Rutas() {
                               {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
                               {visita.cliente_telefono ? ` · 📞 ${visita.cliente_telefono}` : ''}
                               {horarioPedido ? ` · 🕐 ${horarioPedido}` : ''}
+                              {' · '}
+                              <span style={{ color: espera ? 'var(--danger)' : 'inherit', fontWeight: espera ? 700 : 400 }}>
+                                {espera && <AlertTriangle size={11} strokeWidth={2} style={{ verticalAlign: '-1px', marginRight: '2px' }} />}
+                                {etiquetaEspera(dias)}
+                              </span>
                             </div>
                           </div>
                           <span className={`tag ${visita.entrega && visita.retiro ? 'recambio' : visita.entrega ? 'entrega' : 'retiro'}`} style={{ fontSize: '0.68rem', padding: '2px 6px', flexShrink: 0 }}>
