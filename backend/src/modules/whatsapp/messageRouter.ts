@@ -1,6 +1,6 @@
 import { query } from '../../config/db';
 import { sendList } from './graphApi';
-import { getSesion, clearSesion } from './session.store';
+import { getSesion, clearSesion, setSesion } from './session.store';
 import { handleCotizacion } from './flows/cotizacion.flow';
 import { handlePago } from './flows/pago.flow';
 import { handleChofer } from './flows/chofer.flow';
@@ -174,7 +174,12 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
     ...(esCuentaCorriente
       ? [
           { id: 'opt_pedir_entrega', title: '📦 Pedir entrega', description: 'Cuenta corriente: pedir un contenedor sin pagar antes' },
-          { id: 'opt_detalle_movimientos', title: '📊 Detalle de movimientos', description: 'Recibir el detalle de tus entregas/retiros por Excel' },
+          // Título a propósito corto: WhatsApp rechaza el mensaje de lista
+          // ENTERO si algún row.title supera 24 caracteres — "📊 Detalle de
+          // movimientos" quedaba justo en el límite (o por encima, según
+          // cómo cuenten el emoji) y tiraba abajo todo el menú principal de
+          // cuenta corriente sin avisarle nada al cliente.
+          { id: 'opt_detalle_movimientos', title: '📊 Movimientos', description: 'Recibir el detalle de tus entregas/retiros por Excel' },
         ]
       : []),
     { id: 'opt_pedir_retiro', title: '📥 Pedir retiro', description: 'Se llenó antes de tiempo: que lo pasen a buscar' },
@@ -189,4 +194,12 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
     'Ver opciones',
     opciones,
   );
+
+  // Sin esto, un cliente parado en el menú principal (que todavía no eligió
+  // ninguna opción) no deja fila en sesiones_chat, y el cron de inactividad
+  // (jobs/inactividadChat.cron.ts) no tiene nada que avisar ni cerrar: filtra
+  // por `flujo IS NOT NULL`. 'menu' no matchea ningún flujo real en el paso 4
+  // de enrutar(), así que la próxima respuesta se interpreta como comando
+  // normal (paso 5), pero mientras tanto el cron sí puede avisar/cerrar.
+  await setSesion({ telefono: to, flujo: 'menu', paso: null, contexto: {} });
 }

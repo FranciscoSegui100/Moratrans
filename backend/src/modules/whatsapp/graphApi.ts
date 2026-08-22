@@ -202,6 +202,10 @@ export async function downloadMedia(mediaId: string): Promise<{ buffer: Buffer; 
 
 /** Sube un archivo (en memoria) al endpoint /media y devuelve el media_id. */
 export async function uploadMedia(buffer: Buffer, mime: string, filename: string): Promise<string> {
+  if (env.WA_ACCESS_TOKEN === 'mock') {
+    console.log(`[MOCK WA] 📤 Simulando subida de media: ${filename} (${mime})`);
+    return 'mock-media-id';
+  }
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
   form.append('file', buffer, { filename, contentType: mime });
@@ -217,12 +221,16 @@ export async function sendDocument(
   caption?: string,
 ): Promise<void> {
   const destino = normalizarDestinoWhatsApp(to);
-  await http.post(`/${PHONE}/messages`, {
-    messaging_product: 'whatsapp',
-    to: destino,
-    type: 'document',
-    document: { id: mediaId, filename, caption },
-  });
+  if (env.WA_ACCESS_TOKEN === 'mock') {
+    console.log(`[MOCK WA] 📄 Documento a ${destino}: ${filename}${caption ? ' — ' + caption : ''}`);
+  } else {
+    await http.post(`/${PHONE}/messages`, {
+      messaging_product: 'whatsapp',
+      to: destino,
+      type: 'document',
+      document: { id: mediaId, filename, caption },
+    });
+  }
   await logMensaje(to, 'bot', `[Documento: ${filename}]${caption ? ' — ' + caption : ''}`)
     .catch((e) => console.error('Error logueando mensaje del bot:', e));
 }

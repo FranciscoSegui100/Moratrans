@@ -157,13 +157,24 @@ async function opcionesMetodoPago(telefono: string): Promise<{ id: string; title
   return opciones;
 }
 
-/** Pedidos abiertos (cotizados o confirmados) de un teléfono, más recientes primero. */
+/**
+ * Pedidos abiertos (cotizados o confirmados) de un teléfono, más recientes
+ * primero — es decir, pedidos que todavía necesitan que se les asocie un
+ * pago. 'confirmado' es un estado ambiguo: lo pisa tanto un recambio recién
+ * cotizado (ver recambio.flow.ts) como fn_validar_pago cuando un operador YA
+ * validó el pago de cualquier pedido (ver migración 0023). Sin este filtro,
+ * un pedido ya pagado y con ticket queda apareciendo para siempre en "¿para
+ * cuál cotización es este pago?" cada vez que el cliente paga algo nuevo —
+ * por eso se excluyen los que ya tienen un pago 'validado' asociado.
+ */
 async function pedidosAbiertos(telefono: string): Promise<PedidoCandidato[]> {
   return query<PedidoCandidato>(
     `SELECT pe.id, pe.zona, pe.precio, td.moneda
        FROM pedidos pe
        LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
-      WHERE pe.cliente_telefono = $1 AND pe.estado IN ('cotizado','confirmado')
+      WHERE pe.cliente_telefono = $1
+        AND pe.estado IN ('cotizado','confirmado')
+        AND NOT EXISTS (SELECT 1 FROM pagos pg WHERE pg.pedido_id = pe.id AND pg.estado = 'validado')
       ORDER BY pe.creado_en DESC LIMIT 10`,
     [telefono],
   );
@@ -495,8 +506,18 @@ async function preguntarFactura(to: string, pagoId: string): Promise<void> {
 async function manejarRespuestaFactura(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
   const pagoId = sesion.contexto?.pagoId as string | undefined;
-  const t = (m.texto ?? '').toLowerCase();
-  const quiere = m.seleccionId === 'factura_si' || (m.seleccionId !== 'factura_no' && t.includes('si') && !t.includes('no'));
+  // Palabras exactas (sin acentos), no substring: "sin factura" contiene "si"
+  // como substring pero no es un "sí" — con match de substring quedaba mal
+  // interpretado como que el cliente SÍ quería factura.
+  const palabras = (m.texto ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z]+/)
+    .filter(Boolean);
+  const quiere =
+    m.seleccionId === 'factura_si' ||
+    (m.seleccionId !== 'factura_no' && palabras.includes('si') && !palabras.includes('no'));
 
   if (quiere && pagoId) {
     const [alerta] = await query(
