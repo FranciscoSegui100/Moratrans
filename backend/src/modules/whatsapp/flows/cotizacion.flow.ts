@@ -3,17 +3,58 @@ import { sendText, sendList, sendButtons, sendLocationRequest } from '../graphAp
 import { setSesion, clearSesion } from '../session.store';
 import { datosBancarios } from './pago.flow';
 import { obtenerOCrearCliente } from '../../../services/clientes.service';
+import {
+  estaDentroDeDepartamento,
+  detectarDepartamento,
+  departamentoMencionadoDistinto,
+} from '../../../services/geoDepartamento.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
 /**
  * Flujo de cotización (menú cerrado):
- *   inicio -> elegir_departamento -> ubicacion -> confirmar_ubicacion -> [precio]
+ *   inicio -> elegir_departamento -> ubicacion -> [confirmar_departamento_detectado, si el GPS
+ *   no matchea el departamento elegido] -> confirmar_ubicacion -> [precio]
  * (elegir de una lista interactiva ya es una elección explícita: no hace
  * falta un paso extra de "¿confirmás?" después, a diferencia de la ubicación
  * -que sí puede venir de texto libre mal tipeado o un GPS mal tirado-).
  * Las tarifas se consultan SIEMPRE desde tarifas_departamento.
  */
+
+/**
+ * Arma el mensaje de "confirmá la dirección" y guarda el paso final antes de
+ * cotizar. Se llama tanto desde el flujo normal como después de resolver un
+ * departamento que no coincidía con la ubicación (ver geoDepartamento.service.ts).
+ */
+async function avanzarAConfirmarUbicacion(
+  to: string,
+  sesion: Sesion,
+  departamento: string,
+  destinoLat: number | null,
+  destinoLng: number | null,
+  destinoDireccion: string | null,
+  avisoExtra?: string,
+): Promise<void> {
+  const resumenUbicacion =
+    destinoLat != null && destinoLng != null
+      ? `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`
+      : (destinoDireccion as string);
+
+  await sendButtons(
+    to,
+    `${avisoExtra ? avisoExtra + '\n\n' : ''}📍 Confirmá la dirección de entrega:\n\n${resumenUbicacion}\n\n¿Es correcta?`,
+    [
+      { id: 'ubicacion_si', title: '✅ Sí, es correcta' },
+      { id: 'ubicacion_no', title: '↩️ Volver a enviar' },
+    ],
+  );
+  await setSesion({
+    ...sesion,
+    paso: 'confirmar_ubicacion',
+    contexto: { departamento, destinoLat, destinoLng, destinoDireccion },
+  });
+}
+
 export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
 
@@ -60,6 +101,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
   // de guardarla, se la mostramos de vuelta y pedimos que la confirme (evita
   // guardar un pin mal tirado o una dirección mal tipeada sin que nadie lo note).
   if (sesion.paso === 'ubicacion') {
+    const departamento = sesion.contexto.departamento as string;
     let destinoLat: number | null = null;
     let destinoLng: number | null = null;
     let destinoDireccion: string | null = null;
@@ -79,24 +121,87 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       return;
     }
 
-    const resumenUbicacion =
-      destinoLat != null && destinoLng != null
-        ? `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`
-        : (destinoDireccion as string);
+    // Con GPS: comparamos contra el polígono del departamento elegido (ver
+    // geoDepartamento.service.ts). Sin este chequeo, nada impedía cotizar
+    // para un departamento y compartir la ubicación de otro -> precio mal
+    // calculado, y después la ruta/el aviso al chofer también mal armados.
+    if (destinoLat != null && destinoLng != null) {
+      const dentro = await estaDentroDeDepartamento(destinoLat, destinoLng, departamento);
+      if (dentro === false) {
+        const detectado = await detectarDepartamento(destinoLat, destinoLng);
+        await setSesion({
+          ...sesion,
+          paso: 'confirmar_departamento_detectado',
+          contexto: { departamento, departamentoDetectado: detectado, destinoLat, destinoLng, destinoDireccion },
+        });
+        if (detectado) {
+          await sendButtons(
+            to,
+            `📍 Notamos algo raro: cotizaste para *${departamento}*, pero tu ubicación parece estar en *${detectado}*.\n\n¿Cuál es el correcto?`,
+            [
+              { id: 'depto_mantener', title: departamento.slice(0, 20) },
+              { id: 'depto_cambiar', title: detectado.slice(0, 20) },
+            ],
+          );
+        } else {
+          await sendButtons(
+            to,
+            `📍 Tu ubicación no parece estar dentro de *${departamento}*, que fue lo que cotizaste.\n\n` +
+              `¿Confirmamos igual con esa dirección, o preferís volver a elegir el departamento?`,
+            [
+              { id: 'depto_confirmar_igual', title: '✅ Confirmar igual' },
+              { id: 'depto_volver', title: '↩️ Elegir depto' },
+            ],
+          );
+        }
+        return;
+      }
+    } else if (destinoDireccion) {
+      // Sin GPS no hay coordenadas para comparar contra el polígono — lo
+      // único que se puede chequear gratis es si el cliente escribió el
+      // nombre de OTRO departamento en la dirección. Es solo un aviso, no
+      // bloquea (puede ser una calle con nombre parecido, un falso positivo).
+      const otro = await departamentoMencionadoDistinto(destinoDireccion, departamento);
+      if (otro) {
+        await avanzarAConfirmarUbicacion(
+          to,
+          sesion,
+          departamento,
+          destinoLat,
+          destinoLng,
+          destinoDireccion,
+          `⚠️ Notamos que escribiste *${otro}* en la dirección, pero cotizaste para *${departamento}* — revisá antes de confirmar.`,
+        );
+        return;
+      }
+    }
 
-    await sendButtons(
-      to,
-      `📍 Confirmá la dirección de entrega:\n\n${resumenUbicacion}\n\n¿Es correcta?`,
-      [
-        { id: 'ubicacion_si', title: '✅ Sí, es correcta' },
-        { id: 'ubicacion_no', title: '↩️ Volver a enviar' },
-      ],
-    );
-    await setSesion({
-      ...sesion,
-      paso: 'confirmar_ubicacion',
-      contexto: { ...sesion.contexto, destinoLat, destinoLng, destinoDireccion },
-    });
+    await avanzarAConfirmarUbicacion(to, sesion, departamento, destinoLat, destinoLng, destinoDireccion);
+    return;
+  }
+
+  // Paso 3b: el GPS no caía dentro del departamento cotizado -> el cliente
+  // decide si el que había elegido es el correcto, o si nos quedamos con el
+  // que sí matchea la ubicación real (ver geoDepartamento.service.ts).
+  if (sesion.paso === 'confirmar_departamento_detectado') {
+    const { departamento, departamentoDetectado, destinoLat, destinoLng, destinoDireccion } = sesion.contexto as {
+      departamento: string;
+      departamentoDetectado: string | null;
+      destinoLat: number | null;
+      destinoLng: number | null;
+      destinoDireccion: string | null;
+    };
+
+    if (m.seleccionId === 'depto_volver') {
+      return handleCotizacion(m, { ...sesion, paso: 'inicio', contexto: {} });
+    }
+    if (m.seleccionId === 'depto_mantener' || m.seleccionId === 'depto_confirmar_igual') {
+      return avanzarAConfirmarUbicacion(to, sesion, departamento, destinoLat, destinoLng, destinoDireccion);
+    }
+    if (m.seleccionId === 'depto_cambiar' && departamentoDetectado) {
+      return avanzarAConfirmarUbicacion(to, sesion, departamentoDetectado, destinoLat, destinoLng, destinoDireccion);
+    }
+    await sendText(to, 'Elegí una de las opciones de arriba.\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
 

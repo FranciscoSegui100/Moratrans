@@ -152,7 +152,12 @@ CREATE TABLE tarifas_departamento (
   precio        NUMERIC(12,2)  NOT NULL CHECK (precio >= 0),
   moneda        TEXT           NOT NULL DEFAULT 'ARS',
   activo        BOOLEAN        NOT NULL DEFAULT TRUE,
-  actualizado_en TIMESTAMPTZ   NOT NULL DEFAULT now()
+  actualizado_en TIMESTAMPTZ   NOT NULL DEFAULT now(),
+  -- Anillo exterior [[lng,lat], ...] del límite administrativo, usado por
+  -- geoDepartamento.service.ts para detectar cuando la ubicación que
+  -- comparte el cliente no coincide con el departamento que cotizó (ver
+  -- migración 0025). NULL = sin polígono cargado, no se valida ese depto.
+  limite_geografico JSONB
 );
 
 -- ---------------------------------------------------------------------
