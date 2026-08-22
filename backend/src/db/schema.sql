@@ -199,6 +199,10 @@ CREATE TABLE pedidos (
   destino_lat      NUMERIC(9,6),               -- ubicación GPS compartida por WhatsApp (si aplica)
   destino_lng      NUMERIC(9,6),
   destino_direccion TEXT,                      -- dirección escrita por el cliente, o la que venga con la ubicación GPS
+  -- Franja horaria elegida por el cliente (botones de horarioPreferido.flow.ts,
+  -- ej. "🌅 Mañana (8 a 12hs)") — no confundir con viajes.hora_estimada, que
+  -- es el compromiso que arma el operador, no lo que pidió el cliente.
+  horario_preferido TEXT,
   estado           estado_pedido NOT NULL DEFAULT 'nuevo',
   -- 'recambio': se cotiza y se cobra igual que una entrega, pero al validar
   -- el pago se crea el par retiro(lleno)+entrega(vacío) en vez de una sola
@@ -376,6 +380,12 @@ CREATE TABLE viajes (
   -- desde el panel aunque no se haya podido resolver una dirección legible.
   destino_lat       NUMERIC(9,6),
   destino_lng       NUMERIC(9,6),
+  -- Franja horaria que pidió el cliente (copiada de pedidos.horario_preferido
+  -- al validar el pago; NULL si el viaje lo creó directo el operador).
+  horario_preferido TEXT,
+  -- Hora estimada que carga el operador desde el panel: de llegada si
+  -- tipo='entrega', de retiro si tipo='retiro'. Independiente de lo anterior.
+  hora_estimada     TIME,
   -- Ubicación propia de la empresa usada en este viaje: el depósito (si
   -- tipo='entrega', de donde sale el vacío) o el vaciadero (si
   -- tipo='retiro', adonde se lleva el lleno). ubicacion_direccion es una

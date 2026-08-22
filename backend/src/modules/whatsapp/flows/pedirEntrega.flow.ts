@@ -4,6 +4,7 @@ import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { reverseGeocode } from '../../../services/geocoding.service';
+import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -22,6 +23,9 @@ export async function handlePedirEntrega(m: MensajeEntrante, sesion: Sesion): Pr
   }
   if (sesion.paso === 'confirmar_entrega_cliente') {
     return manejarConfirmacion(m, sesion);
+  }
+  if (sesion.paso === 'horario_entrega_cliente') {
+    return manejarHorario(m, sesion);
   }
 
   const [cliente] = await query<{ cuenta_corriente_estado: string }>(
@@ -94,6 +98,18 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
 
+  await pedirHorarioPreferido(to, '🕐 ¿En qué franja horaria preferís que te lo llevemos?');
+  await setSesion({ telefono: to, flujo: 'pedir_entrega', paso: 'horario_entrega_cliente', contexto: sesion.contexto });
+}
+
+async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const opcion = OPCIONES_HORARIO.find((o) => o.id === m.seleccionId);
+  if (!opcion) {
+    await pedirHorarioPreferido(to, 'Elegí una de las opciones de abajo. 👇');
+    return;
+  }
+
   const destinoDireccion = sesion.contexto.destinoDireccion as string | null;
   const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
   const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
@@ -104,10 +120,10 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
   const deposito = await resolverUbicacion('deposito');
 
   const [viaje] = await query<{ id: string }>(
-    `INSERT INTO viajes (tipo, fecha, cliente_telefono, destino_direccion, destino_lat, destino_lng, estado, notas, ubicacion_id, ubicacion_direccion)
-     VALUES ('entrega', CURRENT_DATE, $1, $2, $3, $4, 'programado', 'Pedido de entrega por WhatsApp (cuenta corriente)', $5, $6)
+    `INSERT INTO viajes (tipo, fecha, cliente_telefono, destino_direccion, destino_lat, destino_lng, horario_preferido, estado, notas, ubicacion_id, ubicacion_direccion)
+     VALUES ('entrega', CURRENT_DATE, $1, $2, $3, $4, $5, 'programado', 'Pedido de entrega por WhatsApp (cuenta corriente)', $6, $7)
      RETURNING id`,
-    [to, destinoDireccion, destinoLat, destinoLng, deposito?.id ?? null, deposito?.direccion ?? null],
+    [to, destinoDireccion, destinoLat, destinoLng, opcion.title, deposito?.id ?? null, deposito?.direccion ?? null],
   );
 
   const [alerta] = await query(

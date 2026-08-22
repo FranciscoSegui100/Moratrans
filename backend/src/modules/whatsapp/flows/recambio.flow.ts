@@ -4,6 +4,7 @@ import { clearSesion, setSesion } from '../session.store';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { datosBancarios } from './pago.flow';
 import { reverseGeocode } from '../../../services/geocoding.service';
+import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -18,7 +19,8 @@ import type { Sesion } from '../session.store';
  * pago (ver pagos.routes.ts /validar).
  *
  * Pasos: (elegir_contenedor_recambio) -> confirmar_recambio ->
- * confirmar_ubicacion_recambio [-> ubicacion_recambio, si la corrige] -> pago.
+ * confirmar_ubicacion_recambio [-> ubicacion_recambio, si la corrige] ->
+ * horario_recambio -> pago.
  */
 export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -34,6 +36,9 @@ export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promis
   }
   if (sesion.paso === 'ubicacion_recambio') {
     return manejarNuevaUbicacion(m, sesion);
+  }
+  if (sesion.paso === 'horario_recambio') {
+    return manejarHorario(m, sesion);
   }
 
   const conts = await contenedoresDelCliente(to);
@@ -149,7 +154,18 @@ async function manejarConfirmacionUbicacion(m: MensajeEntrante, sesion: Sesion):
     await sendText(to, 'Elegí "✅ Sí, es correcta" o "↩️ Corregirla".\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
-  await confirmarYPedirPago(m, sesion);
+  await pedirHorarioPreferido(to, '🕐 ¿En qué franja horaria preferís que coordinemos el recambio?');
+  await setSesion({ ...sesion, paso: 'horario_recambio' });
+}
+
+async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const opcion = OPCIONES_HORARIO.find((o) => o.id === m.seleccionId);
+  if (!opcion) {
+    await pedirHorarioPreferido(to, 'Elegí una de las opciones de abajo. 👇');
+    return;
+  }
+  await confirmarYPedirPago(m, { ...sesion, contexto: { ...sesion.contexto, horarioPreferido: opcion.title } });
 }
 
 async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -187,6 +203,7 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
   const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
   const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
   const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
+  const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
 
   if (!zona) {
     await clearSesion(to);
@@ -206,9 +223,9 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
   const { precio, moneda } = tarifa[0];
 
   await query(
-    `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_direccion, destino_lat, destino_lng, tipo, contenedor_recambio_numero)
-     VALUES ($1,$2,$3,$4,'confirmado',$5,$6,$7,'recambio',$8)`,
-    [to, m.nombrePerfil ?? null, zona, precio, destino, destinoLat, destinoLng, numero],
+    `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_direccion, destino_lat, destino_lng, horario_preferido, tipo, contenedor_recambio_numero)
+     VALUES ($1,$2,$3,$4,'confirmado',$5,$6,$7,$8,'recambio',$9)`,
+    [to, m.nombrePerfil ?? null, zona, precio, destino, destinoLat, destinoLng, horarioPreferido, numero],
   );
 
   await clearSesion(to);
@@ -216,8 +233,9 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
     to,
     `🔄 *Recambio — contenedor ${numero}*\n` +
       `Precio del flete: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
-      (destino ? `Dirección: ${destino}\n\n` : '\n') +
-      `Para coordinar el recambio, hacé el pago con estos datos:\n\n` +
+      (destino ? `Dirección: ${destino}\n` : '') +
+      (horarioPreferido ? `Franja horaria: ${horarioPreferido}\n` : '') +
+      `\nPara coordinar el recambio, hacé el pago con estos datos:\n\n` +
       `${datosBancarios()}\n\n` +
       `Y enviános el comprobante por este chat 📎\n` +
       `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +

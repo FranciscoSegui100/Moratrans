@@ -9,13 +9,14 @@ import {
   departamentoMencionadoDistinto,
 } from '../../../services/geoDepartamento.service';
 import { reverseGeocode } from '../../../services/geocoding.service';
+import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
 /**
  * Flujo de cotización (menú cerrado):
  *   inicio -> elegir_departamento -> ubicacion -> [confirmar_departamento_detectado, si el GPS
- *   no matchea el departamento elegido] -> confirmar_ubicacion -> [precio]
+ *   no matchea el departamento elegido] -> confirmar_ubicacion -> horario -> [precio]
  * (elegir de una lista interactiva ya es una elección explícita: no hace
  * falta un paso extra de "¿confirmás?" después, a diferencia de la ubicación
  * -que sí puede venir de texto libre mal tipeado o un GPS mal tirado-).
@@ -228,9 +229,29 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       return;
     }
 
-    const destinoLat = sesion.contexto.destinoLat as number | null;
-    const destinoLng = sesion.contexto.destinoLng as number | null;
-    const destinoDireccion = sesion.contexto.destinoDireccion as string | null;
+    const { destinoLat, destinoLng, destinoDireccion } = sesion.contexto as {
+      destinoLat: number | null;
+      destinoLng: number | null;
+      destinoDireccion: string | null;
+    };
+    await pedirHorarioPreferido(to, '🕐 ¿En qué franja horaria preferís que te llevemos el contenedor?');
+    await setSesion({ ...sesion, paso: 'horario', contexto: { departamento, destinoLat, destinoLng, destinoDireccion } });
+    return;
+  }
+
+  // Paso 5: eligió la franja horaria -> recién ahí se cotiza y se cierra.
+  if (sesion.paso === 'horario') {
+    const opcion = OPCIONES_HORARIO.find((o) => o.id === m.seleccionId);
+    if (!opcion) {
+      await pedirHorarioPreferido(to, 'Elegí una de las opciones de abajo. 👇');
+      return;
+    }
+    const { departamento, destinoLat, destinoLng, destinoDireccion } = sesion.contexto as {
+      departamento: string;
+      destinoLat: number | null;
+      destinoLng: number | null;
+      destinoDireccion: string | null;
+    };
 
     const tarifa = await query<{ precio: string; moneda: string }>(
       'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
@@ -247,9 +268,9 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
     // Registrar el pedido en estado "cotizado" (traza para el panel), con la ubicación de entrega
     // y el nombre que el cliente tiene puesto en su WhatsApp (lo manda Meta solo, no hace falta pedirlo).
     await query(
-      `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_lat, destino_lng, destino_direccion)
-       VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7)`,
-      [to, m.nombrePerfil ?? null, departamento, precio, destinoLat, destinoLng, destinoDireccion],
+      `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_lat, destino_lng, destino_direccion, horario_preferido)
+       VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7,$8)`,
+      [to, m.nombrePerfil ?? null, departamento, precio, destinoLat, destinoLng, destinoDireccion, opcion.title],
     );
     // Alta/actualización en el padrón de clientes (ver clientes.service.ts) —
     // así la pantalla Clientes del panel refleja a todo el que cotizó, no
@@ -260,7 +281,8 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       to,
       `📦 *Cotización — ${departamento}*\n` +
         `Precio del flete: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
-        `Entrega en: ${destinoDireccion ?? `📍 ubicación compartida (${destinoLat}, ${destinoLng})`}\n\n` +
+        `Entrega en: ${destinoDireccion ?? `📍 ubicación compartida (${destinoLat}, ${destinoLng})`}\n` +
+        `Franja horaria: ${opcion.title}\n\n` +
         `Para reservar, hacé el pago con estos datos:\n\n` +
         `${datosBancarios()}\n\n` +
         `Y enviános el comprobante por este chat 📎\n` +

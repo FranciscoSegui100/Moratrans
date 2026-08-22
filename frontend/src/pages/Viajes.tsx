@@ -17,6 +17,8 @@ interface Viaje {
   destino_direccion: string | null;
   destino_lat: string | null;
   destino_lng: string | null;
+  horario_preferido: string | null;
+  hora_estimada: string | null;
   cliente_telefono: string | null;
   chofer_nombre: string | null;
   chofer_id: string | null;
@@ -46,7 +48,7 @@ const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
 };
 
 const formInicial = {
-  tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', contenedor_numero_entrega: '',
+  tipo: 'entrega', fecha: '', hora_estimada: '', zona: '', contenedor_numero: '', contenedor_numero_entrega: '',
   chofer_id: '', destino_direccion: '', remito: '', importe: '', ubicacion_id: '',
 };
 
@@ -120,6 +122,7 @@ export function Viajes() {
     try {
       await api.post('/api/viajes', {
         ...form,
+        hora_estimada: form.hora_estimada || undefined,
         chofer_id: form.chofer_id || undefined,
         contenedor_numero: form.contenedor_numero || undefined,
         contenedor_numero_entrega: form.tipo === 'recambio' ? (form.contenedor_numero_entrega || undefined) : undefined,
@@ -178,6 +181,16 @@ export function Viajes() {
       show('success', 'Chofer reasignado');
     } catch (err: any) {
       show('error', 'No se pudo reasignar', err.response?.data?.error);
+    }
+  }
+
+  /** Hora estimada de llegada (entrega) o de retiro (retiro) — la carga el operador, no el cliente. */
+  async function cambiarHoraEstimada(id: string, hora: string) {
+    try {
+      await api.patch(`/api/viajes/${id}`, { hora_estimada: hora || null });
+      cargar();
+    } catch (err: any) {
+      show('error', 'No se pudo guardar la hora estimada', err.response?.data?.error);
     }
   }
 
@@ -242,6 +255,15 @@ export function Viajes() {
               {minFecha && (
                 <small className="text-muted">Contenedor ocupado: recién se puede elegir desde el {new Date(minFecha).toLocaleDateString('es-AR')}</small>
               )}
+            </div>
+            <div className="form-group">
+              <label className="form-label">Hora estimada</label>
+              <input
+                type="time"
+                className="form-input"
+                value={form.hora_estimada}
+                onChange={(e) => setForm({ ...form, hora_estimada: e.target.value })}
+              />
             </div>
             <div className="form-group">
               <label className="form-label">Zona</label>
@@ -349,6 +371,7 @@ export function Viajes() {
           <thead>
             <tr>
               <th>Fecha</th>
+              <th>Hora estimada</th>
               <th>Tipo</th>
               <th>Zona</th>
               <th>Origen</th>
@@ -367,6 +390,27 @@ export function Viajes() {
             {viajes.map((v) => (
               <tr key={v.id}>
                 <td className="strong">{v.fecha}</td>
+                <td>
+                  <RoleGate roles={['admin', 'operador']}>
+                    <input
+                      type="time"
+                      className="form-input"
+                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '110px' }}
+                      defaultValue={v.hora_estimada?.slice(0, 5) ?? ''}
+                      onBlur={(e) => {
+                        if (e.target.value !== (v.hora_estimada?.slice(0, 5) ?? '')) cambiarHoraEstimada(v.id, e.target.value);
+                      }}
+                    />
+                  </RoleGate>
+                  <RoleGate roles={['finanzas', 'lectura']}>
+                    {v.hora_estimada?.slice(0, 5) ?? <span className="text-muted">—</span>}
+                  </RoleGate>
+                  {v.horario_preferido && (
+                    <div className="text-muted" style={{ fontSize: '0.72rem', marginTop: '2px' }} title="Franja horaria pedida por el cliente">
+                      🕐 pidió: {v.horario_preferido}
+                    </div>
+                  )}
+                </td>
                 <td>
                   <span className={`badge ${v.tipo === 'entrega' ? 'reservado' : 'retirado'}`}>
                     {v.tipo === 'entrega' ? <ArrowUpFromLine size={11} strokeWidth={2} /> : <ArrowDownToLine size={11} strokeWidth={2} />} {v.tipo}
@@ -479,7 +523,7 @@ export function Viajes() {
             ))}
             {viajes.length === 0 && (
               <tr>
-                <td colSpan={13} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={14} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No hay viajes cargados
                 </td>
               </tr>

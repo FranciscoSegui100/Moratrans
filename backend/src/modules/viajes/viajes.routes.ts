@@ -32,7 +32,7 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const rows = await query(
     `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
-            v.destino_lat, v.destino_lng,
+            v.destino_lat, v.destino_lng, v.horario_preferido, v.hora_estimada,
             v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id, v.patente, v.grupo_id,
             v.remito, v.importe, v.ubicacion_id, v.ubicacion_direccion, v.ruta_id, v.orden,
             -- Origen/destino final del viaje: la entrega sale del depósito
@@ -90,6 +90,10 @@ const nuevoSchema = z.object({
   // columna origen_direccion). Opcional si sólo hay una ubicación activa de
   // ese tipo: se autoselecciona más abajo.
   ubicacion_id: z.string().uuid().optional(),
+  // Hora estimada que carga el operador (llegada si es entrega, retiro si es
+  // retiro) — "HH:MM", independiente de horario_preferido (lo pidió el
+  // cliente por WhatsApp, ver horarioPreferido.flow.ts).
+  hora_estimada: z.string().optional(),
 });
 
 /**
@@ -230,16 +234,16 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
         // el bot en recambio.flow.ts.
         const deposito = await resolverUbicacion('deposito');
         const { rows: retiroRows } = await c.query(
-          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, grupo_id, ubicacion_id, ubicacion_direccion)
-           VALUES ('retiro',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-          [v.fecha, v.chofer_id ?? null, v.contenedor_numero, v.cliente_telefono ?? null, v.zona ?? null,
+          `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, grupo_id, ubicacion_id, ubicacion_direccion)
+           VALUES ('retiro',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+          [v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.contenedor_numero, v.cliente_telefono ?? null, v.zona ?? null,
            v.destino_direccion ?? null, v.notas ?? null, patente, v.remito ?? null, v.importe ?? null, grupoId,
            ubicacion?.id ?? null, ubicacion?.direccion ?? null],
         );
         const { rows: entregaRows } = await c.query(
-          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, grupo_id, ubicacion_id, ubicacion_direccion)
-           VALUES ('entrega',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-          [v.fecha, v.chofer_id ?? null, v.contenedor_numero_entrega ?? null, v.cliente_telefono ?? null, v.zona ?? null,
+          `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, grupo_id, ubicacion_id, ubicacion_direccion)
+           VALUES ('entrega',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+          [v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.contenedor_numero_entrega ?? null, v.cliente_telefono ?? null, v.zona ?? null,
            v.destino_direccion ?? null, v.notas ?? null, patente, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
         );
         return { principal: retiroRows[0], secundario: entregaRows[0] };
@@ -250,9 +254,9 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
       }
 
       const { rows } = await c.query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, ubicacion_id, ubicacion_direccion)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-        [v.tipo, v.fecha, v.chofer_id ?? null, v.contenedor_numero ?? null,
+        `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, ubicacion_id, ubicacion_direccion)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+        [v.tipo, v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.contenedor_numero ?? null,
          v.cliente_telefono ?? null, v.zona ?? null, v.destino_direccion ?? null, v.notas ?? null, patente,
          v.remito ?? null, v.importe ?? null, ubicacion?.id ?? null, ubicacion?.direccion ?? null],
       );
@@ -293,6 +297,10 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
 
 const patchSchema = z.object({
   estado: z.enum(['programado', 'en_curso', 'completado', 'cancelado']).optional(),
+  fecha: z.string().optional(),
+  // Hora estimada de llegada (entrega) o de retiro (retiro) que carga el
+  // operador — "HH:MM" o null para borrarla.
+  hora_estimada: z.string().nullable().optional(),
   chofer_id: z.string().uuid().nullable().optional(),
   // Sobre todo para completar la fila 'entrega' de un recambio (ver
   // recambio.flow.ts): se crea sin contenedor porque el bot no elige cuál
@@ -307,6 +315,9 @@ const patchSchema = z.object({
 viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = patchSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
+  // '' (input de hora vaciado) no es un TIME válido para Postgres — se
+  // interpreta como "borrar la hora estimada".
+  if (parsed.data.hora_estimada === '') parsed.data.hora_estimada = null;
   const sets: string[] = [];
   const params: any[] = [];
   for (const [k, val] of Object.entries(parsed.data)) {
