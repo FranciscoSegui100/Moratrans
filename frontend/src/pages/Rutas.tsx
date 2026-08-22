@@ -30,6 +30,8 @@ interface ViajePendiente {
   destino_direccion: string | null;
   destino_lat: string | null;
   destino_lng: string | null;
+  horario_preferido: string | null;
+  hora_estimada: string | null;
   cliente_telefono: string | null;
   chofer_id?: string | null;
   ruta_id?: string | null;
@@ -45,6 +47,7 @@ interface VisitaPendiente {
   destino_direccion: string | null;
   destino_lat: string | null;
   destino_lng: string | null;
+  horario_preferido: string | null;
   cliente_telefono: string | null;
   chofer_id: string | null;
   entrega?: ViajePendiente;
@@ -62,6 +65,7 @@ function agruparPendientes(viajes: ViajePendiente[]): VisitaPendiente[] {
         destino_direccion: v.destino_direccion,
         destino_lat: v.destino_lat,
         destino_lng: v.destino_lng,
+        horario_preferido: v.horario_preferido,
         cliente_telefono: v.cliente_telefono,
         chofer_id: v.chofer_id ?? null,
       };
@@ -79,6 +83,7 @@ function agruparPendientes(viajes: ViajePendiente[]): VisitaPendiente[] {
         destino_direccion: v.destino_direccion,
         destino_lat: v.destino_lat,
         destino_lng: v.destino_lng,
+        horario_preferido: v.horario_preferido,
         cliente_telefono: v.cliente_telefono,
         chofer_id: v.chofer_id ?? null,
       };
@@ -89,6 +94,7 @@ function agruparPendientes(viajes: ViajePendiente[]): VisitaPendiente[] {
       visita.destino_lat = v.destino_lat;
       visita.destino_lng = v.destino_lng;
     }
+    if (!visita.horario_preferido && v.horario_preferido) visita.horario_preferido = v.horario_preferido;
     if (!visita.zona && v.zona) visita.zona = v.zona;
     if (v.tipo === 'entrega') visita.entrega = v;
     if (v.tipo === 'retiro') visita.retiro = v;
@@ -148,6 +154,8 @@ interface ParadaViaje {
   destino_direccion: string | null;
   destino_lat: string | null;
   destino_lng: string | null;
+  horario_preferido: string | null;
+  hora_estimada: string | null;
   zona: string | null;
   cliente_telefono: string | null;
   grupo_id: string | null;
@@ -451,6 +459,9 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
                           <span className="tag recambio"><RefreshCw size={11} strokeWidth={2} /> Recambio</span>
                         </div>
                         <div className="stop-sub">Lleno a retirar: {v.retiro.contenedor_numero}</div>
+                        {(v.retiro.horario_preferido ?? v.entrega.horario_preferido) && (
+                          <div className="stop-sub">🕐 Pidió: {v.retiro.horario_preferido ?? v.entrega.horario_preferido}</div>
+                        )}
                         <div className="sel-row">
                           <label>Vacío a dejar:</label>
                           {editable ? (
@@ -478,6 +489,7 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
                           </div>
                           <span className="tag entrega">Entrega</span>
                         </div>
+                        {v.entrega.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.entrega.horario_preferido}</div>}
                         <div className="sel-row">
                           <label>Contenedor:</label>
                           {editable ? (
@@ -506,6 +518,7 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
                           <span className="tag retiro">Retiro</span>
                         </div>
                         <div className="stop-sub">{v.retiro.contenedor_numero}</div>
+                        {v.retiro.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.retiro.horario_preferido}</div>}
                       </>
                     )}
                   </div>
@@ -722,6 +735,10 @@ export function Rutas() {
                       : null;
                     const direccionPedido = fuenteDireccion?.destino_direccion
                       ?? (visita.zona ? `Zona ${visita.zona}` : 'Dirección sin especificar');
+                    const horarioPedido = visita.horario_preferido
+                      ?? visita.entrega?.horario_preferido
+                      ?? visita.retiro?.horario_preferido
+                      ?? null;
 
                     return (
                       <div key={visita.id} className="qrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px' }}>
@@ -735,6 +752,7 @@ export function Rutas() {
                             <div className="sub" style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '3px' }}>
                               {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
                               {visita.cliente_telefono ? ` · 📞 ${visita.cliente_telefono}` : ''}
+                              {horarioPedido ? ` · 🕐 ${horarioPedido}` : ''}
                             </div>
                           </div>
                           <span className={`tag ${visita.entrega && visita.retiro ? 'recambio' : visita.entrega ? 'entrega' : 'retiro'}`} style={{ fontSize: '0.68rem', padding: '2px 6px', flexShrink: 0 }}>
