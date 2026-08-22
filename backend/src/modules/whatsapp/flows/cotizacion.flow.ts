@@ -10,6 +10,7 @@ import {
 } from '../../../services/geoDepartamento.service';
 import { reverseGeocode } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
+import { contenedoresDelCliente } from '../../../services/contenedorCliente.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -27,6 +28,12 @@ import type { Sesion } from '../session.store';
  * de eso el paso 0 pasa directo a `ubicacion_verificar`, que exige GPS real
  * (no texto) y detecta el departamento a partir de las coordenadas. Si
  * verifica, converge en el mismo paso `horario` que el flujo normal.
+ *
+ * handlePedirNuevoContenedor(): tercera entrada a este mismo flujo (mismo
+ * flujo='cotizacion'), para un cliente ocasional que ya tiene un contenedor
+ * y quiere uno más — en vez de departamento o GPS directo, pregunta
+ * misma/otra dirección (elegir_ubicacion_nuevo); "otra" reusa
+ * `ubicacion_verificar` tal cual.
  */
 
 /**
@@ -119,11 +126,97 @@ async function manejarUbicacionVerificar(m: MensajeEntrante): Promise<void> {
   });
 }
 
+const BOTONES_UBICACION_NUEVO = [
+  { id: 'nuevo_misma_ubicacion', title: '✅ Misma dirección' },
+  { id: 'nuevo_otra_ubicacion', title: '📍 Otra dirección' },
+];
+
+/**
+ * "Pedir nuevo contenedor": para un cliente OCASIONAL (sin cuenta corriente)
+ * que ya tiene un contenedor entregado y quiere uno más — se cobra y se paga
+ * igual que cualquier entrega nueva (comprobante + validación de un
+ * operador), no como "Pedir entrega" (que es exclusivo de cuenta corriente).
+ * En vez de preguntar el departamento desde cero, se le pregunta si es a la
+ * misma dirección donde ya tiene un contenedor o a otra — si es a otra, se
+ * verifica la ubicación igual que a un cliente nuevo (GPS + detección de
+ * departamento, ver manejarUbicacionVerificar).
+ */
+export async function handlePedirNuevoContenedor(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const conts = await contenedoresDelCliente(to);
+  if (conts.length === 0) {
+    await clearSesion(to);
+    await sendText(
+      to,
+      '🙁 No encontramos ningún contenedor entregado a tu nombre todavía. Escribí *Cotizar* para pedir el primero, o *asesor* si creés que es un error.',
+    );
+    return;
+  }
+  const cont = conts[0];
+
+  await setSesion({
+    telefono: to,
+    flujo: 'cotizacion',
+    paso: 'elegir_ubicacion_nuevo',
+    contexto: { zona: cont.zona, destinoDireccion: cont.destino_direccion, destinoLat: cont.destino_lat, destinoLng: cont.destino_lng },
+  });
+  await sendButtons(to, '📦 ¿A dónde llevamos el contenedor nuevo?', BOTONES_UBICACION_NUEVO);
+}
+
+async function manejarEleccionUbicacionNuevo(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+
+  if (m.seleccionId === 'nuevo_otra_ubicacion') {
+    await setSesion({ telefono: to, flujo: 'cotizacion', paso: 'ubicacion_verificar', contexto: {} });
+    await sendLocationRequest(
+      to,
+      '📍 Compartí la ubicación del lugar donde va el contenedor nuevo — tocá el botón de "Enviar ubicación". No alcanza con escribirla.',
+    );
+    return;
+  }
+  if (m.seleccionId !== 'nuevo_misma_ubicacion') {
+    await sendButtons(to, 'Elegí una de las opciones de abajo. 👇', BOTONES_UBICACION_NUEVO);
+    return;
+  }
+
+  const { zona, destinoDireccion, destinoLat, destinoLng } = sesion.contexto as {
+    zona: string | null;
+    destinoDireccion: string | null;
+    destinoLat: number | null;
+    destinoLng: number | null;
+  };
+  if (!zona) {
+    await clearSesion(to);
+    await sendText(to, '🙁 No tenemos la zona cargada para tu contenedor actual. Escribí *asesor* para coordinarlo.');
+    return;
+  }
+  const tarifa = await query<{ precio: string }>(
+    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+    [zona],
+  );
+  if (tarifa.length === 0) {
+    await clearSesion(to);
+    await sendText(to, '🙁 No encontramos la tarifa para tu zona. Escribí *asesor* para coordinarlo.');
+    return;
+  }
+
+  await pedirHorarioPreferido(to, '🕐 ¿En qué franja horaria preferís que te llevemos el contenedor?');
+  await setSesion({
+    telefono: to,
+    flujo: 'cotizacion',
+    paso: 'horario',
+    contexto: { departamento: zona, destinoLat, destinoLng, destinoDireccion },
+  });
+}
+
 export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
 
   if (sesion.paso === 'ubicacion_verificar') {
     return manejarUbicacionVerificar(m);
+  }
+  if (sesion.paso === 'elegir_ubicacion_nuevo') {
+    return manejarEleccionUbicacionNuevo(m, sesion);
   }
 
   // Paso 0: mostrar la lista de departamentos activos — salvo que sea un
