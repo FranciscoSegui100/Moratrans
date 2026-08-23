@@ -3,9 +3,10 @@ import { sendText, sendButtons, sendList, sendLocationRequest } from '../graphAp
 import { clearSesion, setSesion } from '../session.store';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { datosBancarios } from './pago.flow';
-import { reverseGeocode } from '../../../services/geocoding.service';
+import { reverseGeocode, CandidatoDireccion } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
+import { verificarUbicacionCompleta, buscarCandidatosDireccion, enviarListaCandidatos, elegirCandidato } from './ubicacionZona.helper';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -19,9 +20,17 @@ import type { Sesion } from '../session.store';
  * vacío, unidos por grupo_id) recién se crean cuando un operador valida el
  * pago (ver pagos.routes.ts /validar).
  *
+ * Ubicación: si la dirección ya registrada del contenedor sigue sirviendo,
+ * se confirma con un sí/no simple (ya fue verificada en su momento). Si es
+ * una dirección NUEVA, pasa por la misma verificación completa de 4 capas
+ * que "Cotizar" (capas 2/3 vía ubicacionZona.helper.ts + capa 4 propia acá
+ * abajo) — la zona se recalcula a partir del GPS nuevo, no se asume la del
+ * contenedor viejo (si no, quedaría cobrando la tarifa de una zona distinta
+ * a donde en verdad va el recambio).
+ *
  * Pasos: (elegir_contenedor_recambio) -> confirmar_recambio ->
- * confirmar_ubicacion_recambio [-> ubicacion_recambio, si la corrige] ->
- * horario_recambio -> pago.
+ * confirmar_ubicacion_recambio [-> ubicacion_recambio [-> elegir_candidato_direccion_recambio]
+ * -> confirmar_ubicacion_recambio_nueva (capa 4)] -> horario_recambio -> pago.
  */
 export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -37,6 +46,12 @@ export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promis
   }
   if (sesion.paso === 'ubicacion_recambio') {
     return manejarNuevaUbicacion(m, sesion);
+  }
+  if (sesion.paso === 'elegir_candidato_direccion_recambio') {
+    return manejarEleccionCandidato(m, sesion);
+  }
+  if (sesion.paso === 'confirmar_ubicacion_recambio_nueva') {
+    return manejarConfirmacionUbicacionNueva(m, sesion);
   }
   if (sesion.paso === 'horario_recambio') {
     return manejarHorario(m, sesion);
@@ -121,16 +136,14 @@ async function manejarConfirmacionContenedor(m: MensajeEntrante, sesion: Sesion)
  * Antes de cobrar, mostramos la dirección que ya tenemos registrada (de la
  * entrega activa de ese contenedor) y pedimos que la confirme — para no
  * errarle si el cliente se mudó o el chofer terminó dejándolo en otro lado.
- * Si no hay ninguna guardada, se pide directamente.
+ * Si confirma que sigue siendo la misma, no hace falta re-verificarla (ya
+ * pasó por las 4 capas cuando se cargó esa entrega). Si no hay ninguna
+ * guardada, o la corrige, pasa a pedir una dirección nueva.
  */
 async function pedirConfirmacionUbicacion(to: string, sesion: Sesion): Promise<void> {
   const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
   if (!destino) {
-    await setSesion({ ...sesion, paso: 'ubicacion_recambio' });
-    await sendLocationRequest(
-      to,
-      '📍 No tenemos una dirección cargada para este contenedor: tocá "Enviar ubicación" o escribila en un mensaje.',
-    );
+    await pedirUbicacionNueva(to, sesion);
     return;
   }
   await setSesion({ ...sesion, paso: 'confirmar_ubicacion_recambio' });
@@ -147,8 +160,7 @@ async function pedirConfirmacionUbicacion(to: string, sesion: Sesion): Promise<v
 async function manejarConfirmacionUbicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
   if (m.seleccionId === 'ubicacion_recambio_no') {
-    await setSesion({ ...sesion, paso: 'ubicacion_recambio' });
-    await sendLocationRequest(to, '📍 Dale, mandámela de nuevo: tocá "Enviar ubicación" o escribí la dirección.');
+    await pedirUbicacionNueva(to, sesion);
     return;
   }
   if (m.seleccionId !== 'ubicacion_recambio_si') {
@@ -159,42 +171,153 @@ async function manejarConfirmacionUbicacion(m: MensajeEntrante, sesion: Sesion):
   await setSesion({ ...sesion, paso: 'horario_recambio' });
 }
 
+async function pedirUbicacionNueva(to: string, sesion: Sesion): Promise<void> {
+  await setSesion({ ...sesion, paso: 'ubicacion_recambio' });
+  await sendLocationRequest(
+    to,
+    '📍 Compartí la dirección nueva parada en el lugar de entrega — tocá "Enviar ubicación". ' +
+      'Si preferís, primero escribime la dirección y después te pido igual el pin.',
+  );
+}
+
 async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void> {
-  const to = m.from;
   const opcion = OPCIONES_HORARIO.find((o) => o.id === m.seleccionId);
   if (!opcion) {
-    await pedirHorarioPreferido(to, 'Elegí una de las opciones de abajo. 👇');
+    await pedirHorarioPreferido(m.from, 'Elegí una de las opciones de abajo. 👇');
     return;
   }
   await confirmarYPedirPago(m, { ...sesion, contexto: { ...sesion.contexto, horarioPreferido: opcion.title } });
 }
 
+/**
+ * Dirección nueva para el recambio: GPS directo, o texto (solo como
+ * referencia — nunca cierra el dato solo, regla del dueño) que primero pasa
+ * por candidatos de geocodificación antes de volver a pedir el pin.
+ */
 async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
-  let destinoDireccion: string | null = null;
-  let destinoLat: number | null = null;
-  let destinoLng: number | null = null;
 
-  if (m.tipo === 'location') {
-    destinoLat = m.lat ?? null;
-    destinoLng = m.lng ?? null;
-    destinoDireccion = m.ubicacionDireccion || m.ubicacionNombre || null;
-    if (!destinoDireccion && destinoLat != null && destinoLng != null) {
-      destinoDireccion = await reverseGeocode(destinoLat, destinoLng);
+  if (m.tipo === 'location' && m.lat != null && m.lng != null) {
+    let destinoDireccion =
+      m.ubicacionDireccion || m.ubicacionNombre || (sesion.contexto.destinoDireccionReferencia as string | undefined) || null;
+    if (!destinoDireccion) {
+      destinoDireccion = await reverseGeocode(m.lat, m.lng);
     }
-  } else if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
-    destinoDireccion = m.texto.trim();
-  } else {
-    await sendText(
-      to,
-      '📍 Necesito la dirección: tocá el botón de "Enviar ubicación" o escribila en un mensaje (ej: _Av. San Martín 1234, Barrio Centro_).',
+
+    const numero = sesion.contexto.numero as string;
+    const resultado = await verificarUbicacionCompleta(m, sesion, m.lat, m.lng, destinoDireccion, {
+      requiereTarifa: true,
+      contextoPedidoFueraDeZona: { tipo: 'recambio', contenedorRecambioNumero: numero },
+    });
+    if (!resultado.ok) return;
+
+    // La zona se recalcula con el GPS nuevo — no se asume la del contenedor
+    // viejo, podría ser una dirección en otro departamento con otra tarifa.
+    await avanzarACapaCuatroRecambio(to, sesion, resultado.departamento, m.lat, m.lng, destinoDireccion);
+    return;
+  }
+
+  if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
+    const resultado = await buscarCandidatosDireccion(m.texto.trim());
+
+    if (resultado.tipo === 'sin_resultados') {
+      await sendText(
+        to,
+        '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad), ' +
+          'o directamente tocá el botón de "Enviar ubicación" para mandar el pin.',
+      );
+      return;
+    }
+    if (resultado.tipo === 'un_candidato') {
+      await sendLocationRequest(
+        to,
+        `📍 Encontramos: ${resultado.candidato.direccion}.\n\n` +
+          'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — no alcanza con escribirla.',
+      );
+      await setSesion({
+        ...sesion,
+        paso: 'ubicacion_recambio',
+        contexto: { ...sesion.contexto, destinoDireccionReferencia: resultado.candidato.direccion },
+      });
+      return;
+    }
+    await enviarListaCandidatos(to, resultado.candidatos);
+    await setSesion({
+      ...sesion,
+      paso: 'elegir_candidato_direccion_recambio',
+      contexto: { ...sesion.contexto, candidatos: resultado.candidatos },
+    });
+    return;
+  }
+
+  await sendText(
+    to,
+    '📍 Necesito la dirección: tocá el botón de "Enviar ubicación" o escribila en un mensaje (ej: _Av. San Martín 1234, Barrio Centro_).',
+  );
+}
+
+async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const candidatos = (sesion.contexto.candidatos as CandidatoDireccion[]) ?? [];
+
+  const elegido = elegirCandidato(m, candidatos);
+  if (!elegido) {
+    await manejarRespuestaInvalida(m, 'Por favor, elegí una de las direcciones de la lista. 👆');
+    return;
+  }
+
+  await sendLocationRequest(
+    to,
+    `📍 Anotado como referencia: ${elegido.direccion}.\n\n` +
+      'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — tocá "Enviar ubicación". No alcanza con escribirla.',
+  );
+  await setSesion({ ...sesion, paso: 'ubicacion_recambio', contexto: { ...sesion.contexto, destinoDireccionReferencia: elegido.direccion } });
+}
+
+/** Capa 4 para dirección nueva: misma pregunta puntual que "Cotizar", ver cotizacion.flow.ts. */
+async function avanzarACapaCuatroRecambio(
+  to: string,
+  sesion: Sesion,
+  departamento: string,
+  destinoLat: number,
+  destinoLng: number,
+  destinoDireccion: string | null,
+): Promise<void> {
+  const resumenUbicacion = `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`;
+
+  await sendButtons(
+    to,
+    `📍 Dirección: ${resumenUbicacion}\nZona: *${departamento}*\n\n` +
+      `¿Este es el lugar donde va el contenedor, o es desde donde me estás escribiendo?`,
+    [
+      { id: 'ubicacion_es_destino', title: '📍 Es el destino' },
+      { id: 'ubicacion_no', title: '↩️ Mandar otra' },
+    ],
+  );
+  await setSesion({
+    ...sesion,
+    paso: 'confirmar_ubicacion_recambio_nueva',
+    contexto: { ...sesion.contexto, zona: departamento, destinoLat, destinoLng, destinoDireccion },
+  });
+}
+
+async function manejarConfirmacionUbicacionNueva(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+
+  if (m.seleccionId === 'ubicacion_no') {
+    await pedirUbicacionNueva(to, sesion);
+    return;
+  }
+  if (m.seleccionId !== 'ubicacion_es_destino') {
+    await manejarRespuestaInvalida(
+      m,
+      'Elegí "📍 Es el destino" o "↩️ Mandar otra".\n\n_Escribí *menú* para volver al inicio._',
     );
     return;
   }
 
-  const nuevaSesion: Sesion = { ...sesion, contexto: { ...sesion.contexto, destinoDireccion, destinoLat, destinoLng } };
-  await setSesion(nuevaSesion);
-  await pedirConfirmacionUbicacion(to, nuevaSesion);
+  await pedirHorarioPreferido(to, '🕐 ¿En qué franja horaria preferís que coordinemos el recambio?');
+  await setSesion({ ...sesion, paso: 'horario_recambio' });
 }
 
 async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<void> {

@@ -3,9 +3,10 @@ import { sendText, sendButtons, sendLocationRequest } from '../graphApi';
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
-import { reverseGeocode } from '../../../services/geocoding.service';
+import { reverseGeocode, CandidatoDireccion } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
+import { verificarUbicacionCompleta, buscarCandidatosDireccion, enviarListaCandidatos, elegirCandidato } from './ubicacionZona.helper';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -15,12 +16,21 @@ import type { Sesion } from '../session.store';
  * justamente lo que distingue a la cuenta corriente — se factura después,
  * no por adelantado). Para el resto de los clientes se los redirige a
  * *Cotizar*, que sí exige el pago antes de reservar contenedor.
+ *
+ * Ubicación: aplica capas 2 y 3 de la verificación (ver
+ * ubicacionZona.helper.ts) — valida contra el polígono de departamentos y
+ * deriva a un asesor si cae fuera de todas las zonas conocidas, sin cobrar
+ * nada (cuenta corriente no cotiza acá). La capa 4 se mantiene simple (sí/no)
+ * a propósito, para no sumarle fricción a un cliente ya aprobado.
  */
 export async function handlePedirEntrega(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
 
   if (sesion.paso === 'esperando_direccion_entrega') {
     return manejarDireccion(m, sesion);
+  }
+  if (sesion.paso === 'elegir_candidato_direccion_entrega') {
+    return manejarEleccionCandidato(m, sesion);
   }
   if (sesion.paso === 'confirmar_entrega_cliente') {
     return manejarConfirmacion(m, sesion);
@@ -46,34 +56,98 @@ export async function handlePedirEntrega(m: MensajeEntrante, sesion: Sesion): Pr
   await setSesion({ telefono: to, flujo: 'pedir_entrega', paso: 'esperando_direccion_entrega', contexto: {} });
   await sendLocationRequest(
     to,
-    '📍 ¿A qué dirección llevamos el contenedor? Tocá "Enviar ubicación" o escribila (ej: _Av. San Martín 1234, Barrio Centro_).',
+    '📍 ¿A qué dirección llevamos el contenedor? Tocá "Enviar ubicación" o escribila primero (después igual te pido el pin).',
   );
 }
 
 async function manejarDireccion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
-  let destinoLat: number | null = null;
-  let destinoLng: number | null = null;
-  let destinoDireccion: string | null = null;
 
-  if (m.tipo === 'location') {
-    destinoLat = m.lat ?? null;
-    destinoLng = m.lng ?? null;
-    destinoDireccion = m.ubicacionDireccion || m.ubicacionNombre || null;
-    if (!destinoDireccion && destinoLat != null && destinoLng != null) {
-      destinoDireccion = await reverseGeocode(destinoLat, destinoLng);
+  if (m.tipo === 'location' && m.lat != null && m.lng != null) {
+    let destinoDireccion =
+      m.ubicacionDireccion || m.ubicacionNombre || (sesion.contexto.destinoDireccionReferencia as string | undefined) || null;
+    if (!destinoDireccion) {
+      destinoDireccion = await reverseGeocode(m.lat, m.lng);
     }
-  } else if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
-    destinoDireccion = m.texto.trim();
-  } else {
-    await sendText(to, '📍 Necesito la dirección: tocá "Enviar ubicación" o escribila en un mensaje.');
+
+    const resultado = await verificarUbicacionCompleta(m, sesion, m.lat, m.lng, destinoDireccion, {
+      contextoPedidoFueraDeZona: { tipo: 'entrega' },
+    });
+    if (!resultado.ok) return;
+
+    await pedirConfirmacion(to, sesion, m.lat, m.lng, destinoDireccion);
     return;
   }
 
-  const resumen =
-    destinoLat != null && destinoLng != null
-      ? `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`
-      : (destinoDireccion as string);
+  if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
+    const resultado = await buscarCandidatosDireccion(m.texto.trim());
+
+    if (resultado.tipo === 'sin_resultados') {
+      await sendText(
+        to,
+        '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad), ' +
+          'o directamente tocá el botón de "Enviar ubicación" para mandar el pin.',
+      );
+      return;
+    }
+    if (resultado.tipo === 'un_candidato') {
+      await sendLocationRequest(
+        to,
+        `📍 Encontramos: ${resultado.candidato.direccion}.\n\n` +
+          'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — no alcanza con escribirla.',
+      );
+      await setSesion({
+        telefono: to,
+        flujo: 'pedir_entrega',
+        paso: 'esperando_direccion_entrega',
+        contexto: { destinoDireccionReferencia: resultado.candidato.direccion },
+      });
+      return;
+    }
+    await enviarListaCandidatos(to, resultado.candidatos);
+    await setSesion({
+      telefono: to,
+      flujo: 'pedir_entrega',
+      paso: 'elegir_candidato_direccion_entrega',
+      contexto: { candidatos: resultado.candidatos },
+    });
+    return;
+  }
+
+  await sendText(to, '📍 Necesito la dirección: tocá "Enviar ubicación" o escribila en un mensaje.');
+}
+
+async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const candidatos = (sesion.contexto.candidatos as CandidatoDireccion[]) ?? [];
+
+  const elegido = elegirCandidato(m, candidatos);
+  if (!elegido) {
+    await manejarRespuestaInvalida(m, 'Por favor, elegí una de las direcciones de la lista. 👆');
+    return;
+  }
+
+  await sendLocationRequest(
+    to,
+    `📍 Anotado como referencia: ${elegido.direccion}.\n\n` +
+      'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — tocá "Enviar ubicación". No alcanza con escribirla.',
+  );
+  await setSesion({
+    telefono: to,
+    flujo: 'pedir_entrega',
+    paso: 'esperando_direccion_entrega',
+    contexto: { destinoDireccionReferencia: elegido.direccion },
+  });
+}
+
+async function pedirConfirmacion(
+  to: string,
+  sesion: Sesion,
+  destinoLat: number,
+  destinoLng: number,
+  destinoDireccion: string | null,
+): Promise<void> {
+  const resumen = `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`;
 
   await sendButtons(to, `📍 Confirmá la dirección de entrega:\n\n${resumen}\n\n¿Es correcta?`, [
     { id: 'entrega_cliente_si', title: '✅ Sí, es correcta' },

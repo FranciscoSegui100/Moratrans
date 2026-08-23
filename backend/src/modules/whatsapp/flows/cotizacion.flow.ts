@@ -3,17 +3,12 @@ import { sendText, sendList, sendButtons, sendLocationRequest } from '../graphAp
 import { setSesion, clearSesion } from '../session.store';
 import { datosBancarios } from './pago.flow';
 import { obtenerOCrearCliente, esClienteNuevo } from '../../../services/clientes.service';
-import {
-  estaDentroDeDepartamento,
-  detectarDepartamento,
-  distanciaALaBaseMasCercana,
-} from '../../../services/geoDepartamento.service';
-import { reverseGeocode, forwardGeocode, CandidatoDireccion } from '../../../services/geocoding.service';
+import { reverseGeocode, CandidatoDireccion } from '../../../services/geocoding.service';
+import { verificarUbicacionCompleta, buscarCandidatosDireccion, enviarListaCandidatos, elegirCandidato } from './ubicacionZona.helper';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { contenedoresDelCliente } from '../../../services/contenedorCliente.service';
 import { proximosDiasHabiles, formatearFechaLarga, sumarDias } from '../../../services/diasHabiles.service';
 import { manejarRespuestaInvalida } from '../estados';
-import { escalarAAsesor } from './asesor.flow';
 import { TIPOS_LUGAR, DIAS_ALQUILER_ANTES_RETIRO } from '../../../config/bot.config';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
@@ -46,39 +41,6 @@ async function tarifaDeZona(departamento: string): Promise<{ precio: string; mon
     [departamento],
   );
   return tarifa ?? null;
-}
-
-/**
- * Caso borde "punto fuera de todas las zonas de cobertura": nunca se
- * inventa un precio. Se registra el pedido en un estado especial para que
- * un operador lo libere a mano, se avisa la distancia a la base más
- * cercana si se puede calcular, y se deriva directo a un asesor.
- */
-async function manejarFueraDeZona(
-  m: MensajeEntrante,
-  sesion: Sesion,
-  departamentoOriginal: string | null,
-  destinoLat: number,
-  destinoLng: number,
-  destinoDireccion: string | null,
-): Promise<void> {
-  const to = m.from;
-  const distancia = await distanciaALaBaseMasCercana(destinoLat, destinoLng);
-
-  const [pedido] = await query<{ numero_pedido: number }>(
-    `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, estado, destino_lat, destino_lng, destino_direccion)
-     VALUES ($1,$2,$3,'fuera_de_zona',$4,$5,$6) RETURNING numero_pedido`,
-    [to, m.nombrePerfil ?? null, departamentoOriginal ?? 'sin_zona', destinoLat, destinoLng, destinoDireccion],
-  );
-  obtenerOCrearCliente(to, m.nombrePerfil).catch((e) => console.error('Error dando de alta al cliente:', e));
-
-  await sendText(
-    to,
-    `📍 Tu ubicación está fuera de las zonas que cubrimos hoy` +
-      (distancia ? ` (a unos *${distancia.distanciaKm} km* de ${distancia.nombre}).` : '.') +
-      `\n\nAnotamos tu pedido *#${pedido.numero_pedido}* — un asesor lo va a revisar para ver si podemos coordinarlo igual.`,
-  );
-  await escalarAAsesor(to, sesion, `${to} pidió un contenedor fuera de zona (pedido #${pedido.numero_pedido})`);
 }
 
 /**
@@ -168,26 +130,12 @@ async function manejarUbicacionVerificar(m: MensajeEntrante, sesion: Sesion): Pr
     return;
   }
 
-  const departamento = await detectarDepartamento(m.lat, m.lng);
-  if (!departamento) {
-    return manejarFueraDeZona(m, sesion, null, m.lat, m.lng, m.ubicacionDireccion || m.ubicacionNombre || null);
-  }
+  const direccionCruda = m.ubicacionDireccion || m.ubicacionNombre || null;
+  const resultado = await verificarUbicacionCompleta(m, sesion, m.lat, m.lng, direccionCruda, { requiereTarifa: true });
+  if (!resultado.ok) return;
 
-  const tarifa = await tarifaDeZona(departamento);
-  if (!tarifa) {
-    await sendLocationRequest(
-      to,
-      `🙁 Detectamos tu ubicación en *${departamento}*, pero no tenemos tarifa activa ahí todavía. Volvé a compartir tu ubicación, o escribí *asesor* para coordinarlo.`,
-    );
-    return;
-  }
-
-  let destinoDireccion = m.ubicacionDireccion || m.ubicacionNombre || null;
-  if (!destinoDireccion) {
-    destinoDireccion = await reverseGeocode(m.lat, m.lng);
-  }
-
-  await avanzarAConfirmarUbicacion(to, sesion, departamento, m.lat, m.lng, destinoDireccion);
+  const destinoDireccion = direccionCruda ?? (await reverseGeocode(m.lat, m.lng));
+  await avanzarAConfirmarUbicacion(to, sesion, resultado.departamento, m.lat, m.lng, destinoDireccion);
 }
 
 const BOTONES_UBICACION_NUEVO = [
@@ -273,12 +221,7 @@ async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Pro
   const to = m.from;
   const { departamento, candidatos } = sesion.contexto as { departamento: string; candidatos: CandidatoDireccion[] };
 
-  if (!m.seleccionId?.startsWith('cand:')) {
-    await manejarRespuestaInvalida(m, 'Por favor, elegí una de las direcciones de la lista. 👆');
-    return;
-  }
-  const idx = Number(m.seleccionId.replace('cand:', ''));
-  const elegido = candidatos[idx];
+  const elegido = elegirCandidato(m, candidatos);
   if (!elegido) {
     await manejarRespuestaInvalida(m, 'Por favor, elegí una de las direcciones de la lista. 👆');
     return;
@@ -365,28 +308,27 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       }
 
       // Con GPS: comparamos contra el polígono del departamento elegido (ver
-      // geoDepartamento.service.ts). Sin este chequeo, nada impedía cotizar
-      // para un departamento y compartir la ubicación de otro -> precio mal
-      // calculado, y después la ruta/el aviso al chofer también mal armados.
-      const dentro = await estaDentroDeDepartamento(m.lat, m.lng, departamento);
-      if (dentro === false) {
-        const detectado = await detectarDepartamento(m.lat, m.lng);
-        if (!detectado) {
-          // Fuera de TODAS las zonas conocidas, no solo la elegida -> caso
-          // borde "fuera de zona": nunca se inventa un precio.
-          return manejarFueraDeZona(m, sesion, departamento, m.lat, m.lng, destinoDireccion);
-        }
+      // geoDepartamento.service.ts, capas 2/3 vía ubicacionZona.helper.ts).
+      // Sin este chequeo, nada impedía cotizar para un departamento y
+      // compartir la ubicación de otro -> precio mal calculado, y después la
+      // ruta/el aviso al chofer también mal armados.
+      const resultado = await verificarUbicacionCompleta(m, sesion, m.lat, m.lng, destinoDireccion, {
+        departamentoEsperado: departamento,
+      });
+      if (!resultado.ok) return;
+
+      if (resultado.mismatchCon) {
         await setSesion({
           ...sesion,
           paso: 'confirmar_departamento_detectado',
-          contexto: { departamento, departamentoDetectado: detectado, destinoLat: m.lat, destinoLng: m.lng, destinoDireccion },
+          contexto: { departamento, departamentoDetectado: resultado.mismatchCon, destinoLat: m.lat, destinoLng: m.lng, destinoDireccion },
         });
         await sendButtons(
           to,
-          `📍 Notamos algo raro: cotizaste para *${departamento}*, pero tu ubicación parece estar en *${detectado}*.\n\n¿Cuál es el correcto?`,
+          `📍 Notamos algo raro: cotizaste para *${departamento}*, pero tu ubicación parece estar en *${resultado.mismatchCon}*.\n\n¿Cuál es el correcto?`,
           [
             { id: 'depto_mantener', title: departamento.slice(0, 20) },
-            { id: 'depto_cambiar', title: detectado.slice(0, 20) },
+            { id: 'depto_cambiar', title: resultado.mismatchCon.slice(0, 20) },
           ],
         );
         return;
@@ -400,9 +342,9 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       // Nunca se cierra un pedido solo con texto (regla del dueño): esto es
       // solo para geocodificar candidatos de referencia. Siempre se vuelve
       // a pedir el pin GPS después, sin importar cuántos resultados haya.
-      const candidatos = await forwardGeocode(m.texto.trim());
+      const resultado = await buscarCandidatosDireccion(m.texto.trim());
 
-      if (candidatos.length === 0) {
+      if (resultado.tipo === 'sin_resultados') {
         await sendText(
           to,
           '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad), ' +
@@ -410,27 +352,21 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
         );
         return;
       }
-      if (candidatos.length === 1) {
+      if (resultado.tipo === 'un_candidato') {
         await sendLocationRequest(
           to,
-          `📍 Encontramos: ${candidatos[0].direccion}.\n\n` +
+          `📍 Encontramos: ${resultado.candidato.direccion}.\n\n` +
             'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — no alcanza con escribirla.',
         );
         await setSesion({
           ...sesion,
           paso: 'ubicacion',
-          contexto: { departamento, destinoDireccionReferencia: candidatos[0].direccion },
+          contexto: { departamento, destinoDireccionReferencia: resultado.candidato.direccion },
         });
         return;
       }
-      await sendList(
-        to,
-        '📍 ¿Cuál es?',
-        'Encontramos varias direcciones parecidas — elegí la más cercana (después igual te pido el pin exacto):',
-        'Ver direcciones',
-        candidatos.map((c, i) => ({ id: `cand:${i}`, title: c.direccion.slice(0, 24) })),
-      );
-      await setSesion({ ...sesion, paso: 'elegir_candidato_direccion', contexto: { departamento, candidatos } });
+      await enviarListaCandidatos(to, resultado.candidatos);
+      await setSesion({ ...sesion, paso: 'elegir_candidato_direccion', contexto: { departamento, candidatos: resultado.candidatos } });
       return;
     }
 

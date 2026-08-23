@@ -7,12 +7,8 @@ import { sendButtons } from '../graphApi';
  */
 export const OPCIONES_HORARIO = [
   { id: 'horario_manana', title: '🌅 Mañana (8-12hs)' },
-  { id: 'horario_mediodia', title: '🕐 Tarde (12-15hs)' },
+  { id: 'horario_tarde', title: '🕐 Tarde (12-15hs)' },
 ];
-
-export function tituloHorario(id: string | null | undefined): string | null {
-  return OPCIONES_HORARIO.find((o) => o.id === id)?.title ?? null;
-}
 
 export async function pedirHorarioPreferido(to: string, mensaje: string): Promise<void> {
   await sendButtons(to, mensaje, OPCIONES_HORARIO);
