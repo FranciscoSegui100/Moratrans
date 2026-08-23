@@ -156,8 +156,13 @@ function diasEspera(fecha: string): number {
   return Math.round((hoy.getTime() - fechaPedido.getTime()) / 86_400_000);
 }
 
-function etiquetaEspera(dias: number): string {
-  if (dias <= 0) return 'hoy';
+function etiquetaEspera(dias: number, fecha: string): string {
+  if (dias === 0) return 'hoy';
+  if (dias === -1) return 'para mañana';
+  if (dias < -1) {
+    const [, mes, dia] = fecha.slice(0, 10).split('-');
+    return `para el ${dia}/${mes}`;
+  }
   if (dias === 1) return 'hace 1 día';
   return `hace ${dias} días`;
 }
@@ -647,6 +652,15 @@ export function Rutas() {
     queryKey: ['contenedores', 'disponibles'],
     queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data.filter((c) => c.estado === 'disponible')),
   });
+  // Rutas 'en_curso' de días anteriores al elegido: si nadie las cerró (ej.
+  // camión roto, tareas que quedaron sin reasignar), el corte manual del día
+  // (ver punto 8.1) no alcanza si nadie nota que la ruta vieja sigue abierta.
+  const { data: rutasEnCursoTodas = [] } = useQuery({
+    queryKey: ['rutas', 'en_curso'],
+    queryFn: () => api.get<Ruta[]>('/api/rutas?estado=en_curso').then((r) => r.data),
+    refetchInterval: 60000,
+  });
+  const rutasAbiertasAnteriores = rutasEnCursoTodas.filter((r) => r.fecha < fecha);
 
   const visitasPendientes = agruparPendientes(cola);
   const statsRutas = statsPorRuta(viajesDelDia);
@@ -719,6 +733,29 @@ export function Rutas() {
         <div className="date-pick">Día: <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></div>
       </div>
 
+      {rutasAbiertasAnteriores.length > 0 && (
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: '8px 16px', alignItems: 'center',
+          background: 'var(--warning-bg)', border: '1px solid var(--warning)', borderRadius: 'var(--radius)',
+          padding: '10px 14px', marginBottom: '16px', fontSize: '0.82rem',
+        }}>
+          <AlertTriangle size={16} strokeWidth={2} />
+          <span>
+            {rutasAbiertasAnteriores.length === 1 ? 'Quedó 1 ruta abierta de un día anterior sin cerrar:' : `Quedaron ${rutasAbiertasAnteriores.length} rutas abiertas de días anteriores sin cerrar:`}
+          </span>
+          {rutasAbiertasAnteriores.map((r) => (
+            <button
+              key={r.id}
+              className="btn btn-ghost btn-sm"
+              onClick={() => setFecha(r.fecha)}
+              style={{ fontWeight: 700 }}
+            >
+              {r.chofer_nombre ?? 'Sin chofer'} · {r.fecha}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="stats">
         <div className="stat"><div className="l">Pedidos del día</div><div className="n">{visitasDelDia}</div></div>
         <div className="stat"><div className="l">Ruteados</div><div className="n">{ruteados}</div></div>
@@ -763,6 +800,7 @@ export function Rutas() {
                       ?? null;
                     const dias = diasEspera(visita.fecha);
                     const espera = dias > DIAS_ALERTA_COLA;
+                    const esFutura = dias < 0;
 
                     return (
                       <div key={visita.id} className="qrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px' }}>
@@ -778,9 +816,13 @@ export function Rutas() {
                               {visita.cliente_telefono ? ` · 📞 ${visita.cliente_telefono}` : ''}
                               {horarioPedido ? ` · 🕐 ${horarioPedido}` : ''}
                               {' · '}
-                              <span style={{ color: espera ? 'var(--danger)' : 'inherit', fontWeight: espera ? 700 : 400 }}>
+                              <span style={{
+                                color: espera ? 'var(--danger)' : esFutura ? 'var(--text-muted)' : 'inherit',
+                                fontStyle: esFutura ? 'italic' : 'normal',
+                                fontWeight: espera ? 700 : 400,
+                              }}>
                                 {espera && <AlertTriangle size={11} strokeWidth={2} style={{ verticalAlign: '-1px', marginRight: '2px' }} />}
-                                {etiquetaEspera(dias)}
+                                {etiquetaEspera(dias, visita.fecha)}
                               </span>
                             </div>
                           </div>

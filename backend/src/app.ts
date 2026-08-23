@@ -3,6 +3,7 @@
 // lleguen al error handler en vez de tirar abajo todo el proceso Node.
 import 'express-async-errors';
 import express, { NextFunction, Request, Response } from 'express';
+import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import fs from 'fs';
@@ -37,6 +38,8 @@ export function crearApp() {
   // reflejan al proxy en vez del cliente real (rompe rate-limit por IP y la
   // cookie Secure en producción).
   app.set('trust proxy', 1);
+
+  app.use(helmet());
 
   // origin como función: permite una lista (CORS_ORIGIN admite varios,
   // separados por coma) y es obligatorio para que las cookies con
