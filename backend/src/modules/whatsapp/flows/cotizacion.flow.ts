@@ -90,8 +90,12 @@ async function pedirTipoLugar(to: string, sesion: Sesion): Promise<void> {
 
 /** Paso "¿va dentro del terreno o sobre la vía pública?" — segundo dato que el GPS no da. */
 async function pedirEmplazamiento(to: string, sesion: Sesion): Promise<void> {
+  // Títulos de botón cortos a propósito: WhatsApp rechaza el mensaje ENTERO
+  // si un título de botón supera los 20 caracteres — "🏡 Adentro del
+  // terreno" quedaba en 21 y tiraba abajo este mensaje sin ningún error
+  // visible para el cliente (el bot se quedaba mudo justo acá).
   await sendButtons(to, '🚧 ¿El contenedor va a quedar adentro del terreno, o sobre la vía pública (vereda/calle)?', [
-    { id: 'emplazamiento_terreno', title: '🏡 Adentro del terreno' },
+    { id: 'emplazamiento_terreno', title: '🏡 En el terreno' },
     { id: 'emplazamiento_via_publica', title: '🚧 Vía pública' },
   ]);
   await setSesion({ ...sesion, paso: 'emplazamiento' });
