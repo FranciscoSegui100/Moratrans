@@ -47,11 +47,21 @@ chatRouter.get('/', async (_req: Request, res: Response) => {
   res.json(rows);
 });
 
-/** GET /api/chat/:telefono — hilo de conversación con un cliente (para la alerta "pide asesor"). */
+/**
+ * GET /api/chat/:telefono — hilo de conversación con un cliente (para la
+ * alerta "pide asesor"). Trae los últimos 200 (ORDER BY ... DESC LIMIT 200)
+ * y recién ahí se reordena ascendente para mostrarlo cronológico — pedirlo
+ * directo en ASC con LIMIT 200 traía los 200 mensajes MÁS VIEJOS de toda la
+ * conversación, no los últimos: en un hilo largo, los mensajes recientes
+ * nunca llegaban a mostrarse (bug detectado en conversaciones de prueba con
+ * más de 200 mensajes).
+ */
 chatRouter.get('/:telefono', async (req: Request, res: Response) => {
   const rows = await query(
-    `SELECT id, origen, texto, creado_en FROM mensajes_chat
-      WHERE telefono = $1 ORDER BY creado_en ASC LIMIT 200`,
+    `SELECT id, origen, texto, creado_en FROM (
+       SELECT id, origen, texto, creado_en FROM mensajes_chat
+        WHERE telefono = $1 ORDER BY creado_en DESC LIMIT 200
+     ) ultimos ORDER BY creado_en ASC`,
     [req.params.telefono],
   );
   res.json(rows);
