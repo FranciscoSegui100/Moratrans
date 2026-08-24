@@ -17,11 +17,14 @@ export const DIAS_ALQUILER_ANTES_RETIRO = 7;
 /** Cantidad de próximos días hábiles (lunes a sábado) que se le ofrecen al cliente para elegir. */
 export const CANTIDAD_DIAS_HABILES_A_OFRECER = 6;
 
-/** Costo fijo (en la moneda de la zona del contenedor) de extender el retiro 5 días. Ya no es 50% del último pago. */
-export const COSTO_ALARGUE_FIJO = 5000;
-
 /** Días que suma "extender el retiro". Solo se puede aplicar una vez por ciclo (ver alargarRetiro.flow.ts). */
 export const DIAS_ALARGUE = 5;
+
+/** El alargue cuesta esta fracción de la tarifa vigente de la zona del contenedor (ver alargarRetiro.flow.ts). */
+export const PORCENTAJE_ALARGUE = 0.5;
+
+/** Próximos días hábiles que se le ofrecen para un retiro anticipado (no puede superar la fecha de retiro ya pactada). */
+export const DIAS_A_OFRECER_RETIRO_ANTICIPADO = 3;
 
 /** Tipos de lugar que se le preguntan al cliente tras confirmar la ubicación (caso borde "datos que el GPS no da"). */
 export const TIPOS_LUGAR: { id: string; title: string }[] = [

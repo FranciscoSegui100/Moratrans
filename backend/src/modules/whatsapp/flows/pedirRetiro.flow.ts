@@ -6,6 +6,8 @@ import { contenedoresDelCliente, ContenedorCliente } from '../../../services/con
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { proximosDiasHabiles, formatearFechaLarga } from '../../../services/diasHabiles.service';
 import { manejarRespuestaInvalida } from '../estados';
+import { escalarAAsesor } from './asesor.flow';
+import { DIAS_A_OFRECER_RETIRO_ANTICIPADO } from '../../../config/bot.config';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -73,7 +75,7 @@ async function pedirConfirmacion(to: string, cont: ContenedorCliente): Promise<v
     telefono: to,
     flujo: 'pedir_retiro',
     paso: 'confirmar_retiro_cliente',
-    contexto: { numero: cont.numero, zona: cont.zona, destinoDireccion: cont.destino_direccion },
+    contexto: { numero: cont.numero, zona: cont.zona, destinoDireccion: cont.destino_direccion, venceEn: cont.vence_en },
   });
   await sendButtons(
     to,
@@ -97,7 +99,22 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
 
-  const dias = proximosDiasHabiles();
+  // Retiro ANTICIPADO: no tiene sentido ofrecer una fecha que ya supere la
+  // que estaba pactada (vence_en) — eso ya no sería "adelantarlo". Si no hay
+  // vence_en cargado, no hay tope que aplicar y se ofrecen los 3 días igual.
+  const venceEn = sesion.contexto.venceEn as string | null;
+  const dias = proximosDiasHabiles(DIAS_A_OFRECER_RETIRO_ANTICIPADO).filter((d) => !venceEn || d.fecha <= venceEn);
+
+  if (dias.length === 0) {
+    const numero = sesion.contexto.numero as string;
+    await escalarAAsesor(
+      to,
+      sesion,
+      `${to} pidió un retiro anticipado del contenedor ${numero}, pero ya está en la fecha pactada de retiro (${venceEn}) o después`,
+    );
+    return;
+  }
+
   await sendList(
     to,
     '📅 Día de retiro',

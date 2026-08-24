@@ -116,11 +116,14 @@ interface ItemCuentaCorriente {
  * diferido, así que TODO lo entregado a través de ese circuito cuenta como
  * pendiente hasta que el cliente transfiera y un operador lo concilie a
  * mano — no hay hoy un "ya pagado" por pedido, por eso no se filtra por
- * estado de pago. Combina las dos formas en que un pedido llega a ser
+ * estado de pago. Combina las tres formas en que un cargo llega a ser
  * cuenta corriente:
  *  - Cotizar y elegir "pagar a cuenta corriente" (pago.flow.ts) -> queda en `pedidos`.
- *  - "Pedir contenedor" directo (pedirEntrega.flow.ts) -> no genera `pedido`,
- *    solo un `viaje` marcado `es_cuenta_corriente` (ver migración 0033).
+ *  - "Pedir contenedor" directo o recambio directo (pedirEntrega.flow.ts,
+ *    recambio.flow.ts) -> no generan `pedido`, solo un `viaje` marcado
+ *    `es_cuenta_corriente` (ver migración 0033).
+ *  - "Alargar retiro" directo (alargarRetiro.flow.ts) -> un `pago` tipo
+ *    'alargue_retiro' marcado `es_cuenta_corriente`, sin `pedido` ni `viaje`.
  */
 async function itemsCuentaCorriente(telefono: string): Promise<ItemCuentaCorriente[]> {
   return query<ItemCuentaCorriente>(
@@ -132,6 +135,10 @@ async function itemsCuentaCorriente(telefono: string): Promise<ItemCuentaCorrien
      SELECT v.fecha::text AS fecha, v.zona, v.importe::text AS monto
        FROM viajes v
       WHERE v.cliente_telefono = $1 AND v.es_cuenta_corriente = TRUE
+     UNION ALL
+     SELECT pg.creado_en::text AS fecha, 'Alargue ' || pg.contenedor_numero AS zona, pg.monto::text AS monto
+       FROM pagos pg
+      WHERE pg.cliente_telefono = $1 AND pg.tipo = 'alargue_retiro' AND pg.es_cuenta_corriente = TRUE
       ORDER BY fecha`,
     [telefono],
   );

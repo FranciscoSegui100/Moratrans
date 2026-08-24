@@ -6,6 +6,8 @@ export interface ContenedorCliente {
   destino_direccion: string | null;
   destino_lat: number | null;
   destino_lng: number | null;
+  /** Fecha de retiro ya pactada — tope para ofrecer un retiro anticipado (ver pedirRetiro.flow.ts). */
+  vence_en: string | null;
 }
 
 /**
@@ -24,7 +26,7 @@ export interface ContenedorCliente {
  */
 export async function contenedoresDelCliente(telefono: string): Promise<ContenedorCliente[]> {
   return query<ContenedorCliente>(
-    `SELECT c.numero, ultima.zona, ultima.destino_direccion, ultima.destino_lat, ultima.destino_lng
+    `SELECT c.numero, c.vence_en::date::text AS vence_en, ultima.zona, ultima.destino_direccion, ultima.destino_lat, ultima.destino_lng
        FROM contenedores c
        CROSS JOIN LATERAL (
          SELECT v.zona, v.destino_direccion, v.destino_lat, v.destino_lng, v.cliente_telefono

@@ -36,7 +36,10 @@ export async function escalarAAsesor(to: string, sesion: Sesion, motivo: string)
 /**
  * Cuenta cuántas veces el cliente pidió hablar con un asesor (persistido en
  * sesiones_chat.contexto, sin tocar el flujo/paso en el que esté) y, al
- * llegar al límite, escala vía escalarAAsesor.
+ * llegar al límite, escala vía escalarAAsesor. El mensaje del segundo pedido
+ * es distinto del primero a propósito: ya le ofrecimos el self-service una
+ * vez, así que ahora le avisamos que la próxima lo escala de una — no tiene
+ * sentido repetir la misma oferta dos veces seguidas.
  */
 export async function handleAsesor(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -44,11 +47,13 @@ export async function handleAsesor(m: MensajeEntrante, sesion: Sesion): Promise<
 
   if (intentos < INTENTOS_PARA_ESCALAR_ASESOR) {
     await setSesion({ ...sesion, contexto: { ...sesion.contexto, asesorCount: intentos } });
-    await sendText(
-      to,
-      '🙋 Puedo ayudarte yo mismo: escribí *Cotizar* o *Ya pagué* para enviar tu comprobante.\n' +
-        'Si preferís, seguí escribiendo *asesor* y en breve te comunicamos con una persona del equipo.',
-    );
+    const texto =
+      intentos === 1
+        ? '🙋 Puedo ayudarte yo mismo: escribí *Cotizar* o *Ya pagué* para enviar tu comprobante.\n' +
+          'Si preferís, seguí escribiendo *asesor* y en breve te comunicamos con una persona del equipo.'
+        : '🙋 ¡Estás a punto de hablar con un asesor! Te recuerdo que también podés resolverlo vos mismo desde el *menú*.\n' +
+          'Si preferís seguir con una persona, escribí *asesor* una vez más.';
+    await sendText(to, texto);
     return;
   }
 

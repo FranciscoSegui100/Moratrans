@@ -1,8 +1,11 @@
+import { randomUUID } from 'crypto';
 import { query } from '../../../config/db';
 import { sendText, sendButtons, sendList, sendLocationRequest } from '../graphApi';
 import { clearSesion, setSesion } from '../session.store';
+import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
-import { datosBancarios } from './pago.flow';
+import { resolverUbicacion } from '../../../services/ubicaciones.service';
+import { datosBancarios, tieneCuentaCorrienteAprobada } from './pago.flow';
 import { reverseGeocode, CandidatoDireccion } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
@@ -323,12 +326,7 @@ async function manejarConfirmacionUbicacionNueva(m: MensajeEntrante, sesion: Ses
 
 async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
-  const numero = sesion.contexto.numero as string;
   const zona = (sesion.contexto.zona as string | null) ?? null;
-  const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
-  const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
-  const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
-  const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
 
   if (!zona) {
     await clearSesion(to);
@@ -346,6 +344,18 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
   const { precio, moneda } = tarifa[0];
+
+  // Cuenta corriente aprobada: se confirma solo, sin pedir comprobante — se
+  // suma directo a la deuda (ver reportes.service.ts::itemsCuentaCorriente).
+  if (await tieneCuentaCorrienteAprobada(to)) {
+    return registrarRecambioCC(m, sesion, precio, moneda);
+  }
+
+  const numero = sesion.contexto.numero as string;
+  const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
+  const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
+  const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
+  const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
 
   await query(
     `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_direccion, destino_lat, destino_lng, horario_preferido, tipo, contenedor_recambio_numero)
@@ -365,5 +375,57 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
       `Y enviános el comprobante por este chat 📎\n` +
       `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +
       `_Escribí *menú* para volver al inicio en cualquier momento._`,
+  );
+}
+
+/**
+ * Recambio para un cliente con cuenta corriente aprobada: nada de comprobante
+ * ni validación de un operador — se crean directo los dos viajes (retiro del
+ * lleno + entrega del vacío, unidos por grupo_id, mismo patrón que
+ * pagos.routes.ts al validar un recambio pagado) y el costo se suma a la
+ * deuda de cuenta corriente (viajes.es_cuenta_corriente, ver
+ * reportes.service.ts). Sin chofer asignado todavía — se arma después desde
+ * la pestaña Rutas, como cualquier viaje nuevo.
+ */
+async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: string, moneda: string): Promise<void> {
+  const to = m.from;
+  const numero = sesion.contexto.numero as string;
+  const zona = sesion.contexto.zona as string;
+  const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
+  const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
+  const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
+  const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
+
+  const grupoId = randomUUID();
+  const vaciadero = await resolverUbicacion('vaciadero');
+  const deposito = await resolverUbicacion('deposito');
+
+  await query(
+    `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+     VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, $5, $6, $7, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $8, $9, $10)`,
+    [numero, to, zona, destino, destinoLat, destinoLng, horarioPreferido, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+  );
+  await query(
+    `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, importe, es_cuenta_corriente, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+     VALUES ('entrega', CURRENT_DATE, $1, $2, $3, $4, $5, $6, $7, TRUE, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $8, $9, $10)`,
+    [to, zona, destino, destinoLat, destinoLng, horarioPreferido, precio, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
+  );
+
+  const [alerta] = await query(
+    `INSERT INTO alertas (tipo, referencia_id, mensaje)
+     VALUES ('recambio_solicitado', $1, $2)
+     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+    [numero, `${to} pidió un recambio del contenedor ${numero} por cuenta corriente`],
+  );
+  if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
+  emitRecursoActualizado('viajes');
+
+  await clearSesion(to);
+  await sendText(
+    to,
+    `✅ ¡Recambio confirmado! Costo: *${moneda} ${Number(precio).toLocaleString('es-AR')}* — se agregó a tu cuenta corriente.\n\n` +
+      'En breve te asignamos chofer para coordinarlo.\n\n' +
+      '_Si en un rato no tenés novedades, escribí *asesor*._',
   );
 }
