@@ -133,11 +133,11 @@ async function pedirTipoLugar(to: string, sesion: Sesion): Promise<void> {
 }
 
 /**
- * Solo si el tipo de lugar es "Casa": los barrios privados suelen tener
+ * Solo si el tipo de lugar es "Casa" u "Obra" (una obra puede estar dentro
+ * de un barrio privado en construcción): los barrios privados suelen tener
  * acceso restringido, así que en vez del selector normal de franja horaria
  * (Mañana/Tarde) se usa una única franja fija (ver HORARIO_BARRIO_PRIVADO en
- * bot.config.ts) — dato puntual que nos pasó la empresa, no aplica a obra,
- * comercio ni consorcio.
+ * bot.config.ts) — no aplica a comercio ni consorcio.
  */
 async function pedirBarrioPrivado(to: string, sesion: Sesion): Promise<void> {
   await sendButtons(to, '🏡 ¿Es en un barrio privado?', [
@@ -494,7 +494,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       return;
     }
     const nuevaSesion = { ...sesion, contexto: { ...sesion.contexto, tipoLugar: opcion.id.replace('lugar_', '') } };
-    if (opcion.id === 'lugar_casa') {
+    if (opcion.id === 'lugar_casa' || opcion.id === 'lugar_obra') {
       await pedirBarrioPrivado(to, nuevaSesion);
       return;
     }
