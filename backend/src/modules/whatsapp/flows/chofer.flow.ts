@@ -93,7 +93,18 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
     return elegirContenedor(to, chofer[0].id, m.seleccionId.replace('estado:', ''), sesion);
   }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('cont:')) {
-    return aplicarEstado(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('cont:', ''), sesion);
+    const raw = m.seleccionId.replace('cont:', '');
+    const parts = raw.split(':');
+    let targetEstado: string;
+    let numero: string;
+    if (parts.length === 2) {
+      targetEstado = parts[0];
+      numero = parts[1];
+    } else {
+      numero = parts[0];
+      targetEstado = (sesion.contexto?.estado as string) || '';
+    }
+    return aplicarEstado(to, chofer[0].id, chofer[0].nombre, numero, sesion, targetEstado);
   }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('vaciado:')) {
     return aplicarVaciado(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('vaciado:', ''));
@@ -106,6 +117,33 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('claim:')) {
     return reclamarTrabajo(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('claim:', ''));
+  }
+
+  // Soporte para respuestas por texto libre o si el cliente no usa botones interactivos
+  const txt = (m.texto ?? '').toLowerCase().trim();
+  if (txt.includes('retir')) {
+    return elegirContenedor(to, chofer[0].id, 'retirado', sesion);
+  }
+  if (txt.includes('entreg')) {
+    return elegirContenedor(to, chofer[0].id, 'entregado', sesion);
+  }
+  if (sesion.paso === 'elegir_contenedor' && m.tipo === 'text' && m.texto) {
+    const inputNumero = m.texto.trim();
+    const estado = sesion.contexto?.estado as string;
+    if (estado) {
+      const origen = estado === 'entregado' ? 'reservado' : 'entregado';
+      const match = await query<{ numero: string }>(
+        `SELECT DISTINCT c.numero
+           FROM contenedores c
+           JOIN viajes v ON v.contenedor_numero = c.numero
+          WHERE c.estado = $1 AND v.chofer_id = $2 AND v.estado IN ('programado', 'en_curso')
+            AND LOWER(c.numero) = LOWER($3)`,
+        [origen, chofer[0].id, inputNumero],
+      );
+      if (match.length > 0) {
+        return aplicarEstado(to, chofer[0].id, chofer[0].nombre, match[0].numero, sesion, estado);
+      }
+    }
   }
 
   return menuChofer(to, chofer[0].nombre);
@@ -203,9 +241,9 @@ async function reclamarTrabajo(to: string, choferId: string, choferNombre: strin
 /** Contenedores propios ya retirados del cliente, esperando que confirme que los vació. */
 async function ofrecerVaciadosPendientes(to: string, choferId: string): Promise<void> {
   const pendientes = await query<{ contenedor_numero: string }>(
-    `SELECT contenedor_numero FROM viajes
+    `SELECT DISTINCT contenedor_numero FROM viajes
       WHERE chofer_id = $1 AND tipo = 'retiro' AND estado = 'en_curso' AND contenedor_numero IS NOT NULL
-      ORDER BY creado_en`,
+      ORDER BY contenedor_numero`,
     [choferId],
   );
   if (pendientes.length === 0) return;
@@ -430,15 +468,11 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
   }
   // Contenedores en un estado desde el que la transición es válida.
   const origen = estado === 'entregado' ? 'reservado' : 'entregado';
-  // Solo contenedores con un viaje activo asignado a ESTE chofer — sin este
-  // filtro, cualquier chofer veía y podía tocar el contenedor de otro chofer
-  // si ambos tenían uno en el mismo estado a la vez. Si el viaje es parte de
-  // un recambio (grupo_id), se trae también el contenedor "pareja" (el lleno
-  // si esto es el vacío, o viceversa) para mostrarlo en la lista — WhatsApp
-  // no deja poner esto en el botón (máx. 20 caracteres), así que se aclara
-  // acá, en la lista que sigue.
+  // Solo contenedores con un viaje activo asignado a ESTE chofer.
+  // Se usa DISTINCT ON (c.numero) para garantizar IDs únicos y no saturar Meta API.
   const conts = await query<{ numero: string; grupo_id: string | null; tipo: string; pareja_numero: string | null; pareja_tipo: string | null }>(
-    `SELECT c.numero, v.grupo_id, v.tipo, pareja.contenedor_numero AS pareja_numero, pareja.tipo AS pareja_tipo
+    `SELECT DISTINCT ON (c.numero)
+            c.numero, v.grupo_id, v.tipo, pareja.contenedor_numero AS pareja_numero, pareja.tipo AS pareja_tipo
        FROM contenedores c
        JOIN viajes v ON v.contenedor_numero = c.numero
        LEFT JOIN LATERAL (
@@ -450,7 +484,8 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
       WHERE c.estado = $1
         AND v.chofer_id = $2
         AND v.estado IN ('programado', 'en_curso')
-      ORDER BY c.actualizado_en LIMIT 10`,
+      ORDER BY c.numero, c.actualizado_en DESC
+      LIMIT 10`,
     [origen, choferId],
   );
   if (conts.length === 0) {
@@ -464,7 +499,7 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
     '¿Cuál contenedor?',
     'Ver contenedores',
     conts.map((c) => ({
-      id: `cont:${c.numero}`,
+      id: `cont:${estado}:${c.numero}`,
       title: c.numero,
       description: c.grupo_id
         ? c.pareja_tipo === 'retiro'
@@ -482,9 +517,10 @@ async function aplicarEstado(
   choferNombre: string,
   numero: string,
   sesion: Sesion,
+  overrideEstado?: string,
 ): Promise<void> {
-  const estado = sesion.contexto.estado as string;
-  if (!ESTADOS_CHOFER.includes(estado as any)) {
+  const estado = overrideEstado || (sesion.contexto?.estado as string);
+  if (!estado || !ESTADOS_CHOFER.includes(estado as any)) {
     await sendText(to, 'Esa acción no está disponible.');
     await clearSesion(to);
     return menuChofer(to, choferNombre);
@@ -492,44 +528,36 @@ async function aplicarEstado(
 
   // El chofer retiró el lleno del cliente: pasa el contenedor a "retirado" ya
   // mismo (transición entregado -> retirado, permitida por el trigger) y
-  // deja un viaje 'retiro' en curso — a diferencia de antes, ya no espera a
-  // que un operador confirme la llegada a la empresa; eso ahora lo hace el
-  // propio chofer con "🗑️ Ya vacié" (ver aplicarVaciado más abajo).
+  // deja un viaje 'retiro' en curso.
   if (estado === 'retirado') {
     try {
-      // Dirección/zona del cliente: se copian de la entrega activa de este
-      // contenedor con este chofer (elegirContenedor ya exige que exista, es
-      // de donde sale el filtro `v.chofer_id = choferId` más arriba) — ese
-      // viaje es el origen físico real de este retiro.
+      // Dirección/zona del cliente: se copian de la entrega de este contenedor
       const [entrega] = await query<{ destino_direccion: string | null; zona: string | null }>(
         `SELECT destino_direccion, zona FROM viajes
-          WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
+          WHERE contenedor_numero = $1 AND tipo = 'entrega'
           ORDER BY creado_en DESC LIMIT 1`,
-        [numero, choferId],
+        [numero],
       );
-      // Vaciadero adonde se lleva el lleno (si hay uno solo activo cargado;
-      // si hay varios, se completa después desde el panel).
       const vaciadero = await resolverUbicacion('vaciadero');
 
       // Un recambio (o un "pedir retiro" por WhatsApp) ya deja creada de
-      // antes la fila 'retiro' de este contenedor — insertar otra acá
-      // violaría ux_viajes_activo_por_tipo (a lo sumo un retiro activo por
-      // contenedor). Si ya existe, se actualiza en vez de duplicarla.
+      // antes la fila 'retiro' de este contenedor. Si ya existe, se actualiza.
       const [retiroExistente] = await query<{ id: string }>(
         `SELECT id FROM viajes
-          WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
+          WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
           ORDER BY creado_en DESC LIMIT 1`,
-        [numero, choferId],
+        [numero],
       );
       if (retiroExistente) {
         await query(
           `UPDATE viajes SET estado = 'en_curso', completada_en = now(),
-                  destino_direccion = COALESCE(destino_direccion, $2),
-                  zona = COALESCE(zona, $3),
-                  ubicacion_id = COALESCE(ubicacion_id, $4),
-                  ubicacion_direccion = COALESCE(ubicacion_direccion, $5)
+                  chofer_id = COALESCE(chofer_id, $2),
+                  destino_direccion = COALESCE(destino_direccion, $3),
+                  zona = COALESCE(zona, $4),
+                  ubicacion_id = COALESCE(ubicacion_id, $5),
+                  ubicacion_direccion = COALESCE(ubicacion_direccion, $6)
             WHERE id = $1`,
-          [retiroExistente.id, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+          [retiroExistente.id, choferId, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
         );
       } else {
         await query(

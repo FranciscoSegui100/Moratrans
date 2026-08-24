@@ -74,8 +74,32 @@ export async function sendList(
   rows: { id: string; title: string; description?: string }[],
 ): Promise<void> {
   const destino = normalizarDestinoWhatsApp(to);
+
+  // Meta Graph API: IDs únicos, máx 10 filas, límites de caracteres
+  const seenIds = new Set<string>();
+  const sanitizedRows: { id: string; title: string; description?: string }[] = [];
+  for (const r of rows) {
+    if (!r || !r.id || seenIds.has(r.id)) continue;
+    seenIds.add(r.id);
+    sanitizedRows.push({
+      id: String(r.id).slice(0, 200),
+      title: String(r.title || r.id).slice(0, 24),
+      ...(r.description ? { description: String(r.description).slice(0, 72) } : {}),
+    });
+    if (sanitizedRows.length >= 10) break;
+  }
+
+  if (sanitizedRows.length === 0) {
+    console.warn(`[WA sendList] No hay filas válidas para enviar a ${destino}`);
+    return;
+  }
+
+  const safeHeader = (header || '').slice(0, 60);
+  const safeButtonText = (buttonText || 'Ver opciones').slice(0, 20);
+  const safeBody = (body || '').slice(0, 1024);
+
   if (env.WA_ACCESS_TOKEN === 'mock') {
-    console.log(`[MOCK WA] 📋 Lista a ${destino}: "${header}" -> Botón: [${buttonText}] con ${rows.length} opciones.`);
+    console.log(`[MOCK WA] 📋 Lista a ${destino}: "${safeHeader}" -> Botón: [${safeButtonText}] con ${sanitizedRows.length} opciones.`);
   } else {
     await http.post(`/${PHONE}/messages`, {
       messaging_product: 'whatsapp',
@@ -83,16 +107,16 @@ export async function sendList(
       type: 'interactive',
       interactive: {
         type: 'list',
-        header: { type: 'text', text: header },
-        body: { text: body },
+        header: { type: 'text', text: safeHeader },
+        body: { text: safeBody },
         action: {
-          button: buttonText,
-          sections: [{ title: 'Opciones', rows }],
+          button: safeButtonText,
+          sections: [{ title: 'Opciones', rows: sanitizedRows }],
         },
       },
     });
   }
-  await logMensaje(to, 'bot', `${body}\n(opciones: ${rows.map((r) => r.title).join(', ')})`)
+  await logMensaje(to, 'bot', `${safeBody}\n(opciones: ${sanitizedRows.map((r) => r.title).join(', ')})`)
     .catch((e) => console.error('Error logueando mensaje del bot:', e));
 }
 
@@ -103,8 +127,22 @@ export async function sendButtons(
   buttons: { id: string; title: string }[],
 ): Promise<void> {
   const destino = normalizarDestinoWhatsApp(to);
+  const seenIds = new Set<string>();
+  const sanitizedButtons: { id: string; title: string }[] = [];
+  for (const b of buttons) {
+    if (!b || !b.id || seenIds.has(b.id)) continue;
+    seenIds.add(b.id);
+    sanitizedButtons.push({
+      id: String(b.id).slice(0, 256),
+      title: String(b.title || b.id).slice(0, 20),
+    });
+    if (sanitizedButtons.length >= 3) break;
+  }
+  if (sanitizedButtons.length === 0) return;
+
+  const safeBody = (body || '').slice(0, 1024);
   if (env.WA_ACCESS_TOKEN === 'mock') {
-    console.log(`[MOCK WA] 🔘 Botones a ${destino}: "${body}" -> Opciones:`, buttons.map((b) => b.title).join(' | '));
+    console.log(`[MOCK WA] 🔘 Botones a ${destino}: "${safeBody}" -> Opciones:`, sanitizedButtons.map((b) => b.title).join(' | '));
   } else {
     await http.post(`/${PHONE}/messages`, {
       messaging_product: 'whatsapp',
@@ -112,9 +150,9 @@ export async function sendButtons(
       type: 'interactive',
       interactive: {
         type: 'button',
-        body: { text: body },
+        body: { text: safeBody },
         action: {
-          buttons: buttons.map((b) => ({
+          buttons: sanitizedButtons.map((b) => ({
             type: 'reply',
             reply: { id: b.id, title: b.title },
           })),
@@ -122,7 +160,7 @@ export async function sendButtons(
       },
     });
   }
-  await logMensaje(to, 'bot', `${body}\n(opciones: ${buttons.map((b) => b.title).join(', ')})`)
+  await logMensaje(to, 'bot', `${safeBody}\n(opciones: ${sanitizedButtons.map((b) => b.title).join(', ')})`)
     .catch((e) => console.error('Error logueando mensaje del bot:', e));
 }
 
