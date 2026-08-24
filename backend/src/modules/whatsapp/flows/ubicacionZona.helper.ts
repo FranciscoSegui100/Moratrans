@@ -140,9 +140,12 @@ export type ResultadoDireccionTexto =
   | { tipo: 'varios_candidatos'; candidatos: CandidatoDireccion[] };
 
 /**
- * Dirección escrita por el cliente -> candidatos de referencia (Nominatim).
- * Nunca cierra un pedido con esto solo (regla del dueño): el caller SIEMPRE
- * tiene que volver a pedir el pin GPS después, sea cual sea el resultado.
+ * Dirección escrita por el cliente -> candidatos con coordenadas (Nominatim).
+ * El pin GPS sigue siendo más preciso, pero el candidato geocodificado ya
+ * trae lat/lng utilizables: el caller puede pasarlo directo a
+ * `verificarUbicacionCompleta` y avanzar a la capa 4, sin obligar a mandar
+ * el pin — hay dispositivos que no dejan compartir ubicación (regla del
+ * dueño: dar siempre las dos opciones, texto o pin).
  */
 export async function buscarCandidatosDireccion(texto: string): Promise<ResultadoDireccionTexto> {
   const candidatos = await forwardGeocode(texto.trim());
@@ -155,7 +158,7 @@ export async function enviarListaCandidatos(to: string, candidatos: CandidatoDir
   await sendList(
     to,
     '📍 ¿Cuál es?',
-    'Encontramos varias direcciones parecidas — elegí la más cercana (después igual te pido el pin exacto):',
+    'Encontramos varias direcciones parecidas — elegí la que corresponda:',
     'Ver direcciones',
     candidatos.map((c, i) => ({ id: `cand:${i}`, title: c.direccion.slice(0, 24) })),
   );
@@ -167,3 +170,23 @@ export function elegirCandidato(m: MensajeEntrante, candidatos: CandidatoDirecci
   const idx = Number(m.seleccionId.replace('cand:', ''));
   return candidatos[idx] ?? null;
 }
+
+/**
+ * Mensaje estándar para pedir la ubicación de entrega: da siempre las dos
+ * opciones (pin GPS o dirección escrita) y, si escribe, pide explícitamente
+ * calle + número + zona/departamento — sin esto, "Chile 1120" sin más datos
+ * geocodifica mal o ambiguo. El pin sigue siendo la opción más precisa.
+ */
+export function mensajePedirUbicacion(pregunta: string): string {
+  return (
+    `${pregunta}\n\n` +
+    `Tocá "Enviar ubicación" para mandar el pin GPS (la opción más precisa), ` +
+    `o escribime la dirección con calle, número y zona/departamento.\n` +
+    `Ej: _Av. San Martín 1234, Godoy Cruz_.`
+  );
+}
+
+/** Aviso que se suma en la capa 4 cuando la ubicación viene de texto geocodificado, no de un pin real. */
+export const AVISO_DIRECCION_APROXIMADA =
+  '🔎 Esta ubicación es aproximada (la calculamos a partir de la dirección que escribiste). ' +
+  'Si preferís más precisión, tocá "↩️ Mandar otra" y compartí el pin GPS.';

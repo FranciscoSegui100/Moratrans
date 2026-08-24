@@ -6,7 +6,14 @@ import { datosBancarios } from './pago.flow';
 import { reverseGeocode, CandidatoDireccion } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
-import { verificarUbicacionCompleta, buscarCandidatosDireccion, enviarListaCandidatos, elegirCandidato } from './ubicacionZona.helper';
+import {
+  verificarUbicacionCompleta,
+  buscarCandidatosDireccion,
+  enviarListaCandidatos,
+  elegirCandidato,
+  mensajePedirUbicacion,
+  AVISO_DIRECCION_APROXIMADA,
+} from './ubicacionZona.helper';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -173,11 +180,7 @@ async function manejarConfirmacionUbicacion(m: MensajeEntrante, sesion: Sesion):
 
 async function pedirUbicacionNueva(to: string, sesion: Sesion): Promise<void> {
   await setSesion({ ...sesion, paso: 'ubicacion_recambio' });
-  await sendLocationRequest(
-    to,
-    '📍 Compartí la dirección nueva parada en el lugar de entrega — tocá "Enviar ubicación". ' +
-      'Si preferís, primero escribime la dirección y después te pido igual el pin.',
-  );
+  await sendLocationRequest(to, mensajePedirUbicacion('📍 ¿Cuál es la dirección nueva?'));
 }
 
 async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -190,9 +193,10 @@ async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void>
 }
 
 /**
- * Dirección nueva para el recambio: GPS directo, o texto (solo como
- * referencia — nunca cierra el dato solo, regla del dueño) que primero pasa
- * por candidatos de geocodificación antes de volver a pedir el pin.
+ * Dirección nueva para el recambio: pin GPS o dirección escrita, siempre se
+ * ofrecen las dos (regla del dueño). Si escribe, la geocodificamos y usamos
+ * esas coordenadas directo (avisando que es aproximada) — no se obliga a
+ * mandar el pin después, aunque siga siendo la opción más precisa.
  */
 async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -211,8 +215,8 @@ async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promis
     });
     if (!resultado.ok) return;
 
-    // La zona se recalcula con el GPS nuevo — no se asume la del contenedor
-    // viejo, podría ser una dirección en otro departamento con otra tarifa.
+    // La zona se recalcula con la ubicación nueva — no se asume la del
+    // contenedor viejo, podría ser una dirección en otro departamento con otra tarifa.
     await avanzarACapaCuatroRecambio(to, sesion, resultado.departamento, m.lat, m.lng, destinoDireccion);
     return;
   }
@@ -223,22 +227,20 @@ async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promis
     if (resultado.tipo === 'sin_resultados') {
       await sendText(
         to,
-        '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad), ' +
-          'o directamente tocá el botón de "Enviar ubicación" para mandar el pin.',
+        '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad + departamento), ' +
+          'o tocá el botón de "Enviar ubicación" para mandar el pin.',
       );
       return;
     }
+
+    const numero = sesion.contexto.numero as string;
     if (resultado.tipo === 'un_candidato') {
-      await sendLocationRequest(
-        to,
-        `📍 Encontramos: ${resultado.candidato.direccion}.\n\n` +
-          'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — no alcanza con escribirla.',
-      );
-      await setSesion({
-        ...sesion,
-        paso: 'ubicacion_recambio',
-        contexto: { ...sesion.contexto, destinoDireccionReferencia: resultado.candidato.direccion },
+      const r = await verificarUbicacionCompleta(m, sesion, resultado.candidato.lat, resultado.candidato.lng, resultado.candidato.direccion, {
+        requiereTarifa: true,
+        contextoPedidoFueraDeZona: { tipo: 'recambio', contenedorRecambioNumero: numero },
       });
+      if (!r.ok) return;
+      await avanzarACapaCuatroRecambio(to, sesion, r.departamento, resultado.candidato.lat, resultado.candidato.lng, resultado.candidato.direccion, AVISO_DIRECCION_APROXIMADA);
       return;
     }
     await enviarListaCandidatos(to, resultado.candidatos);
@@ -250,10 +252,7 @@ async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promis
     return;
   }
 
-  await sendText(
-    to,
-    '📍 Necesito la dirección: tocá el botón de "Enviar ubicación" o escribila en un mensaje (ej: _Av. San Martín 1234, Barrio Centro_).',
-  );
+  await sendText(to, mensajePedirUbicacion('📍 Necesito la dirección nueva.'));
 }
 
 async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -266,12 +265,13 @@ async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Pro
     return;
   }
 
-  await sendLocationRequest(
-    to,
-    `📍 Anotado como referencia: ${elegido.direccion}.\n\n` +
-      'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — tocá "Enviar ubicación". No alcanza con escribirla.',
-  );
-  await setSesion({ ...sesion, paso: 'ubicacion_recambio', contexto: { ...sesion.contexto, destinoDireccionReferencia: elegido.direccion } });
+  const numero = sesion.contexto.numero as string;
+  const resultado = await verificarUbicacionCompleta(m, sesion, elegido.lat, elegido.lng, elegido.direccion, {
+    requiereTarifa: true,
+    contextoPedidoFueraDeZona: { tipo: 'recambio', contenedorRecambioNumero: numero },
+  });
+  if (!resultado.ok) return;
+  await avanzarACapaCuatroRecambio(to, sesion, resultado.departamento, elegido.lat, elegido.lng, elegido.direccion, AVISO_DIRECCION_APROXIMADA);
 }
 
 /** Capa 4 para dirección nueva: misma pregunta puntual que "Cotizar", ver cotizacion.flow.ts. */
@@ -282,12 +282,13 @@ async function avanzarACapaCuatroRecambio(
   destinoLat: number,
   destinoLng: number,
   destinoDireccion: string | null,
+  avisoExtra?: string,
 ): Promise<void> {
   const resumenUbicacion = `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`;
 
   await sendButtons(
     to,
-    `📍 Dirección: ${resumenUbicacion}\nZona: *${departamento}*\n\n` +
+    `${avisoExtra ? avisoExtra + '\n\n' : ''}📍 Dirección: ${resumenUbicacion}\nZona: *${departamento}*\n\n` +
       `¿Este es el lugar donde va el contenedor, o es desde donde me estás escribiendo?`,
     [
       { id: 'ubicacion_es_destino', title: '📍 Es el destino' },

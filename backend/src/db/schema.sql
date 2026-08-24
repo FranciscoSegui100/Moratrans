@@ -430,6 +430,10 @@ CREATE TABLE viajes (
   -- la planilla Excel que ya usaban (ver excelClientes() en reportes.service.ts).
   remito            TEXT,
   importe           NUMERIC(12,2),
+  -- Entrega pedida directo por cuenta corriente (ver pedirEntrega.flow.ts):
+  -- no tiene un `pedido` asociado, así que esta es la única marca de que es
+  -- deuda de cuenta corriente para el resumen (ver reportes.service.ts).
+  es_cuenta_corriente BOOLEAN NOT NULL DEFAULT FALSE,
   notas             TEXT,
   creado_en         TIMESTAMPTZ  NOT NULL DEFAULT now(),
   actualizado_en    TIMESTAMPTZ  NOT NULL DEFAULT now()

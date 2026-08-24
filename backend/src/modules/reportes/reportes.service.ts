@@ -90,9 +90,10 @@ export async function excelClientes(mes?: string, telefono?: string): Promise<Bu
 
 /**
  * Genera el Excel de movimientos de UN cliente (mismo formato que
- * excelClientes) y se lo manda por WhatsApp como documento — lo usa tanto el
- * botón del panel (ver clientes.routes.ts) como el pedido del propio cliente
- * por WhatsApp (ver movimientos.flow.ts).
+ * excelClientes) y se lo manda por WhatsApp como documento — lo usa el botón
+ * del panel (ver clientes.routes.ts) para exportar el historial completo con
+ * detalle logístico (patente, chofer, remito). El cliente por WhatsApp usa
+ * en cambio `enviarResumenCuentaCorrientePorWhatsApp`, más simple.
  */
 export async function enviarExcelClientePorWhatsApp(telefono: string, mes?: string): Promise<void> {
   const buf = await excelClientes(mes, telefono);
@@ -102,6 +103,107 @@ export async function enviarExcelClientePorWhatsApp(telefono: string, mes?: stri
     'cuenta-corriente.xlsx',
   );
   await sendDocument(telefono, mediaId, 'cuenta-corriente.xlsx', '📊 Acá tenés el detalle de tus movimientos.');
+}
+
+interface ItemCuentaCorriente {
+  fecha: string;
+  zona: string | null;
+  monto: string | null;
+}
+
+/**
+ * Deuda de cuenta corriente de un cliente: cuenta corriente es débito
+ * diferido, así que TODO lo entregado a través de ese circuito cuenta como
+ * pendiente hasta que el cliente transfiera y un operador lo concilie a
+ * mano — no hay hoy un "ya pagado" por pedido, por eso no se filtra por
+ * estado de pago. Combina las dos formas en que un pedido llega a ser
+ * cuenta corriente:
+ *  - Cotizar y elegir "pagar a cuenta corriente" (pago.flow.ts) -> queda en `pedidos`.
+ *  - "Pedir contenedor" directo (pedirEntrega.flow.ts) -> no genera `pedido`,
+ *    solo un `viaje` marcado `es_cuenta_corriente` (ver migración 0033).
+ */
+async function itemsCuentaCorriente(telefono: string): Promise<ItemCuentaCorriente[]> {
+  return query<ItemCuentaCorriente>(
+    `SELECT pe.creado_en::text AS fecha, pe.zona, pe.precio::text AS monto
+       FROM pedidos pe
+      WHERE pe.cliente_telefono = $1
+        AND EXISTS (SELECT 1 FROM pagos pg WHERE pg.pedido_id = pe.id AND pg.es_cuenta_corriente = TRUE)
+     UNION ALL
+     SELECT v.fecha::text AS fecha, v.zona, v.importe::text AS monto
+       FROM viajes v
+      WHERE v.cliente_telefono = $1 AND v.es_cuenta_corriente = TRUE
+      ORDER BY fecha`,
+    [telefono],
+  );
+}
+
+/** Nombre de archivo seguro: solo letras/números/espacios/guiones, sin extensión. */
+function nombreArchivoSeguro(base: string): string {
+  return base
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // quita acentos, deja las letras base
+    .replace(/[^a-zA-Z0-9 -]/g, '')
+    .trim();
+}
+
+/**
+ * PDF de "Resumen de cuenta" para un cliente de cuenta corriente: cada
+ * pedido/entrega con zona y precio, y el total al pie — es lo que el
+ * cliente pide desde el menú de WhatsApp (ver movimientos.flow.ts). Para
+ * pagar, se lo redirige a "Enviar comprobante" (ese flujo sí concilia el
+ * pago con un operador; este PDF es solo informativo).
+ */
+export function pdfResumenCuentaCorriente(clienteNombre: string, items: ItemCuentaCorriente[]): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    const chunks: Buffer[] = [];
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.fontSize(18).text('MORATRANS — Cuenta corriente', { align: 'center' });
+    doc.fontSize(13).fillColor('#333').text(clienteNombre, { align: 'center' });
+    doc.moveDown(0.5);
+    doc.fontSize(9).fillColor('#777').text(`Generado: ${new Date().toLocaleString('es-AR')}`, { align: 'center' });
+    doc.moveDown();
+
+    doc.fillColor('#000').fontSize(11);
+    let total = 0;
+    if (items.length === 0) {
+      doc.text('No hay pedidos pendientes.');
+    } else {
+      items.forEach((it) => {
+        const monto = it.monto ? Number(it.monto) : 0;
+        total += monto;
+        doc.text(
+          `${new Date(it.fecha).toLocaleDateString('es-AR')}  ·  ${it.zona ?? 'Sin zona'}  ·  ` +
+            `${it.monto ? '$' + monto.toLocaleString('es-AR') : 's/monto'}`,
+        );
+      });
+      doc.moveDown();
+      doc.fontSize(13).text(`Total: $${total.toLocaleString('es-AR')}`, { align: 'right' });
+    }
+    doc.end();
+  });
+}
+
+/**
+ * Genera y manda por WhatsApp el resumen de cuenta corriente de un cliente
+ * (ver pdfResumenCuentaCorriente) — lo dispara el propio cliente desde el
+ * menú "📊 Resumen de cuenta" (movimientos.flow.ts).
+ */
+export async function enviarResumenCuentaCorrientePorWhatsApp(telefono: string, clienteNombre: string | null): Promise<void> {
+  const items = await itemsCuentaCorriente(telefono);
+  const nombre = clienteNombre ?? 'Cliente';
+  const buf = await pdfResumenCuentaCorriente(nombre, items);
+  const nombreArchivo = `MORATRANS CUENTA CORRIENTE - ${nombreArchivoSeguro(nombre)}.pdf`;
+  const mediaId = await uploadMedia(buf, 'application/pdf', nombreArchivo);
+  await sendDocument(
+    telefono,
+    mediaId,
+    nombreArchivo,
+    '📊 Acá tenés tu resumen de cuenta.\n\n_Para pagar, escribí *Enviar comprobante* en el menú._',
+  );
 }
 
 /**

@@ -7,7 +7,14 @@ import { reverseGeocode, CandidatoDireccion } from '../../../services/geocoding.
 import { proximosDiasHabiles, formatearFechaLarga } from '../../../services/diasHabiles.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
-import { verificarUbicacionCompleta, buscarCandidatosDireccion, enviarListaCandidatos, elegirCandidato } from './ubicacionZona.helper';
+import {
+  verificarUbicacionCompleta,
+  buscarCandidatosDireccion,
+  enviarListaCandidatos,
+  elegirCandidato,
+  mensajePedirUbicacion,
+  AVISO_DIRECCION_APROXIMADA,
+} from './ubicacionZona.helper';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -78,10 +85,7 @@ export async function handlePedirEntrega(m: MensajeEntrante, sesion: Sesion): Pr
 
 async function iniciarPedidoDireccion(to: string): Promise<void> {
   await setSesion({ telefono: to, flujo: 'pedir_entrega', paso: 'esperando_direccion_entrega', contexto: {} });
-  await sendLocationRequest(
-    to,
-    '📍 ¿A qué dirección llevamos el contenedor? Tocá "Enviar ubicación" o escribila primero (después igual te pido el pin).',
-  );
+  await sendLocationRequest(to, mensajePedirUbicacion('📍 ¿A qué dirección llevamos el contenedor?'));
 }
 
 async function manejarDireccion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -110,23 +114,18 @@ async function manejarDireccion(m: MensajeEntrante, sesion: Sesion): Promise<voi
     if (resultado.tipo === 'sin_resultados') {
       await sendText(
         to,
-        '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad), ' +
-          'o directamente tocá el botón de "Enviar ubicación" para mandar el pin.',
+        '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad + departamento), ' +
+          'o tocá el botón de "Enviar ubicación" para mandar el pin.',
       );
       return;
     }
     if (resultado.tipo === 'un_candidato') {
-      await sendLocationRequest(
-        to,
-        `📍 Encontramos: ${resultado.candidato.direccion}.\n\n` +
-          'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — no alcanza con escribirla.',
-      );
-      await setSesion({
-        telefono: to,
-        flujo: 'pedir_entrega',
-        paso: 'esperando_direccion_entrega',
-        contexto: { destinoDireccionReferencia: resultado.candidato.direccion },
+      const r = await verificarUbicacionCompleta(m, sesion, resultado.candidato.lat, resultado.candidato.lng, resultado.candidato.direccion, {
+        requiereTarifa: true,
+        contextoPedidoFueraDeZona: { tipo: 'entrega' },
       });
+      if (!r.ok) return;
+      await pedirConfirmacion(to, sesion, resultado.candidato.lat, resultado.candidato.lng, resultado.candidato.direccion, r.departamento, r.tarifa, AVISO_DIRECCION_APROXIMADA);
       return;
     }
     await enviarListaCandidatos(to, resultado.candidatos);
@@ -139,7 +138,7 @@ async function manejarDireccion(m: MensajeEntrante, sesion: Sesion): Promise<voi
     return;
   }
 
-  await sendText(to, '📍 Necesito la dirección: tocá "Enviar ubicación" o escribila en un mensaje.');
+  await sendText(to, mensajePedirUbicacion('📍 Necesito la dirección.'));
 }
 
 async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -152,17 +151,12 @@ async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Pro
     return;
   }
 
-  await sendLocationRequest(
-    to,
-    `📍 Anotado como referencia: ${elegido.direccion}.\n\n` +
-      'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — tocá "Enviar ubicación". No alcanza con escribirla.',
-  );
-  await setSesion({
-    telefono: to,
-    flujo: 'pedir_entrega',
-    paso: 'esperando_direccion_entrega',
-    contexto: { destinoDireccionReferencia: elegido.direccion },
+  const resultado = await verificarUbicacionCompleta(m, sesion, elegido.lat, elegido.lng, elegido.direccion, {
+    requiereTarifa: true,
+    contextoPedidoFueraDeZona: { tipo: 'entrega' },
   });
+  if (!resultado.ok) return;
+  await pedirConfirmacion(to, sesion, elegido.lat, elegido.lng, elegido.direccion, resultado.departamento, resultado.tarifa, AVISO_DIRECCION_APROXIMADA);
 }
 
 async function pedirConfirmacion(
@@ -173,13 +167,14 @@ async function pedirConfirmacion(
   destinoDireccion: string | null,
   departamento: string,
   tarifa: { precio: string; moneda: string } | null,
+  avisoExtra?: string,
 ): Promise<void> {
   const resumen = `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`;
   const lineaPrecio = tarifa ? `\nCosto: *${tarifa.moneda} ${Number(tarifa.precio).toLocaleString('es-AR')}*` : '';
 
   await sendButtons(
     to,
-    `📍 Confirmá la dirección de entrega:\n\n${resumen}\nZona: *${departamento}*${lineaPrecio}\n\n¿Es correcta?`,
+    `${avisoExtra ? avisoExtra + '\n\n' : ''}📍 Confirmá la dirección de entrega:\n\n${resumen}\nZona: *${departamento}*${lineaPrecio}\n\n¿Es correcta?`,
     [
       { id: 'entrega_cliente_si', title: '✅ Sí, es correcta' },
       { id: 'entrega_cliente_no', title: '↩️ Volver a enviar' },
@@ -307,8 +302,8 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
   const deposito = await resolverUbicacion('deposito');
 
   const [viaje] = await query<{ id: string }>(
-    `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, importe, estado, notas, ubicacion_id, ubicacion_direccion)
-     VALUES ('entrega', $1, $2, $3, $4, $5, $6, $7, $8, 'programado', $9, $10, $11)
+    `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, importe, es_cuenta_corriente, estado, notas, ubicacion_id, ubicacion_direccion)
+     VALUES ('entrega', $1, $2, $3, $4, $5, $6, $7, $8, TRUE, 'programado', $9, $10, $11)
      RETURNING id`,
     [
       fechaEntrega, to, departamento, destinoDireccion, destinoLat, destinoLng, horarioPreferido, precio,
@@ -331,6 +326,7 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
   await sendText(
     to,
     '✅ ¡Listo! Registramos tu pedido de entrega. En breve te asignamos contenedor y chofer.\n\n' +
-      '_Si en un rato no tenés novedades, escribí *asesor*._',
+      '_Para ver el detalle y el total pendiente de tu cuenta, escribí *Resumen de cuenta* en el menú. ' +
+      'Si en un rato no tenés novedades, escribí *asesor*._',
   );
 }

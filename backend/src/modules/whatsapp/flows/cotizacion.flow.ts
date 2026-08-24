@@ -4,7 +4,15 @@ import { setSesion, clearSesion } from '../session.store';
 import { datosBancarios } from './pago.flow';
 import { obtenerOCrearCliente, esClienteNuevo } from '../../../services/clientes.service';
 import { reverseGeocode, CandidatoDireccion } from '../../../services/geocoding.service';
-import { verificarUbicacionCompleta, buscarCandidatosDireccion, enviarListaCandidatos, elegirCandidato } from './ubicacionZona.helper';
+import {
+  verificarUbicacionCompleta,
+  buscarCandidatosDireccion,
+  enviarListaCandidatos,
+  elegirCandidato,
+  mensajePedirUbicacion,
+  AVISO_DIRECCION_APROXIMADA,
+  ResultadoVerificacionZona,
+} from './ubicacionZona.helper';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { contenedoresDelCliente } from '../../../services/contenedorCliente.service';
 import { proximosDiasHabiles, formatearFechaLarga, sumarDias } from '../../../services/diasHabiles.service';
@@ -16,17 +24,19 @@ import type { Sesion } from '../session.store';
 /**
  * Flujo de cotización / pedido (menú cerrado):
  *   inicio -> elegir_departamento -> ubicacion -> [elegir_candidato_direccion, si escribió
- *   texto y hay >1 resultado] -> [confirmar_departamento_detectado, si el GPS no matchea
+ *   texto y hay >1 resultado] -> [confirmar_departamento_detectado, si la dirección no matchea
  *   el departamento elegido] -> confirmar_ubicacion (capa 4) -> tipo_lugar -> emplazamiento
  *   -> dia_entrega -> horario -> [crea el pedido]
  *
- * Nunca se cierra un pedido con una dirección escrita sola (regla del
- * dueño): el texto solo sirve para geocodificar candidatos de referencia
- * (forwardGeocode) — siempre se vuelve a pedir el pin GPS después.
+ * Ubicación por texto o por pin: siempre se ofrecen las dos opciones (regla
+ * del dueño — hay dispositivos que no dejan compartir el pin). El pin sigue
+ * siendo más preciso, pero una dirección escrita que geocodifica bien
+ * (calle + número + zona) ya alcanza para avanzar a la capa 4 — no se
+ * obliga a mandar el pin después, solo se avisa que es aproximada.
  *
  * Cliente nuevo (ver esClienteNuevo()): se salta el selector de
- * departamento -> `ubicacion_verificar`, que exige GPS real y detecta el
- * departamento a partir de las coordenadas. Si verifica, converge en
+ * departamento -> `ubicacion_verificar`, que detecta el departamento a
+ * partir de la ubicación (pin o texto). Si verifica, converge en
  * `confirmar_ubicacion` igual que el resto (la capa 4 aplica siempre).
  *
  * handlePedirNuevoContenedor(): cliente ocasional con contenedor que pide
@@ -82,6 +92,40 @@ async function avanzarAConfirmarUbicacion(
   });
 }
 
+/**
+ * A partir de un resultado ya OK de `verificarUbicacionCompleta`: si hubo un
+ * mismatch contra el departamento elegido de antes, le pregunta al cliente
+ * cuál es el correcto; si no, avanza directo a la capa 4.
+ */
+async function avanzarSegunResultado(
+  to: string,
+  sesion: Sesion,
+  resultado: Extract<ResultadoVerificacionZona, { ok: true }>,
+  lat: number,
+  lng: number,
+  direccion: string | null,
+  departamentoEsperado: string | undefined,
+  avisoExtra?: string,
+): Promise<void> {
+  if (resultado.mismatchCon && departamentoEsperado) {
+    await setSesion({
+      ...sesion,
+      paso: 'confirmar_departamento_detectado',
+      contexto: { departamento: departamentoEsperado, departamentoDetectado: resultado.mismatchCon, destinoLat: lat, destinoLng: lng, destinoDireccion: direccion },
+    });
+    await sendButtons(
+      to,
+      `📍 Notamos algo raro: cotizaste para *${departamentoEsperado}*, pero esa ubicación parece estar en *${resultado.mismatchCon}*.\n\n¿Cuál es el correcto?`,
+      [
+        { id: 'depto_mantener', title: departamentoEsperado.slice(0, 20) },
+        { id: 'depto_cambiar', title: resultado.mismatchCon.slice(0, 20) },
+      ],
+    );
+    return;
+  }
+  await avanzarAConfirmarUbicacion(to, sesion, resultado.departamento, lat, lng, direccion, avisoExtra);
+}
+
 /** Paso "tipo de lugar" — primer dato que el GPS no da (caso borde). */
 async function pedirTipoLugar(to: string, sesion: Sesion): Promise<void> {
   await sendList(to, '🏗️ Tipo de lugar', '¿Qué tipo de lugar es la dirección de entrega?', 'Ver opciones', TIPOS_LUGAR);
@@ -116,30 +160,66 @@ async function pedirDiaEntrega(to: string, sesion: Sesion): Promise<void> {
 
 /**
  * Verificación de ubicación para un cliente nuevo o para "otra dirección"
- * (handlePedirNuevoContenedor): exige GPS real, detecta el departamento por
- * coordenadas. Si no cae en ninguna zona conocida -> caso borde "fuera de
- * zona". Si cae en una zona sin tarifa activa, se le avisa. Si todo da bien,
- * converge en la MISMA confirmación de capa 4 que el flujo normal — la
- * pregunta de "¿es el destino o desde donde escribís?" aplica siempre, un
- * GPS válido no reemplaza esa confirmación.
+ * (handlePedirNuevoContenedor): detecta el departamento a partir de la
+ * ubicación, ya sea pin GPS o dirección escrita (geocodificada). Si no cae
+ * en ninguna zona conocida -> caso borde "fuera de zona". Si cae en una zona
+ * sin tarifa activa, se le avisa. Si todo da bien, converge en la MISMA
+ * confirmación de capa 4 que el flujo normal.
  */
 async function manejarUbicacionVerificar(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
 
-  if (m.tipo !== 'location' || m.lat == null || m.lng == null) {
-    await sendLocationRequest(
-      to,
-      '📍 Para verificar tu ubicación necesito que la compartas parada en el lugar de entrega, con el botón de "Enviar ubicación" — no alcanza con escribirla. ¿Podés mandarla?',
-    );
+  if (m.tipo === 'location' && m.lat != null && m.lng != null) {
+    const direccionCruda = m.ubicacionDireccion || m.ubicacionNombre || null;
+    const resultado = await verificarUbicacionCompleta(m, sesion, m.lat, m.lng, direccionCruda, { requiereTarifa: true });
+    if (!resultado.ok) return;
+
+    const destinoDireccion = direccionCruda ?? (await reverseGeocode(m.lat, m.lng));
+    await avanzarAConfirmarUbicacion(to, sesion, resultado.departamento, m.lat, m.lng, destinoDireccion);
     return;
   }
 
-  const direccionCruda = m.ubicacionDireccion || m.ubicacionNombre || null;
-  const resultado = await verificarUbicacionCompleta(m, sesion, m.lat, m.lng, direccionCruda, { requiereTarifa: true });
-  if (!resultado.ok) return;
+  if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
+    const resultado = await buscarCandidatosDireccion(m.texto.trim());
 
-  const destinoDireccion = direccionCruda ?? (await reverseGeocode(m.lat, m.lng));
-  await avanzarAConfirmarUbicacion(to, sesion, resultado.departamento, m.lat, m.lng, destinoDireccion);
+    if (resultado.tipo === 'sin_resultados') {
+      await sendText(
+        to,
+        '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad + departamento), ' +
+          'o tocá el botón de "Enviar ubicación" para mandar el pin.',
+      );
+      return;
+    }
+    if (resultado.tipo === 'un_candidato') {
+      const r = await verificarUbicacionCompleta(m, sesion, resultado.candidato.lat, resultado.candidato.lng, resultado.candidato.direccion, {
+        requiereTarifa: true,
+      });
+      if (!r.ok) return;
+      await avanzarAConfirmarUbicacion(to, sesion, r.departamento, resultado.candidato.lat, resultado.candidato.lng, resultado.candidato.direccion, AVISO_DIRECCION_APROXIMADA);
+      return;
+    }
+    await enviarListaCandidatos(to, resultado.candidatos);
+    await setSesion({ ...sesion, paso: 'elegir_candidato_direccion_verificar', contexto: { candidatos: resultado.candidatos } });
+    return;
+  }
+
+  await sendLocationRequest(to, mensajePedirUbicacion('📍 Para cotizar necesito verificar tu ubicación.'));
+}
+
+/** Igual que manejarEleccionCandidato, pero para cuando no hay un departamento pre-elegido (ver manejarUbicacionVerificar). */
+async function manejarEleccionCandidatoVerificar(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const candidatos = (sesion.contexto.candidatos as CandidatoDireccion[]) ?? [];
+
+  const elegido = elegirCandidato(m, candidatos);
+  if (!elegido) {
+    await manejarRespuestaInvalida(m, 'Por favor, elegí una de las direcciones de la lista. 👆');
+    return;
+  }
+
+  const resultado = await verificarUbicacionCompleta(m, sesion, elegido.lat, elegido.lng, elegido.direccion, { requiereTarifa: true });
+  if (!resultado.ok) return;
+  await avanzarAConfirmarUbicacion(to, sesion, resultado.departamento, elegido.lat, elegido.lng, elegido.direccion, AVISO_DIRECCION_APROXIMADA);
 }
 
 const BOTONES_UBICACION_NUEVO = [
@@ -183,10 +263,7 @@ async function manejarEleccionUbicacionNuevo(m: MensajeEntrante, sesion: Sesion)
 
   if (m.seleccionId === 'nuevo_otra_ubicacion') {
     await setSesion({ telefono: to, flujo: 'cotizacion', paso: 'ubicacion_verificar', contexto: {} });
-    await sendLocationRequest(
-      to,
-      '📍 Compartí la ubicación del lugar donde va el contenedor nuevo, parada en el sitio de entrega — tocá el botón de "Enviar ubicación". No alcanza con escribirla.',
-    );
+    await sendLocationRequest(to, mensajePedirUbicacion('📍 ¿A dónde va el contenedor nuevo?'));
     return;
   }
   if (m.seleccionId !== 'nuevo_misma_ubicacion') {
@@ -220,7 +297,7 @@ async function manejarEleccionUbicacionNuevo(m: MensajeEntrante, sesion: Sesion)
   });
 }
 
-/** Candidatos de una dirección escrita (forwardGeocode) -> el cliente elige uno como referencia; igual se pide el pin después. */
+/** Candidatos de una dirección escrita (forwardGeocode), con un departamento ya elegido de antes -> se verifica directo y se avanza a capa 4. */
 async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
   const { departamento, candidatos } = sesion.contexto as { departamento: string; candidatos: CandidatoDireccion[] };
@@ -231,12 +308,11 @@ async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Pro
     return;
   }
 
-  await sendLocationRequest(
-    to,
-    `📍 Anotado como referencia: ${elegido.direccion}.\n\n` +
-      'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — tocá "Enviar ubicación". No alcanza con escribirla.',
-  );
-  await setSesion({ ...sesion, paso: 'ubicacion', contexto: { departamento, destinoDireccionReferencia: elegido.direccion } });
+  const resultado = await verificarUbicacionCompleta(m, sesion, elegido.lat, elegido.lng, elegido.direccion, {
+    departamentoEsperado: departamento,
+  });
+  if (!resultado.ok) return;
+  await avanzarSegunResultado(to, sesion, resultado, elegido.lat, elegido.lng, elegido.direccion, departamento, AVISO_DIRECCION_APROXIMADA);
 }
 
 export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -244,6 +320,9 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
 
   if (sesion.paso === 'ubicacion_verificar') {
     return manejarUbicacionVerificar(m, sesion);
+  }
+  if (sesion.paso === 'elegir_candidato_direccion_verificar') {
+    return manejarEleccionCandidatoVerificar(m, sesion);
   }
   if (sesion.paso === 'elegir_ubicacion_nuevo') {
     return manejarEleccionUbicacionNuevo(m, sesion);
@@ -255,14 +334,11 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
   // Paso 0: mostrar la lista de departamentos activos — salvo que sea un
   // cliente nuevo (nunca cotizó/pagó, sin contenedor), a quien no le
   // preguntamos departamento: directamente le pedimos y verificamos la
-  // ubicación GPS (ver manejarUbicacionVerificar).
+  // ubicación (ver manejarUbicacionVerificar).
   if (!sesion.paso || sesion.paso === 'inicio') {
     if (await esClienteNuevo(to)) {
       await setSesion({ telefono: to, flujo: 'cotizacion', paso: 'ubicacion_verificar', contexto: {} });
-      await sendLocationRequest(
-        to,
-        '📍 Para cotizar necesito verificar tu ubicación — tocá el botón de "Enviar ubicación" y compartila parada en el lugar de entrega (GPS actual). No alcanza con escribirla.',
-      );
+      await sendLocationRequest(to, mensajePedirUbicacion('📍 Para cotizar necesito verificar tu ubicación.'));
       return;
     }
 
@@ -292,16 +368,12 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       return;
     }
     const departamento = m.seleccionId.replace('depto:', '');
-    await sendLocationRequest(
-      to,
-      `📍 Última cosa: compartí la dirección de entrega parada en el lugar exacto, con el botón de "Enviar ubicación" ` +
-        `(GPS). Si preferís, primero escribime la dirección y después te pido igual el pin:\nEj: _Av. San Martín 1234, Barrio Centro, ${departamento}_`,
-    );
+    await sendLocationRequest(to, mensajePedirUbicacion(`📍 Última cosa: ¿a qué dirección de *${departamento}* llevamos el contenedor?`));
     await setSesion({ ...sesion, paso: 'ubicacion', contexto: { departamento } });
     return;
   }
 
-  // Paso 2: recibió la ubicación (GPS o dirección escrita).
+  // Paso 2: recibió la ubicación (pin GPS o dirección escrita).
   if (sesion.paso === 'ubicacion') {
     const departamento = sesion.contexto.departamento as string;
 
@@ -311,7 +383,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
         destinoDireccion = await reverseGeocode(m.lat, m.lng);
       }
 
-      // Con GPS: comparamos contra el polígono del departamento elegido (ver
+      // Comparamos contra el polígono del departamento elegido (ver
       // geoDepartamento.service.ts, capas 2/3 vía ubicacionZona.helper.ts).
       // Sin este chequeo, nada impedía cotizar para un departamento y
       // compartir la ubicación de otro -> precio mal calculado, y después la
@@ -320,53 +392,27 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
         departamentoEsperado: departamento,
       });
       if (!resultado.ok) return;
-
-      if (resultado.mismatchCon) {
-        await setSesion({
-          ...sesion,
-          paso: 'confirmar_departamento_detectado',
-          contexto: { departamento, departamentoDetectado: resultado.mismatchCon, destinoLat: m.lat, destinoLng: m.lng, destinoDireccion },
-        });
-        await sendButtons(
-          to,
-          `📍 Notamos algo raro: cotizaste para *${departamento}*, pero tu ubicación parece estar en *${resultado.mismatchCon}*.\n\n¿Cuál es el correcto?`,
-          [
-            { id: 'depto_mantener', title: departamento.slice(0, 20) },
-            { id: 'depto_cambiar', title: resultado.mismatchCon.slice(0, 20) },
-          ],
-        );
-        return;
-      }
-
-      await avanzarAConfirmarUbicacion(to, sesion, departamento, m.lat, m.lng, destinoDireccion);
+      await avanzarSegunResultado(to, sesion, resultado, m.lat, m.lng, destinoDireccion, departamento);
       return;
     }
 
     if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
-      // Nunca se cierra un pedido solo con texto (regla del dueño): esto es
-      // solo para geocodificar candidatos de referencia. Siempre se vuelve
-      // a pedir el pin GPS después, sin importar cuántos resultados haya.
       const resultado = await buscarCandidatosDireccion(m.texto.trim());
 
       if (resultado.tipo === 'sin_resultados') {
         await sendText(
           to,
-          '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad), ' +
-            'o directamente tocá el botón de "Enviar ubicación" para mandar el pin.',
+          '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad + departamento), ' +
+            'o tocá el botón de "Enviar ubicación" para mandar el pin.',
         );
         return;
       }
       if (resultado.tipo === 'un_candidato') {
-        await sendLocationRequest(
-          to,
-          `📍 Encontramos: ${resultado.candidato.direccion}.\n\n` +
-            'Ahora sí, compartí tu ubicación GPS parada en el lugar exacto de entrega — no alcanza con escribirla.',
-        );
-        await setSesion({
-          ...sesion,
-          paso: 'ubicacion',
-          contexto: { departamento, destinoDireccionReferencia: resultado.candidato.direccion },
+        const r = await verificarUbicacionCompleta(m, sesion, resultado.candidato.lat, resultado.candidato.lng, resultado.candidato.direccion, {
+          departamentoEsperado: departamento,
         });
+        if (!r.ok) return;
+        await avanzarSegunResultado(to, sesion, r, resultado.candidato.lat, resultado.candidato.lng, resultado.candidato.direccion, departamento, AVISO_DIRECCION_APROXIMADA);
         return;
       }
       await enviarListaCandidatos(to, resultado.candidatos);
@@ -374,15 +420,11 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       return;
     }
 
-    await sendText(
-      to,
-      '📍 Necesito la dirección de entrega para poder cotizar: tocá el botón de "Enviar ubicación" ' +
-        'o escribila en un mensaje (ej: _Av. San Martín 1234, Barrio Centro_).',
-    );
+    await sendText(to, mensajePedirUbicacion('📍 Necesito la dirección de entrega para poder cotizar.'));
     return;
   }
 
-  // Paso 2b: el GPS no caía dentro del departamento cotizado (pero sí de OTRO
+  // Paso 2b: la dirección no caía dentro del departamento cotizado (pero sí de OTRO
   // conocido) -> el cliente decide cuál es el correcto.
   if (sesion.paso === 'confirmar_departamento_detectado') {
     const { departamento, departamentoDetectado, destinoLat, destinoLng, destinoDireccion } = sesion.contexto as {
@@ -413,10 +455,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
     };
 
     if (m.seleccionId === 'ubicacion_no') {
-      await sendLocationRequest(
-        to,
-        '📍 Dale, mandámela de nuevo: tocá "Enviar ubicación" parada en el lugar de entrega.',
-      );
+      await sendLocationRequest(to, mensajePedirUbicacion('📍 Dale, mandámela de nuevo.'));
       await setSesion({ ...sesion, paso: 'ubicacion', contexto: { departamento } });
       return;
     }
@@ -458,7 +497,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       await pedirDiaEntrega(to, { ...sesion, contexto: { ...sesion.contexto, enViaPublica: false } });
       return;
     }
-    await manejarRespuestaInvalida(m, 'Elegí "🏡 Adentro del terreno" o "🚧 Vía pública".');
+    await manejarRespuestaInvalida(m, 'Elegí "🏡 En el terreno" o "🚧 Vía pública".');
     return;
   }
 
