@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Download, Send } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Download, Send, Pencil } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
+import { useAuth, tieneRol } from '../context/AuthContext';
 
 interface Cliente {
   id: string;
@@ -84,7 +85,23 @@ function viajesDeEjemplo(): ViajeCliente[] {
 export function ClienteDetalle() {
   const { telefono = '' } = useParams<{ telefono: string }>();
   const { show } = useToast();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const puedeEditarRemito = tieneRol(user, 'admin', 'operador', 'finanzas');
   const [enviando, setEnviando] = useState(false);
+  const [editandoRemito, setEditandoRemito] = useState<string | null>(null);
+  const [remitoForm, setRemitoForm] = useState('');
+
+  async function guardarRemito(viajeId: string) {
+    try {
+      await api.patch(`/api/viajes/${viajeId}`, { remito: remitoForm.trim() || null });
+      queryClient.invalidateQueries({ queryKey: ['clientes', telefono, 'viajes'] });
+      setEditandoRemito(null);
+      show('success', 'Nº de remito actualizado');
+    } catch (err: any) {
+      show('error', 'No se pudo guardar', err.response?.data?.error);
+    }
+  }
 
   async function enviarPorWhatsApp() {
     setEnviando(true);
@@ -112,7 +129,8 @@ export function ClienteDetalle() {
   // TEMPORAL: si todavía no tiene viajes reales, se muestran de ejemplo
   // para previsualizar cómo queda la tabla con datos. BORRAR cuando ya no haga falta.
   const esCC = cliente?.cuenta_corriente_estado === 'aprobada' || cliente?.cuenta_corriente_estado === 'pendiente';
-  const viajes = viajesReales.length === 0 ? viajesDeEjemplo() : viajesReales;
+  const usandoDemo = viajesReales.length === 0;
+  const viajes = usandoDemo ? viajesDeEjemplo() : viajesReales;
 
   // Ya vienen ordenados por fecha DESC desde el backend: agrupar preservando
   // ese orden deja los meses más recientes arriba sin tener que reordenar.
@@ -188,7 +206,30 @@ export function ClienteDetalle() {
                       </td>
                       <td>{tipoBulto(v)}</td>
                       <td>1</td>
-                      <td className="mono">{v.remito ?? '—'}</td>
+                      <td className="mono">
+                        {editandoRemito === v.id ? (
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <input
+                              className="form-input"
+                              style={{ width: '90px', padding: '4px 8px' }}
+                              value={remitoForm}
+                              onChange={(e) => setRemitoForm(e.target.value)}
+                              autoFocus
+                            />
+                            <button className="btn btn-success btn-sm" onClick={() => guardarRemito(v.id)}>OK</button>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setEditandoRemito(null)}>✕</button>
+                          </div>
+                        ) : puedeEditarRemito && !usandoDemo ? (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => { setEditandoRemito(v.id); setRemitoForm(v.remito ?? ''); }}
+                          >
+                            {v.remito ?? <span className="text-muted">Asignar</span>} <Pencil size={11} strokeWidth={1.75} />
+                          </button>
+                        ) : (
+                          v.remito ?? '—'
+                        )}
+                      </td>
                       <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>
                       <td>{v.chofer_nombre ?? '—'}</td>
                       <td><span className={`badge ${v.estado}`}>{v.estado}</span></td>
