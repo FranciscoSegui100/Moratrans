@@ -17,7 +17,7 @@ import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow
 import { contenedoresDelCliente } from '../../../services/contenedorCliente.service';
 import { proximosDiasHabiles, formatearFechaLarga, sumarDias } from '../../../services/diasHabiles.service';
 import { manejarRespuestaInvalida } from '../estados';
-import { TIPOS_LUGAR, DIAS_ALQUILER_ANTES_RETIRO } from '../../../config/bot.config';
+import { TIPOS_LUGAR, DIAS_ALQUILER_ANTES_RETIRO, HORARIO_BARRIO_PRIVADO } from '../../../config/bot.config';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -130,6 +130,21 @@ async function avanzarSegunResultado(
 async function pedirTipoLugar(to: string, sesion: Sesion): Promise<void> {
   await sendList(to, '🏗️ Tipo de lugar', '¿Qué tipo de lugar es la dirección de entrega?', 'Ver opciones', TIPOS_LUGAR);
   await setSesion({ ...sesion, paso: 'tipo_lugar' });
+}
+
+/**
+ * Solo si el tipo de lugar es "Casa": los barrios privados suelen tener
+ * acceso restringido, así que en vez del selector normal de franja horaria
+ * (Mañana/Tarde) se usa una única franja fija (ver HORARIO_BARRIO_PRIVADO en
+ * bot.config.ts) — dato puntual que nos pasó la empresa, no aplica a obra,
+ * comercio ni consorcio.
+ */
+async function pedirBarrioPrivado(to: string, sesion: Sesion): Promise<void> {
+  await sendButtons(to, '🏡 ¿Es en un barrio privado?', [
+    { id: 'barrio_privado_si', title: '✅ Sí' },
+    { id: 'barrio_privado_no', title: '↩️ No' },
+  ]);
+  await setSesion({ ...sesion, paso: 'barrio_privado' });
 }
 
 /** Paso "¿va dentro del terreno o sobre la vía pública?" — segundo dato que el GPS no da. */
@@ -478,7 +493,26 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       await manejarRespuestaInvalida(m, 'Por favor, elegí una opción de la lista. 👆');
       return;
     }
-    await pedirEmplazamiento(to, { ...sesion, contexto: { ...sesion.contexto, tipoLugar: opcion.id.replace('lugar_', '') } });
+    const nuevaSesion = { ...sesion, contexto: { ...sesion.contexto, tipoLugar: opcion.id.replace('lugar_', '') } };
+    if (opcion.id === 'lugar_casa') {
+      await pedirBarrioPrivado(to, nuevaSesion);
+      return;
+    }
+    await pedirEmplazamiento(to, nuevaSesion);
+    return;
+  }
+
+  // Paso 4b: solo para "Casa" — ¿es en un barrio privado? (acceso restringido, ver HORARIO_BARRIO_PRIVADO)
+  if (sesion.paso === 'barrio_privado') {
+    if (m.seleccionId === 'barrio_privado_si') {
+      await pedirEmplazamiento(to, { ...sesion, contexto: { ...sesion.contexto, enBarrioPrivado: true } });
+      return;
+    }
+    if (m.seleccionId === 'barrio_privado_no') {
+      await pedirEmplazamiento(to, { ...sesion, contexto: { ...sesion.contexto, enBarrioPrivado: false } });
+      return;
+    }
+    await manejarRespuestaInvalida(m, 'Elegí "✅ Sí" o "↩️ No".');
     return;
   }
 
@@ -508,8 +542,21 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       return;
     }
     const fechaEntrega = m.seleccionId.replace('dia:', '');
+    const nuevaSesion = { ...sesion, contexto: { ...sesion.contexto, fechaEntrega } };
+
+    // Barrio privado: acceso restringido, franja horaria fija (ver
+    // HORARIO_BARRIO_PRIVADO) — no tiene sentido ofrecerle Mañana/Tarde.
+    if (sesion.contexto.enBarrioPrivado) {
+      await sendText(
+        to,
+        `🏡 Como es en un barrio privado, coordinamos la entrega dentro del horario de acceso: *${HORARIO_BARRIO_PRIVADO.title}*.`,
+      );
+      await finalizarPedido(to, m, nuevaSesion, HORARIO_BARRIO_PRIVADO);
+      return;
+    }
+
     await pedirHorarioPreferido(to, `🕐 ¿En qué franja horaria preferís que te lo llevemos el ${formatearFechaLarga(fechaEntrega)}?`);
-    await setSesion({ ...sesion, paso: 'horario', contexto: { ...sesion.contexto, fechaEntrega } });
+    await setSesion({ ...nuevaSesion, paso: 'horario' });
     return;
   }
 
@@ -520,56 +567,61 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       await pedirHorarioPreferido(to, 'Elegí una de las opciones de abajo. 👇');
       return;
     }
-    const { departamento, destinoLat, destinoLng, destinoDireccion, tipoLugar, enViaPublica, fechaEntrega } = sesion.contexto as {
-      departamento: string;
-      destinoLat: number | null;
-      destinoLng: number | null;
-      destinoDireccion: string | null;
-      tipoLugar: string | null;
-      enViaPublica: boolean | null;
-      fechaEntrega: string;
-    };
+    await finalizarPedido(to, m, sesion, opcion);
+    return;
+  }
+}
 
-    const tarifa = await tarifaDeZona(departamento);
-    if (!tarifa) {
-      await sendText(to, '🙁 Esa tarifa ya no está disponible. Escribí *Cotizar* para reintentar.');
-      await clearSesion(to);
-      return;
-    }
-    const { precio, moneda } = tarifa;
-    const fechaRetiroEstimada = sumarDias(fechaEntrega, DIAS_ALQUILER_ANTES_RETIRO);
+/** Crea el pedido y cierra el flujo — sea con la franja elegida por botones o la fija de barrio privado. */
+async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion, opcion: { title: string }): Promise<void> {
+  const { departamento, destinoLat, destinoLng, destinoDireccion, tipoLugar, enViaPublica, fechaEntrega } = sesion.contexto as {
+    departamento: string;
+    destinoLat: number | null;
+    destinoLng: number | null;
+    destinoDireccion: string | null;
+    tipoLugar: string | null;
+    enViaPublica: boolean | null;
+    fechaEntrega: string;
+  };
 
-    const [pedido] = await query<{ numero_pedido: number }>(
-      `INSERT INTO pedidos (
-         cliente_telefono, cliente_nombre, zona, precio, estado, destino_lat, destino_lng, destino_direccion,
-         horario_preferido, tipo_lugar, en_via_publica, fecha_entrega, fecha_retiro_estimada
-       ) VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7,$8,$9,$10,$11,$12)
-       RETURNING numero_pedido`,
-      [
-        to, m.nombrePerfil ?? null, departamento, precio, destinoLat, destinoLng, destinoDireccion,
-        opcion.title, tipoLugar ?? null, enViaPublica ?? null, fechaEntrega, fechaRetiroEstimada,
-      ],
-    );
-    // Alta/actualización en el padrón de clientes (ver clientes.service.ts) —
-    // así la pantalla Clientes del panel refleja a todo el que cotizó, no
-    // solo a quien pidió cuenta corriente.
-    obtenerOCrearCliente(to, m.nombrePerfil).catch((e) => console.error('Error dando de alta al cliente:', e));
-
-    await sendText(
-      to,
-      `📦 *Pedido #${pedido.numero_pedido} — ${departamento}*\n` +
-        `Dirección: ${destinoDireccion ?? `ubicación compartida (${destinoLat}, ${destinoLng})`}\n` +
-        `Fecha de entrega: ${formatearFechaLarga(fechaEntrega)}\n` +
-        `Franja horaria: ${opcion.title}\n` +
-        `Importe: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
-        `Fecha estimada de retiro: ${formatearFechaLarga(fechaRetiroEstimada)}\n\n` +
-        `Para reservarlo, hacé el pago con estos datos:\n\n` +
-        `${datosBancarios()}\n\n` +
-        `Y enviános el comprobante por este chat 📎\n` +
-        `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +
-        `_Escribí *menú* para volver al inicio en cualquier momento._`,
-    );
+  const tarifa = await tarifaDeZona(departamento);
+  if (!tarifa) {
+    await sendText(to, '🙁 Esa tarifa ya no está disponible. Escribí *Cotizar* para reintentar.');
     await clearSesion(to);
     return;
   }
+  const { precio, moneda } = tarifa;
+  const fechaRetiroEstimada = sumarDias(fechaEntrega, DIAS_ALQUILER_ANTES_RETIRO);
+
+  const [pedido] = await query<{ numero_pedido: number }>(
+    `INSERT INTO pedidos (
+       cliente_telefono, cliente_nombre, zona, precio, estado, destino_lat, destino_lng, destino_direccion,
+       horario_preferido, tipo_lugar, en_via_publica, fecha_entrega, fecha_retiro_estimada
+     ) VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7,$8,$9,$10,$11,$12)
+     RETURNING numero_pedido`,
+    [
+      to, m.nombrePerfil ?? null, departamento, precio, destinoLat, destinoLng, destinoDireccion,
+      opcion.title, tipoLugar ?? null, enViaPublica ?? null, fechaEntrega, fechaRetiroEstimada,
+    ],
+  );
+  // Alta/actualización en el padrón de clientes (ver clientes.service.ts) —
+  // así la pantalla Clientes del panel refleja a todo el que cotizó, no
+  // solo a quien pidió cuenta corriente.
+  obtenerOCrearCliente(to, m.nombrePerfil).catch((e) => console.error('Error dando de alta al cliente:', e));
+
+  await sendText(
+    to,
+    `📦 *Pedido #${pedido.numero_pedido} — ${departamento}*\n` +
+      `Dirección: ${destinoDireccion ?? `ubicación compartida (${destinoLat}, ${destinoLng})`}\n` +
+      `Fecha de entrega: ${formatearFechaLarga(fechaEntrega)}\n` +
+      `Franja horaria: ${opcion.title}\n` +
+      `Importe: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
+      `Fecha estimada de retiro: ${formatearFechaLarga(fechaRetiroEstimada)}\n\n` +
+      `Para reservarlo, hacé el pago con estos datos:\n\n` +
+      `${datosBancarios()}\n\n` +
+      `Y enviános el comprobante por este chat 📎\n` +
+      `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +
+      `_Escribí *menú* para volver al inicio en cualquier momento._`,
+  );
+  await clearSesion(to);
 }

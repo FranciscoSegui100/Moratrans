@@ -34,5 +34,12 @@ export const TIPOS_LUGAR: { id: string; title: string }[] = [
   { id: 'lugar_consorcio', title: '🏢 Consorcio' },
 ];
 
+/**
+ * Franja horaria única para entregas en barrios privados: el acceso suele
+ * estar restringido por el propio barrio, así que no se le ofrece el
+ * selector normal de Mañana/Tarde — placeholder fácil de ajustar acá.
+ */
+export const HORARIO_BARRIO_PRIVADO = { id: 'horario_barrio_privado', title: '🕐 9 a 17hs' };
+
 /** Radio (grados, aprox.) alrededor de Mendoza capital para priorizar resultados de geocodificación de direcciones escritas. */
 export const VIEWBOX_MENDOZA = { minLon: -69.3, minLat: -33.3, maxLon: -68.4, maxLat: -32.4 };
