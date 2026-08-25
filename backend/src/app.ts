@@ -30,6 +30,7 @@ import { ubicacionesRouter } from './modules/ubicaciones/ubicaciones.routes';
 import { usuariosRouter } from './modules/usuarios/usuarios.routes';
 import { auditoriaRouter } from './modules/auditoria/auditoria.routes';
 import { chatRouter } from './modules/chat/chat.routes';
+import { pool } from './config/db';
 
 export function crearApp() {
   const app = express();
@@ -67,7 +68,23 @@ export function crearApp() {
   // El resto usa JSON normal.
   app.use(express.json({ limit: '2mb' }));
 
-  app.get('/health', (_req, res) => res.json({ ok: true }));
+  // Chequea la DB (no solo que el proceso Express esté vivo): si el pool
+  // queda colgado con una conexión muerta (ver comentario en db.ts), el
+  // proceso sigue "arriba" pero el bot no puede contestar nada — sin este
+  // chequeo, un healthcheck de Railway nunca detectaría ese estado y el
+  // servicio se quedaría "Active" para siempre sin reiniciarse solo.
+  app.get('/health', async (_req, res) => {
+    try {
+      await Promise.race([
+        pool.query('SELECT 1'),
+        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('DB healthcheck timeout')), 5_000)),
+      ]);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('Healthcheck: la DB no respondió:', err);
+      res.status(503).json({ ok: false });
+    }
+  });
 
   // authRouter maneja su propia protección CSRF ruta por ruta (login/mfa no
   // la necesitan porque todavía no hay sesión de cookies que un atacante

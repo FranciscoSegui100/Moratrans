@@ -13,6 +13,20 @@ export const pool = new Pool({
   connectionString: env.DATABASE_URL,
   max: 10,
   idleTimeoutMillis: 30_000,
+  // Sin esto, una conexión que se cae en silencio (ej. un proxy/NAT que
+  // cierra el socket TCP sin avisar) queda "viva" para `pg` pero muerta en
+  // los hechos: nunca tira error, nunca se libera, y una vez que las 10 del
+  // pool quedan así, TODO lo que dependa de la DB (o sea, casi todo el bot)
+  // se cuelga para siempre sin ningún log de error — el proceso sigue de
+  // pie, pero deja de responder. keepAlive detecta el socket muerto a nivel
+  // TCP; connectionTimeoutMillis evita esperar para siempre por un lugar
+  // libre; statement_timeout/query_timeout cortan una query colgada en vez
+  // de dejarla retener su conexión indefinidamente.
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
+  connectionTimeoutMillis: 10_000,
+  statement_timeout: 30_000,
+  query_timeout: 30_000,
   ssl: esSupabase
     ? { rejectUnauthorized: true, ca: SUPABASE_CA }
     : env.NODE_ENV === 'production'
