@@ -73,6 +73,13 @@ contenedoresRouter.get('/', async (req: Request, res: Response) => {
  * los tickets nunca se marcan 'cerrado' al terminar el ciclo — ver POST
  * /api/tickets/:id/cerrar, que es un paso manual aparte — así que no se
  * puede confiar en el rango [creado_en, cerrado_en) para no solapar).
+ *
+ * No se puede resolver directo por tickets.contenedor_numero: desde la
+ * migración 0023 esa columna queda NULL salvo que el operador haya elegido
+ * el contenedor a mano al validar el pago (ya no es lo habitual, se asigna
+ * después al armar la ruta). Por eso se pasa primero por viajes —ahí sí
+ * queda el contenedor real una vez asignado— y de ahí se llega al ticket
+ * por pago_id (mismo pago que generó el ticket, ver pagos.routes.ts /validar).
  */
 contenedoresRouter.get('/:numero/historial', async (req: Request, res: Response) => {
   const rows = await query(
@@ -97,14 +104,15 @@ contenedoresRouter.get('/:numero/historial', async (req: Request, res: Response)
        LEFT JOIN choferes ch ON efectivo.actualizado_por LIKE 'chofer:%'   AND ch.id::text = substring(efectivo.actualizado_por FROM 8)
        LEFT JOIN usuarios u  ON efectivo.actualizado_por LIKE 'operador:%' AND u.id::text = substring(efectivo.actualizado_por FROM 10)
        LEFT JOIN LATERAL (
-         SELECT tk.id, tk.pedido_id, tk.pago_id
-           FROM tickets tk
-          WHERE tk.contenedor_numero = h.numero_contenedor AND tk.creado_en <= h.creado_en
-          ORDER BY tk.creado_en DESC
+         SELECT v.pago_id
+           FROM viajes v
+          WHERE v.contenedor_numero = h.numero_contenedor AND v.creado_en <= h.creado_en
+          ORDER BY v.creado_en DESC
           LIMIT 1
-       ) t ON true
-       LEFT JOIN pedidos  pe ON pe.id = t.pedido_id
-       LEFT JOIN pagos    p  ON p.id  = t.pago_id
+       ) vg ON true
+       LEFT JOIN tickets t  ON t.pago_id = vg.pago_id
+       LEFT JOIN pedidos pe ON pe.id = t.pedido_id
+       LEFT JOIN pagos   p  ON p.id  = t.pago_id
       WHERE h.numero_contenedor = $1
       ORDER BY h.creado_en DESC`,
     [req.params.numero],
