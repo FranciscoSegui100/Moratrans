@@ -7,6 +7,7 @@ import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
 import { useAuth, tieneRol } from '../context/AuthContext';
+import { formatearFecha } from '../lib/fechas';
 
 interface Cliente {
   id: string;
@@ -196,7 +197,7 @@ export function ClienteDetalle() {
                 <tbody>
                   {viajesDelMes.map((v) => (
                     <tr key={v.id}>
-                      <td>{v.fecha}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
                       <td>Contenedor</td>
                       <td className="mono">{v.patente ?? '—'}</td>
                       <td>

@@ -31,3 +31,36 @@ dashboardRouter.get('/contenedores', async (_req: Request, res: Response) => {
   const rows = await query('SELECT estado, count(*)::int AS total FROM contenedores GROUP BY estado');
   res.json(rows);
 });
+
+/**
+ * GET /api/dashboard/comprobantes-mes — comprobantes de pago recibidos en el
+ * mes calendario actual (cualquier estado: pendiente/validado/rechazado), no
+ * solo los ya validados — es una vista de "qué entró este mes", no de cobros
+ * confirmados. El binario del comprobante en sí se sigue sirviendo por
+ * GET /api/pagos/:id/comprobante (mismo criterio de rol admin/finanzas).
+ */
+dashboardRouter.get('/comprobantes-mes', async (_req: Request, res: Response) => {
+  const rows = await query<{
+    id: string;
+    cliente_telefono: string;
+    monto: string | null;
+    estado: string;
+    tipo: string;
+    creado_en: string;
+    titular_transferencia: string | null;
+    zona: string | null;
+    precio: string | null;
+    moneda: string | null;
+  }>(
+    `SELECT p.id, p.cliente_telefono, p.monto, p.estado, p.tipo, p.creado_en, p.titular_transferencia,
+            pe.zona, pe.precio, td.moneda
+       FROM pagos p
+       LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+       LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
+      WHERE p.url_comprobante IS NOT NULL
+        AND p.creado_en >= date_trunc('month', CURRENT_DATE)
+        AND p.creado_en < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
+      ORDER BY p.creado_en DESC`,
+  );
+  res.json(rows);
+});

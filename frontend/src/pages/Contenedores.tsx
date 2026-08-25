@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
+import { formatearFechaHora } from '../lib/fechas';
 
 interface Contenedor {
   numero: string;
@@ -154,17 +155,17 @@ export function Contenedores() {
                     <span className="text-muted">—</span>
                   )}
                 </td>
-                <td>
+                <td style={{ whiteSpace: 'nowrap' }}>
                   {c.vence_en ? (
                     <span style={{ color: new Date(c.vence_en) < new Date() ? 'var(--danger)' : 'var(--warning)' }}>
-                      {new Date(c.vence_en).toLocaleString('es-UY')}
+                      {formatearFechaHora(c.vence_en)}
                     </span>
                   ) : (
                     <span className="text-muted">—</span>
                   )}
                 </td>
-                <td className="text-muted">
-                  {new Date(c.actualizado_en).toLocaleString('es-UY')}{' '}
+                <td className="text-muted" style={{ whiteSpace: 'nowrap' }}>
+                  {formatearFechaHora(c.actualizado_en)}{' '}
                   {c.actualizado_por && <span>· {c.actualizado_por}</span>}
                 </td>
               </tr>
@@ -213,7 +214,7 @@ export function Contenedores() {
                   <tbody>
                     {grupo.items.map((h) => (
                       <tr key={h.id}>
-                        <td className="text-muted">{new Date(h.creado_en).toLocaleString('es-UY')}</td>
+                        <td className="text-muted" style={{ whiteSpace: 'nowrap' }}>{formatearFechaHora(h.creado_en)}</td>
                         <td>
                           <span className={`badge ${h.estado}`}>{h.estado.replace('_', ' ')}</span>
                         </td>

@@ -5,6 +5,7 @@ import { RoleGate } from '../components/RoleGate';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
 import { useToast } from '../components/Toast';
 import { tipoLabel } from '../lib/alertLabels';
+import { formatearFechaHora } from '../lib/fechas';
 
 export function Alertas() {
   const { alertas: todasLasAlertas, resolver, validarPago, rechazarPago, confirmarRetiro, enviarFactura } = useAlertas();
@@ -123,7 +124,7 @@ export function Alertas() {
                   <div>
                     <div className="alerta-tipo">{tipoLabel[a.tipo] ?? a.tipo}</div>
                     <div className="alerta-msg">{a.mensaje}</div>
-                    <div className="alerta-time">{new Date(a.creado_en).toLocaleString('es-UY')}</div>
+                    <div className="alerta-time">{formatearFechaHora(a.creado_en)}</div>
                   </div>
                   {!esPago && !esRetiro && !esFactura && (
                     <button onClick={() => resolver(a.id)} className="btn btn-ghost btn-sm">
