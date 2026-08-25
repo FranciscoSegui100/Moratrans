@@ -1,5 +1,4 @@
 import { query } from '../config/db';
-import { contenedoresDelCliente } from './contenedorCliente.service';
 
 export interface Cliente {
   id: string;
@@ -24,18 +23,4 @@ export async function obtenerOCrearCliente(telefono: string, nombre?: string | n
     [telefono, nombre ?? null],
   );
   return row;
-}
-
-/**
- * Nunca cotizó, nunca pagó (no hay fila en `clientes` — se crea recién al
- * completar una cotización o un pago, ver arriba) y no tiene un contenedor
- * entregado a su nombre. Se usa para simplificar la cotización de un primer
- * contacto por WhatsApp (se salta el selector de departamento, va directo a
- * verificar GPS — ver cotizacion.flow.ts) — el menú principal es el mismo
- * para todos, solo este paso cambia.
- */
-export async function esClienteNuevo(telefono: string): Promise<boolean> {
-  const [cliente] = await query<{ id: string }>('SELECT id FROM clientes WHERE telefono = $1', [telefono]);
-  if (cliente) return false;
-  return (await contenedoresDelCliente(telefono)).length === 0;
 }
