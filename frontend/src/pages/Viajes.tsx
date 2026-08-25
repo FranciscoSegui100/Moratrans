@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
+import { formatearFecha } from '../lib/fechas';
 
 interface Viaje {
   id: string;
@@ -94,7 +95,7 @@ export function Viajes() {
   function etiquetaContenedor(c: Contenedor): { texto: string; disabled: boolean } {
     if (form.tipo === 'retiro' || form.tipo === 'recambio' || c.estado === 'disponible') return { texto: c.numero, disabled: false };
     if (!c.vence_en) return { texto: `${c.numero} — ${c.estado}, sin fecha de vuelta cargada`, disabled: true };
-    const fecha = new Date(c.vence_en).toLocaleDateString('es-AR');
+    const fecha = formatearFecha(c.vence_en);
     return { texto: `${c.numero} — vuelve el ${fecha}`, disabled: false };
   }
   const { data: zonas = [] } = useQuery({
@@ -253,7 +254,7 @@ export function Viajes() {
                 required
               />
               {minFecha && (
-                <small className="text-muted">Contenedor ocupado: recién se puede elegir desde el {new Date(minFecha).toLocaleDateString('es-AR')}</small>
+                <small className="text-muted">Contenedor ocupado: recién se puede elegir desde el {formatearFecha(minFecha)}</small>
               )}
             </div>
             <div className="form-group">
@@ -389,7 +390,7 @@ export function Viajes() {
           <tbody>
             {viajes.map((v) => (
               <tr key={v.id}>
-                <td className="strong">{v.fecha}</td>
+                <td className="strong" style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
                 <td>
                   <RoleGate roles={['admin', 'operador']}>
                     <input

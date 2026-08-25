@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
+import { formatearFecha } from '../lib/fechas';
 
 interface Ruta {
   id: string;
@@ -415,7 +416,7 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
       <div className="detail-head">
         <div>
           <div className="t">{ruta.chofer_nombre ?? 'Sin chofer'}</div>
-          <div className="s">Patente {ruta.patente ?? '—'} · {ruta.fecha}</div>
+          <div className="s">Patente {ruta.patente ?? '—'} · {formatearFecha(ruta.fecha)}</div>
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           <select className="form-select" style={{ width: 'auto', fontSize: '0.8rem' }} value={ruta.estado} onChange={(e) => cambiarEstado(e.target.value)}>
@@ -750,7 +751,7 @@ export function Rutas() {
               onClick={() => setFecha(r.fecha)}
               style={{ fontWeight: 700 }}
             >
-              {r.chofer_nombre ?? 'Sin chofer'} · {r.fecha}
+              {r.chofer_nombre ?? 'Sin chofer'} · {formatearFecha(r.fecha)}
             </button>
           ))}
         </div>

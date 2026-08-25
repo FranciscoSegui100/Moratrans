@@ -3,6 +3,7 @@ import { Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, Recei
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
+import { formatearFechaHora } from '../lib/fechas';
 
 interface Kpis {
   contenedores_activos: number;
@@ -190,7 +191,7 @@ export function Dashboard() {
                         : c.monto
                         ? `${c.moneda ?? ''} ${Number(c.monto).toLocaleString('es-AR')}`.trim()
                         : 'Sin monto'}{' '}
-                      · {new Date(c.creado_en).toLocaleString('es-AR')}
+                      · {formatearFechaHora(c.creado_en)}
                     </div>
                     {c.titular_transferencia && (
                       <div className="pago-detail">Transferencia a nombre de: <strong>{c.titular_transferencia}</strong></div>

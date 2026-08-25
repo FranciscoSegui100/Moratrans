@@ -6,6 +6,7 @@ import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { useAuth, tieneRol } from '../context/AuthContext';
+import { formatearFecha } from '../lib/fechas';
 
 interface Cliente {
   id: string;
@@ -163,7 +164,7 @@ export function Clientes() {
                   </td>
                   <td><span className={`badge ${cc.clase}`}>{cc.texto}</span></td>
                   <td>{c.cantidad_viajes}</td>
-                  <td>{c.ultimo_viaje ? new Date(c.ultimo_viaje).toLocaleDateString('es-AR') : <span className="text-muted">—</span>}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{c.ultimo_viaje ? formatearFecha(c.ultimo_viaje) : <span className="text-muted">—</span>}</td>
                   <td>
                     <RoleGate roles={['admin', 'operador', 'finanzas']}>
                       {c.cuenta_corriente_estado === 'pendiente' && (
