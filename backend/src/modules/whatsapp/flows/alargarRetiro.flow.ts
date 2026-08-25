@@ -9,6 +9,7 @@ import { datosBancarios, tieneCuentaCorrienteAprobada } from './pago.flow';
 import { manejarRespuestaInvalida } from '../estados';
 import { escalarAAsesor } from './asesor.flow';
 import { DIAS_ALARGUE, PORCENTAJE_ALARGUE } from '../../../config/bot.config';
+import { formatearFechaCorta } from '../../../services/diasHabiles.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -250,7 +251,7 @@ async function registrarAlargueCC(to: string, sesion: Sesion): Promise<void> {
   await sendText(
     to,
     `✅ ¡Listo! Extendimos *${DIAS_ALARGUE} días* el retiro de tu contenedor *${numero}* — ` +
-      `${cont?.vence_en ? `ahora vence el ${new Date(cont.vence_en).toLocaleDateString('es-AR')}. ` : ''}` +
+      `${cont?.vence_en ? `ahora vence el ${formatearFechaCorta(cont.vence_en)}. ` : ''}` +
       `Costo: *${moneda} ${costo.toLocaleString('es-AR')}* — se agregó a tu cuenta corriente.`,
   );
 }

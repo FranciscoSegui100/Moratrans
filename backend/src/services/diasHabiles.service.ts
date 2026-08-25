@@ -47,6 +47,17 @@ export function formatearFechaLarga(fechaISO: string): string {
   return `${DIAS_SEMANA[fecha.getDay()]} ${d} de ${MESES[m - 1]}`;
 }
 
+/**
+ * "28/08/2026" — para mensajes cortos (WhatsApp, errores). A diferencia de
+ * `new Date(fechaISO).toLocaleDateString('es-AR')`, no pasa por UTC: esa
+ * conversión interpreta "2026-08-28" como medianoche UTC y, en horario
+ * Argentina (UTC-3), lo muestra retrocedido un día.
+ */
+export function formatearFechaCorta(fechaISO: string): string {
+  const [y, m, d] = fechaISO.slice(0, 10).split('-');
+  return `${d}/${m}/${y}`;
+}
+
 /** Suma `dias` días de calendario (no hábiles) a una fecha ISO. Usado para fecha_retiro_estimada. */
 export function sumarDias(fechaISO: string, dias: number): string {
   const [y, m, d] = fechaISO.split('-').map(Number);

@@ -13,6 +13,7 @@ import { avisarChoferRecambio } from '../viajes/viajes.routes';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
+import { formatearFechaCorta } from '../../services/diasHabiles.service';
 
 export const pagosRouter = Router();
 pagosRouter.use(requireAuth);
@@ -176,7 +177,7 @@ async function avisarChoferReservaFutura(choferId: string, contenedor: string, f
   await sendText(
     chofer.telefono,
     `📦 Te quedó reservada una entrega del contenedor *${contenedor}*, pero todavía está con otro cliente.\n` +
-      `Prevista para el ${new Date(fechaEntrega).toLocaleDateString('es-AR')} — te avisamos apenas esté listo para salir.`,
+      `Prevista para el ${formatearFechaCorta(fechaEntrega)} — te avisamos apenas esté listo para salir.`,
   );
 }
 
@@ -231,7 +232,7 @@ async function validarAlargue(req: Request, res: Response, pagoId: string): Prom
 
   sendText(
     pago.cliente_telefono,
-    `✅ ¡Listo! Extendimos *${DIAS_ALARGUE} días* el retiro de tu contenedor *${pago.contenedor_numero}* — ahora vence el ${new Date(cont.vence_en).toLocaleDateString('es-AR')}.`,
+    `✅ ¡Listo! Extendimos *${DIAS_ALARGUE} días* el retiro de tu contenedor *${pago.contenedor_numero}* — ahora vence el ${formatearFechaCorta(cont.vence_en)}.`,
   ).catch((e) => console.error('Error avisando alargue validado:', motivoErrorWa(e)));
 
   res.json({ ok: true, tipo: 'alargue_retiro', contenedor: pago.contenedor_numero, vence_en: cont.vence_en });
@@ -272,7 +273,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
         }
         if (contPrevio.vence_en && fechaEntrega < new Date(contPrevio.vence_en).toISOString().slice(0, 10)) {
           return res.status(400).json({
-            error: `Ese contenedor vuelve el ${new Date(contPrevio.vence_en).toLocaleDateString('es-AR')}; elegí esa fecha o una posterior.`,
+            error: `Ese contenedor vuelve el ${formatearFechaCorta(contPrevio.vence_en)}; elegí esa fecha o una posterior.`,
           });
         }
       }
@@ -297,10 +298,11 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       es_cuenta_corriente: boolean;
       pedido_tipo: string | null;
       contenedor_recambio_numero: string | null;
+      fecha_entrega: string | null;
     }>(
       `SELECT p.cliente_telefono, pe.cliente_nombre, pe.zona, pe.precio, td.moneda,
               pe.destino_lat, pe.destino_lng, pe.destino_direccion, pe.horario_preferido, p.es_cuenta_corriente,
-              pe.tipo AS pedido_tipo, pe.contenedor_recambio_numero
+              pe.tipo AS pedido_tipo, pe.contenedor_recambio_numero, pe.fecha_entrega
          FROM pagos p
          LEFT JOIN pedidos pe ON pe.id = p.pedido_id
          LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
@@ -352,7 +354,11 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
         });
       }
     } else {
-      const fechaViaje = fechaEntrega ?? venceEn ?? null;
+      // El operador puede pisarla a mano (fechaEntrega/venceEn en el body),
+      // pero si no la manda hay que respetar el día que el cliente ya eligió
+      // al pedir el pedido (pedidos.fecha_entrega) — antes se perdía y el
+      // viaje caía en CURRENT_DATE.
+      const fechaViaje = fechaEntrega ?? venceEn ?? info?.fecha_entrega ?? null;
       await query(
         `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas, ubicacion_id, ubicacion_direccion, destino_direccion, destino_lat, destino_lng, horario_preferido, pago_id)
          VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', $6, $7, $8, $9, $10, $11, $12, $13)`,

@@ -1,4 +1,5 @@
 import { PoolClient } from 'pg';
+import { formatearFechaCorta } from './diasHabiles.service';
 
 /** Mismo patrón que el resto del código: un error con `.status` que las rutas mapean a la respuesta HTTP. */
 function fail(msg: string): never {
@@ -79,7 +80,7 @@ export async function reservarParaEntrega(
   }
   const venceFecha = new Date(cont!.vence_en!).toISOString().slice(0, 10);
   if (fecha < venceFecha) {
-    fail(`El contenedor ${numero} vuelve el ${new Date(cont!.vence_en!).toLocaleDateString('es-AR')}; elegí esa fecha o una posterior.`);
+    fail(`El contenedor ${numero} vuelve el ${formatearFechaCorta(cont!.vence_en!)}; elegí esa fecha o una posterior.`);
   }
   // Sigue "ocupado" hasta que vuelva de verdad — no se toca su estado acá.
 }
