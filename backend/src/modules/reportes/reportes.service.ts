@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import { query } from '../../config/db';
 import { uploadMedia, sendDocument } from '../whatsapp/graphApi';
+import { formatearFechaCorta } from '../../services/diasHabiles.service';
 
 /** Genera un Excel (buffer) con el estado actual de los contenedores. */
 export async function excelContenedores(): Promise<Buffer> {
@@ -183,7 +184,7 @@ export function pdfResumenCuentaCorriente(clienteNombre: string, items: ItemCuen
         const monto = it.monto ? Number(it.monto) : 0;
         total += monto;
         doc.text(
-          `${new Date(it.fecha).toLocaleDateString('es-AR')}  ·  ${it.zona ?? 'Sin zona'}  ·  ` +
+          `${formatearFechaCorta(it.fecha)}  ·  ${it.zona ?? 'Sin zona'}  ·  ` +
             `${it.monto ? '$' + monto.toLocaleString('es-AR') : 's/monto'}`,
         );
       });

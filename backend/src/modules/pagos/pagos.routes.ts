@@ -331,16 +331,21 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
     if (esRecambio) {
       const grupoId = randomUUID();
       const vaciadero = await resolverUbicacion('vaciadero');
+      // Mismo criterio que la rama de entrega simple más abajo: si el
+      // operador no pisa la fecha a mano, respetar el día que el cliente ya
+      // eligió al pedir el pedido (pedidos.fecha_entrega) en vez de perderla
+      // y caer en CURRENT_DATE.
+      const fechaViaje = venceEn ?? info?.fecha_entrega ?? null;
       await query(
         `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion, pago_id)
          VALUES ('retiro', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, $7, $8, $9, 'programado', 'Creado al validar el pago (recambio)', $10, $11, $12, $13)`,
-        [venceEn ?? null, choferId ?? null, info!.contenedor_recambio_numero, info?.cliente_telefono ?? null, info?.zona ?? null,
+        [fechaViaje, choferId ?? null, info!.contenedor_recambio_numero, info?.cliente_telefono ?? null, info?.zona ?? null,
          info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, pagoId],
       );
       await query(
         `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion, pago_id)
          VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, $7, $8, $9, 'programado', 'Creado al validar el pago (recambio)', $10, $11, $12, $13)`,
-        [venceEn ?? null, choferId ?? null, result.contenedor ?? null, info?.cliente_telefono ?? null, info?.zona ?? null,
+        [fechaViaje, choferId ?? null, result.contenedor ?? null, info?.cliente_telefono ?? null, info?.zona ?? null,
          info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, grupoId, ubicacion?.id ?? null, ubicacion?.direccion ?? null, pagoId],
       );
 
