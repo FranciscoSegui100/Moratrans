@@ -154,13 +154,22 @@ export async function buscarCandidatosDireccion(texto: string): Promise<Resultad
   return { tipo: 'varios_candidatos', candidatos };
 }
 
+/**
+ * El título de una fila de lista de WhatsApp se corta a 24 caracteres — con
+ * direcciones reales eso deja casi siempre el mismo prefijo truncado en
+ * varias filas ("Av. San Martín 12...", "Av. San Martín 12...") y hace
+ * imposible elegir la correcta. La `description` de una fila permite 72
+ * caracteres, que sí suele alcanzar para una dirección completa (calle +
+ * altura + localidad) — ahí va la dirección entera; el título queda como
+ * numeración simple.
+ */
 export async function enviarListaCandidatos(to: string, candidatos: CandidatoDireccion[]): Promise<void> {
   await sendList(
     to,
     '📍 ¿Cuál es?',
     'Encontramos varias direcciones parecidas — elegí la que corresponda:',
     'Ver direcciones',
-    candidatos.map((c, i) => ({ id: `cand:${i}`, title: c.direccion.slice(0, 24) })),
+    candidatos.map((c, i) => ({ id: `cand:${i}`, title: `Opción ${i + 1}`, description: c.direccion.slice(0, 72) })),
   );
 }
 
@@ -190,3 +199,38 @@ export function mensajePedirUbicacion(pregunta: string): string {
 export const AVISO_DIRECCION_APROXIMADA =
   '🔎 Esta ubicación es aproximada (la calculamos a partir de la dirección que escribiste). ' +
   'Si preferís más precisión, tocá "↩️ Mandar otra" y compartí el pin GPS.';
+
+/**
+ * Mensaje inicial para pedir ubicación cuando, si el cliente escribe en vez
+ * de mandar el pin, lo que sigue es un cuestionario paso a paso (calle,
+ * después número, ver cotizacion.flow.ts) en vez de una única dirección
+ * en texto libre: pedir calle + altura + zona todo junto en un solo mensaje
+ * es lo que generaba direcciones ambiguas o mal formadas al geocodificar.
+ */
+export function mensajePedirUbicacionPasoAPaso(pregunta: string): string {
+  return (
+    `${pregunta}\n\n` +
+    `Tocá "Enviar ubicación" para mandar el pin GPS (la opción más precisa), ` +
+    `o escribime el *nombre de la calle* y te voy pidiendo el resto (número, alguna indicación) por separado.`
+  );
+}
+
+/** Combina la dirección geocodificada con la indicación libre para el chofer (si el cliente dio una). */
+export function combinarDireccionConIndicacion(direccion: string, indicacion: string | null): string {
+  return indicacion ? `${direccion} — Indicación para el chofer: ${indicacion}` : direccion;
+}
+
+const RESPUESTAS_SIN_INDICACION = ['no', 'no hay', 'ninguna', 'ningun', 'nada', 'na', '-'];
+
+/** null si el cliente contestó algo equivalente a "no tengo ninguna indicación". */
+export function normalizarIndicacion(texto: string): string | null {
+  const t = texto.trim();
+  if (!t || RESPUESTAS_SIN_INDICACION.includes(t.toLowerCase())) return null;
+  return t;
+}
+
+/** String de búsqueda para Nominatim a partir de calle + número (+ departamento, si ya se eligió). */
+export function armarDireccionBusqueda(calle: string, numero: string, departamento?: string): string {
+  const base = `${calle.trim()} ${numero.trim()}`.trim();
+  return departamento ? `${base}, ${departamento}` : base;
+}

@@ -12,7 +12,10 @@ import {
   buscarCandidatosDireccion,
   enviarListaCandidatos,
   elegirCandidato,
-  mensajePedirUbicacion,
+  mensajePedirUbicacionPasoAPaso,
+  combinarDireccionConIndicacion,
+  normalizarIndicacion,
+  armarDireccionBusqueda,
   AVISO_DIRECCION_APROXIMADA,
 } from './ubicacionZona.helper';
 import type { MensajeEntrante } from '../messageRouter';
@@ -46,6 +49,12 @@ export async function handlePedirEntrega(m: MensajeEntrante, sesion: Sesion): Pr
 
   if (sesion.paso === 'esperando_direccion_entrega') {
     return manejarDireccion(m, sesion);
+  }
+  if (sesion.paso === 'direccion_entrega_numero') {
+    return manejarDireccionNumero(m, sesion);
+  }
+  if (sesion.paso === 'direccion_entrega_indicacion') {
+    return manejarDireccionIndicacion(m, sesion);
   }
   if (sesion.paso === 'elegir_candidato_direccion_entrega') {
     return manejarEleccionCandidato(m, sesion);
@@ -85,7 +94,7 @@ export async function handlePedirEntrega(m: MensajeEntrante, sesion: Sesion): Pr
 
 async function iniciarPedidoDireccion(to: string): Promise<void> {
   await setSesion({ telefono: to, flujo: 'pedir_entrega', paso: 'esperando_direccion_entrega', contexto: {} });
-  await sendLocationRequest(to, mensajePedirUbicacion('📍 ¿A qué dirección llevamos el contenedor?'));
+  await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso('📍 ¿A qué dirección llevamos el contenedor?'));
 }
 
 async function manejarDireccion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -108,42 +117,71 @@ async function manejarDireccion(m: MensajeEntrante, sesion: Sesion): Promise<voi
     return;
   }
 
-  if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
-    const resultado = await buscarCandidatosDireccion(m.texto.trim());
-
-    if (resultado.tipo === 'sin_resultados') {
-      await sendText(
-        to,
-        '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad + departamento), ' +
-          'o tocá el botón de "Enviar ubicación" para mandar el pin.',
-      );
-      return;
-    }
-    if (resultado.tipo === 'un_candidato') {
-      const r = await verificarUbicacionCompleta(m, sesion, resultado.candidato.lat, resultado.candidato.lng, resultado.candidato.direccion, {
-        requiereTarifa: true,
-        contextoPedidoFueraDeZona: { tipo: 'entrega' },
-      });
-      if (!r.ok) return;
-      await pedirConfirmacion(to, sesion, resultado.candidato.lat, resultado.candidato.lng, resultado.candidato.direccion, r.departamento, r.tarifa, AVISO_DIRECCION_APROXIMADA);
-      return;
-    }
-    await enviarListaCandidatos(to, resultado.candidatos);
-    await setSesion({
-      telefono: to,
-      flujo: 'pedir_entrega',
-      paso: 'elegir_candidato_direccion_entrega',
-      contexto: { candidatos: resultado.candidatos },
-    });
+  // Dirección escrita: se pregunta paso a paso (calle, después número,
+  // después indicación) en vez de todo en un solo mensaje — evita
+  // direcciones ambiguas o incompletas que devolvían candidatos parecidos.
+  if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 2) {
+    await sendText(to, '🛣️ ¿Y el *número* de la altura? (si no tiene, escribí "s/n")');
+    await setSesion({ telefono: to, flujo: 'pedir_entrega', paso: 'direccion_entrega_numero', contexto: { calle: m.texto.trim() } });
     return;
   }
 
-  await sendText(to, mensajePedirUbicacion('📍 Necesito la dirección.'));
+  await sendText(to, mensajePedirUbicacionPasoAPaso('📍 Necesito la dirección.'));
+}
+
+async function manejarDireccionNumero(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  if (m.tipo !== 'text' || !m.texto?.trim()) {
+    await sendText(to, '🛣️ Necesito el número de la altura (o "s/n" si no tiene).');
+    return;
+  }
+  const calle = sesion.contexto.calle as string;
+  await sendText(to, '🚚 Última cosa: ¿alguna indicación para el chofer (portón, timbre, entre calles)? Si no hay, escribí "no".');
+  await setSesion({ telefono: to, flujo: 'pedir_entrega', paso: 'direccion_entrega_indicacion', contexto: { calle, numero: m.texto.trim() } });
+}
+
+async function manejarDireccionIndicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  if (m.tipo !== 'text' || !m.texto) {
+    await sendText(to, '🚚 Contame si hay alguna indicación para el chofer, o escribí "no".');
+    return;
+  }
+  const { calle, numero } = sesion.contexto as { calle: string; numero: string };
+  const indicacion = normalizarIndicacion(m.texto);
+  const busqueda = armarDireccionBusqueda(calle, numero);
+  const resultado = await buscarCandidatosDireccion(busqueda);
+
+  if (resultado.tipo === 'sin_resultados') {
+    await sendText(
+      to,
+      `🙁 No encontramos "${busqueda}". Probemos de nuevo — ¿cuál es el *nombre de la calle*? ` +
+        'O tocá el botón de "Enviar ubicación" para mandar el pin.',
+    );
+    await setSesion({ telefono: to, flujo: 'pedir_entrega', paso: 'esperando_direccion_entrega', contexto: {} });
+    return;
+  }
+  if (resultado.tipo === 'un_candidato') {
+    const direccionFinal = combinarDireccionConIndicacion(resultado.candidato.direccion, indicacion);
+    const r = await verificarUbicacionCompleta(m, sesion, resultado.candidato.lat, resultado.candidato.lng, direccionFinal, {
+      requiereTarifa: true,
+      contextoPedidoFueraDeZona: { tipo: 'entrega' },
+    });
+    if (!r.ok) return;
+    await pedirConfirmacion(to, sesion, resultado.candidato.lat, resultado.candidato.lng, direccionFinal, r.departamento, r.tarifa, AVISO_DIRECCION_APROXIMADA);
+    return;
+  }
+  await enviarListaCandidatos(to, resultado.candidatos);
+  await setSesion({
+    telefono: to,
+    flujo: 'pedir_entrega',
+    paso: 'elegir_candidato_direccion_entrega',
+    contexto: { candidatos: resultado.candidatos, indicacion },
+  });
 }
 
 async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
-  const candidatos = (sesion.contexto.candidatos as CandidatoDireccion[]) ?? [];
+  const { candidatos = [], indicacion = null } = sesion.contexto as { candidatos: CandidatoDireccion[]; indicacion: string | null };
 
   const elegido = elegirCandidato(m, candidatos);
   if (!elegido) {
@@ -151,12 +189,13 @@ async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Pro
     return;
   }
 
-  const resultado = await verificarUbicacionCompleta(m, sesion, elegido.lat, elegido.lng, elegido.direccion, {
+  const direccionFinal = combinarDireccionConIndicacion(elegido.direccion, indicacion);
+  const resultado = await verificarUbicacionCompleta(m, sesion, elegido.lat, elegido.lng, direccionFinal, {
     requiereTarifa: true,
     contextoPedidoFueraDeZona: { tipo: 'entrega' },
   });
   if (!resultado.ok) return;
-  await pedirConfirmacion(to, sesion, elegido.lat, elegido.lng, elegido.direccion, resultado.departamento, resultado.tarifa, AVISO_DIRECCION_APROXIMADA);
+  await pedirConfirmacion(to, sesion, elegido.lat, elegido.lng, direccionFinal, resultado.departamento, resultado.tarifa, AVISO_DIRECCION_APROXIMADA);
 }
 
 async function pedirConfirmacion(
