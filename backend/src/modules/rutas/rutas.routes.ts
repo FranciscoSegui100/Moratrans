@@ -722,16 +722,27 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
       return { confirmadasAhora, choferId: ruta!.chofer_id, pendientes };
     });
 
-    // Avisos por WhatsApp fuera de la transacción (no bloqueantes), uno por
-    // VISITA (agrupando por `orden`: un recambio manda un solo aviso, no dos)
-    // — y solo para lo confirmado EN ESTA CORRIDA, no lo ya avisado antes.
+    // Aviso por WhatsApp fuera de la transacción (no bloqueante) — SOLO de la
+    // primera parada todavía pendiente de toda la ruta, no de todo lo que se
+    // confirma en esta corrida: mandarle al chofer los 5 avisos de una ruta
+    // de un saque lo confundía. El resto se va destapando de a uno, cuando
+    // termina la parada anterior (ver avisarSiguienteParadaRuta, llamada
+    // desde chofer.flow.ts al marcar "ya entregué"/"ya retiré").
     const porOrdenVisita = new Map<number, ViajeParada[]>();
     for (const v of resultado.confirmadasAhora) {
       const lista = porOrdenVisita.get(v.orden) ?? [];
       lista.push(v);
       porOrdenVisita.set(v.orden, lista);
     }
-    for (const visita of porOrdenVisita.values()) {
+    const [primeraPendiente] = await query<{ orden: number | null }>(
+      `SELECT MIN(orden) AS orden FROM viajes
+        WHERE ruta_id = $1 AND ruta_confirmada_en IS NOT NULL
+          AND estado IN ('programado', 'en_curso') AND completada_en IS NULL`,
+      [rutaId],
+    );
+    const ordenAAvisar = primeraPendiente?.orden;
+    const visita = ordenAAvisar != null ? porOrdenVisita.get(ordenAAvisar) : undefined;
+    if (visita) {
       const entrega = visita.find((v) => v.tipo === 'entrega');
       const retiro = visita.find((v) => v.tipo === 'retiro');
       let aviso: Promise<void>;

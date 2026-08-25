@@ -7,6 +7,7 @@ import { finalizarRetiro } from '../../../services/retiro.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { sumarDias } from '../../../services/diasHabiles.service';
 import { DIAS_ALQUILER_ANTES_RETIRO } from '../../../config/bot.config';
+import { avisarSiguienteParadaRuta } from '../../viajes/viajes.routes';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -375,6 +376,7 @@ async function cascadearParejaRecambio(numero: string, choferId: string, choferN
     if (cont?.estado !== 'reservado') return '';
     await query(`UPDATE contenedores SET estado = 'entregado', actualizado_por = $2 WHERE numero = $1`, [pareja.contenedor_numero, `chofer:${choferId}`]);
     await query(`UPDATE viajes SET completada_en = now() WHERE id = $1`, [pareja.id]);
+    avisarSiguienteParadaRuta(pareja.id).catch((e) => console.error('Error avisando siguiente parada:', e.message));
     return ` y entregaste *${pareja.contenedor_numero}*`;
   }
 
@@ -388,6 +390,7 @@ async function cascadearParejaRecambio(numero: string, choferId: string, choferN
     [pareja.id, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
   );
   await query(`UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`, [pareja.contenedor_numero, `chofer:${choferId}`]);
+  avisarSiguienteParadaRuta(pareja.id).catch((e) => console.error('Error avisando siguiente parada:', e.message));
   const [alerta] = await query(
     `INSERT INTO alertas (tipo, referencia_id, mensaje)
      VALUES ('confirmar_retiro', $1, $2)
@@ -449,6 +452,7 @@ async function aplicarVacioRecambio(
       await query(`UPDATE contenedores SET vence_en = $2::date WHERE numero = $1`, [numero, venceEn]);
     }
     await query(`UPDATE viajes SET completada_en = now() WHERE id = $1`, [entregaId]);
+    avisarSiguienteParadaRuta(entregaId).catch((e) => console.error('Error avisando siguiente parada:', e.message));
 
     const mensajeLleno = await cascadearParejaRecambio(numero, choferId, choferNombre);
 
@@ -553,7 +557,9 @@ async function aplicarEstado(
           ORDER BY creado_en DESC LIMIT 1`,
         [numero],
       );
+      let retiroId: string;
       if (retiroExistente) {
+        retiroId = retiroExistente.id;
         await query(
           `UPDATE viajes SET estado = 'en_curso', completada_en = now(),
                   chofer_id = COALESCE(chofer_id, $2),
@@ -565,12 +571,14 @@ async function aplicarEstado(
           [retiroExistente.id, choferId, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
         );
       } else {
-        await query(
+        const [nuevoRetiro] = await query<{ id: string }>(
           `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, destino_direccion, zona, estado, notas, ubicacion_id, ubicacion_direccion, completada_en)
-           VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'en_curso', 'Retirado del cliente por WhatsApp', $5, $6, now())`,
+           VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'en_curso', 'Retirado del cliente por WhatsApp', $5, $6, now()) RETURNING id`,
           [choferId, numero, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
         );
+        retiroId = nuevoRetiro.id;
       }
+      avisarSiguienteParadaRuta(retiroId).catch((e) => console.error('Error avisando siguiente parada:', e.message));
       await query(
         `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
         [numero, `chofer:${choferId}`],
@@ -622,11 +630,15 @@ async function aplicarEstado(
     // hace X min" por chofer). Solo aplica acá — 'retirado' ya se marca más
     // arriba, donde crea/actualiza su propia fila de viajes.
     if (estado === 'entregado') {
-      await query(
+      const entregasCompletadas = await query<{ id: string }>(
         `UPDATE viajes SET completada_en = now()
-          WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')`,
+          WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
+          RETURNING id`,
         [numero, choferId],
       );
+      for (const v of entregasCompletadas) {
+        avisarSiguienteParadaRuta(v.id).catch((e) => console.error('Error avisando siguiente parada:', e.message));
+      }
     }
     // Si esto es el vacío de un recambio y el lleno pareja ya está listo
     // (entregado), se retira en el mismo momento (yendo a vaciar) — así no

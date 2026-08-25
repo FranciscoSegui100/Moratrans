@@ -188,6 +188,66 @@ export async function avisarChoferRecambio(
   await menuChofer(chofer.telefono, chofer.nombre);
 }
 
+/**
+ * Al confirmar una ruta no se avisan todas sus paradas de un saque (ver
+ * POST /api/rutas/:id/confirmar) — solo la primera. Esta función se llama
+ * cada vez que el chofer termina una parada (marca "ya entregué"/"ya
+ * retiré", ver chofer.flow.ts) y, si la parada recién cerrada era la última
+ * pendiente de su `orden` (un recambio ocupa dos filas con el mismo orden:
+ * hay que esperar las dos), le avisa recién ahí la parada siguiente de la
+ * MISMA ruta. Si `viajeCompletadoId` no pertenece a una ruta armada (viaje
+ * suelto asignado directo, o un retiro espontáneo sin ruta) no hace nada.
+ */
+export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Promise<void> {
+  const [actual] = await query<{ ruta_id: string | null; orden: number | null }>(
+    `SELECT ruta_id, orden FROM viajes WHERE id = $1`,
+    [viajeCompletadoId],
+  );
+  if (!actual?.ruta_id || actual.orden == null) return;
+
+  const [pendienteEnMismoOrden] = await query<{ id: string }>(
+    `SELECT id FROM viajes
+      WHERE ruta_id = $1 AND orden = $2 AND completada_en IS NULL AND estado IN ('programado', 'en_curso')
+      LIMIT 1`,
+    [actual.ruta_id, actual.orden],
+  );
+  if (pendienteEnMismoOrden) return; // recambio: falta que termine la otra mitad de la visita
+
+  const siguientes = await query<{
+    id: string; tipo: 'entrega' | 'retiro'; contenedor_numero: string | null; destino_direccion: string | null;
+    ubicacion_id: string | null; grupo_id: string | null; chofer_id: string | null; orden: number;
+  }>(
+    `SELECT id, tipo, contenedor_numero, destino_direccion, ubicacion_id, grupo_id, chofer_id, orden
+       FROM viajes
+      WHERE ruta_id = $1 AND orden > $2 AND ruta_confirmada_en IS NOT NULL
+        AND estado IN ('programado', 'en_curso') AND completada_en IS NULL
+      ORDER BY orden ASC`,
+    [actual.ruta_id, actual.orden],
+  );
+  if (siguientes.length === 0) return;
+  const proximoOrden = siguientes[0].orden;
+  const visita = siguientes.filter((v) => v.orden === proximoOrden);
+  const choferId = visita[0].chofer_id;
+  if (!choferId) return;
+
+  const entrega = visita.find((v) => v.tipo === 'entrega');
+  const retiro = visita.find((v) => v.tipo === 'retiro');
+  try {
+    if (entrega?.grupo_id && retiro) {
+      await avisarChoferRecambio(choferId, retiro.contenedor_numero!, entrega.contenedor_numero, entrega.ubicacion_id, entrega.destino_direccion);
+    } else {
+      const v = entrega ?? retiro!;
+      await avisarChoferViaje(choferId, v.tipo, v.contenedor_numero, v.destino_direccion);
+    }
+  } catch (e: any) {
+    const motivo = motivoErrorWa(e);
+    console.error('Error avisando la siguiente parada de la ruta:', motivo);
+    notificarEnvioFallido(visita[0].id, `chofer de la ruta ${actual.ruta_id}`, 'aviso de siguiente parada', motivo).catch(
+      (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+    );
+  }
+}
+
 /** POST /api/viajes — programar un viaje, o un recambio (par retiro+entrega) (admin/operador). */
 viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = nuevoSchema.safeParse(req.body);
