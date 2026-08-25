@@ -5,6 +5,8 @@ import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { blindIndex } from '../../../services/crypto.service';
 import { finalizarRetiro } from '../../../services/retiro.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
+import { sumarDias } from '../../../services/diasHabiles.service';
+import { DIAS_ALQUILER_ANTES_RETIRO } from '../../../config/bot.config';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -438,10 +440,13 @@ async function aplicarVacioRecambio(
     // 'reservado' -> 'entregado' directo (mismo trigger que usa cualquier
     // entrega): el chofer ya se lo está dejando al cliente en este momento.
     await query(`UPDATE contenedores SET estado = 'entregado', actualizado_por = $2 WHERE numero = $1`, [numero, `chofer:${choferId}`]);
-    // La fecha de la entrega ES el vencimiento: cuándo se espera que este
-    // vacío vuelva una vez alquilado.
+    // El vencimiento es la fecha de entrega + los días de alquiler estándar
+    // (mismo criterio que cotizacion.flow.ts al calcular fecha_retiro_estimada)
+    // — no la fecha de entrega misma, que dejaría el contenedor "vencido"
+    // el mismo día que se lo deja.
     if (viajeEntrega) {
-      await query(`UPDATE contenedores SET vence_en = $2::date WHERE numero = $1`, [numero, viajeEntrega.fecha]);
+      const venceEn = sumarDias(viajeEntrega.fecha, DIAS_ALQUILER_ANTES_RETIRO);
+      await query(`UPDATE contenedores SET vence_en = $2::date WHERE numero = $1`, [numero, venceEn]);
     }
     await query(`UPDATE viajes SET completada_en = now() WHERE id = $1`, [entregaId]);
 
