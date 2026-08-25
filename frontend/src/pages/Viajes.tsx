@@ -543,16 +543,17 @@ export function Viajes() {
                   {(() => {
                     const inicial = v.comprobantes.find((c) => c.tipo !== 'alargue_retiro');
                     const extensiones = v.comprobantes.filter((c) => c.tipo === 'alargue_retiro');
-                    if (!inicial && extensiones.length === 0) {
-                      return v.es_cuenta_corriente
-                        ? <span className="badge pendiente">📋 Cuenta corriente</span>
-                        : <span className="text-muted">—</span>;
+                    const esCC = v.es_cuenta_corriente || inicial?.es_cuenta_corriente;
+                    if (!esCC && !inicial && extensiones.length === 0) {
+                      return <span className="text-muted">—</span>;
                     }
                     return (
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                        {inicial && (
+                        {esCC ? (
+                          <span className="badge pendiente">📋 Cuenta corriente</span>
+                        ) : inicial && (
                           <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
-                            {inicial.es_cuenta_corriente ? '📋 Cuenta corriente' : '🧾 Inicial'}
+                            🧾 Inicial
                           </button>
                         )}
                         {extensiones.length > 0 && (
