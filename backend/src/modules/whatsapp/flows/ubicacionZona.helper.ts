@@ -180,43 +180,28 @@ export function elegirCandidato(m: MensajeEntrante, candidatos: CandidatoDirecci
   return candidatos[idx] ?? null;
 }
 
-/**
- * Mensaje estándar para pedir la ubicación de entrega: da siempre las dos
- * opciones (pin GPS o dirección escrita) y, si escribe, pide explícitamente
- * calle + número + zona/departamento — sin esto, "Chile 1120" sin más datos
- * geocodifica mal o ambiguo. El pin sigue siendo la opción más precisa.
- */
-export function mensajePedirUbicacion(pregunta: string): string {
-  return (
-    `${pregunta}\n\n` +
-    `Tocá "Enviar ubicación" para mandar el pin GPS (la opción más precisa), ` +
-    `o escribime la dirección con calle, número y zona/departamento.\n` +
-    `Ej: _Av. San Martín 1234, Godoy Cruz_.`
-  );
-}
-
 /** Aviso que se suma en la capa 4 cuando la ubicación viene de texto geocodificado, no de un pin real. */
 export const AVISO_DIRECCION_APROXIMADA =
   '🔎 Esta ubicación es aproximada (la calculamos a partir de la dirección que escribiste). ' +
   'Si preferís más precisión, tocá "↩️ Mandar otra" y compartí el pin GPS.';
 
 /**
- * Mensaje inicial para pedir ubicación cuando, si el cliente escribe en vez
- * de mandar el pin, lo que sigue es un cuestionario paso a paso (calle,
- * después número, ver cotizacion.flow.ts) en vez de una única dirección
- * en texto libre: pedir calle + altura + zona todo junto en un solo mensaje
- * es lo que generaba direcciones ambiguas o mal formadas al geocodificar.
+ * Mensaje estándar para pedir la ubicación de entrega: da siempre las dos
+ * opciones (pin GPS o dirección escrita) y, si escribe, pide explícitamente
+ * calle + número — la indicación extra para el chofer se pregunta recién
+ * después de confirmar que la ubicación es correcta (capa 4), no acá.
  */
 export function mensajePedirUbicacionPasoAPaso(pregunta: string): string {
   return (
     `${pregunta}\n\n` +
     `Tocá "Enviar ubicación" para mandar el pin GPS (la opción más precisa), ` +
-    `o escribime el *nombre de la calle* y te voy pidiendo el resto (número, alguna indicación) por separado.`
+    `o escribime la dirección con *calle y número*.\nEj: _Av. San Martín 1234_.`
   );
 }
 
 /** Combina la dirección geocodificada con la indicación libre para el chofer (si el cliente dio una). */
-export function combinarDireccionConIndicacion(direccion: string, indicacion: string | null): string {
+export function combinarDireccionConIndicacion(direccion: string | null, indicacion: string | null): string | null {
+  if (!direccion) return indicacion;
   return indicacion ? `${direccion} — Indicación para el chofer: ${indicacion}` : direccion;
 }
 
@@ -229,8 +214,11 @@ export function normalizarIndicacion(texto: string): string | null {
   return t;
 }
 
-/** String de búsqueda para Nominatim a partir de calle + número (+ departamento, si ya se eligió). */
-export function armarDireccionBusqueda(calle: string, numero: string, departamento?: string): string {
-  const base = `${calle.trim()} ${numero.trim()}`.trim();
-  return departamento ? `${base}, ${departamento}` : base;
+/**
+ * Suma el departamento ya elegido de antes (si hay uno) a la dirección que
+ * escribió el cliente, para que Nominatim tenga más contexto y no confunda
+ * calles con el mismo nombre en distintos departamentos.
+ */
+export function armarDireccionBusqueda(direccion: string, departamento?: string): string {
+  return departamento ? `${direccion.trim()}, ${departamento}` : direccion.trim();
 }
