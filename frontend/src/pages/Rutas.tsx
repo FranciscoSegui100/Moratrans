@@ -304,10 +304,21 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
 
   async function quitarParada(v: Visita) {
     if (!confirm('¿Quitar esta parada de la ruta? Vuelve a la bolsa de pedidos.')) return;
+    // Optimista: la saca del panel al toque, sin esperar la ida y vuelta al
+    // servidor — cargar() (abajo) trae el estado real igual, por las dudas.
+    const previo = queryClient.getQueryData<RutaData>(['rutas', rutaId]);
+    if (previo) {
+      const idsAQuitar = new Set([v.entrega?.id, v.retiro?.id, v.vaciado?.id].filter(Boolean) as string[]);
+      queryClient.setQueryData<RutaData>(['rutas', rutaId], {
+        ...previo,
+        paradas: previo.paradas.filter((p) => !idsAQuitar.has(p.id)),
+      });
+    }
     try {
       await api.delete(`/api/rutas/${rutaId}/paradas/${v.tipoParada}/${v.id}`);
       cargar();
     } catch (err: any) {
+      if (previo) queryClient.setQueryData(['rutas', rutaId], previo);
       show('error', 'No se pudo quitar la parada', err.response?.data?.error);
     }
   }
@@ -334,6 +345,21 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
   }
 
   async function reordenar(nuevasVisitas: Visita[]) {
+    // Optimista: repinta el nuevo orden en el momento (es la acción más
+    // frecuente al armar una ruta) — `disponibles` por parada queda
+    // desactualizado hasta que cargar() traiga la simulación real del
+    // backend, pero el reordenamiento visual no espera esa vuelta.
+    const previo = queryClient.getQueryData<RutaData>(['rutas', rutaId]);
+    if (previo) {
+      const nuevasParadas: Parada[] = [];
+      nuevasVisitas.forEach((v, i) => {
+        const orden = i + 1;
+        if (v.vaciado) nuevasParadas.push({ ...v.vaciado, orden });
+        if (v.entrega) nuevasParadas.push({ ...v.entrega, orden });
+        if (v.retiro) nuevasParadas.push({ ...v.retiro, orden });
+      });
+      queryClient.setQueryData<RutaData>(['rutas', rutaId], { ...previo, paradas: nuevasParadas });
+    }
     try {
       await api.patch(`/api/rutas/${rutaId}/orden`, {
         secuencia: nuevasVisitas.map((v) => ({ tipo: v.tipoParada, id: v.id })),
@@ -341,6 +367,7 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
       });
       cargar();
     } catch (err: any) {
+      if (previo) queryClient.setQueryData(['rutas', rutaId], previo);
       if (err.response?.status === 409) {
         show('error', 'Esta ruta cambió', 'Otro usuario la modificó mientras tanto — se recargó con los cambios de él.');
         cargar();
@@ -360,10 +387,22 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
 
   async function asignarContenedor(viajeId: string, contenedorNumero: string) {
     if (!contenedorNumero) return;
+    // Optimista: el select ya se ve con el contenedor elegido antes de que
+    // vuelva la confirmación del servidor.
+    const previo = queryClient.getQueryData<RutaData>(['rutas', rutaId]);
+    if (previo) {
+      queryClient.setQueryData<RutaData>(['rutas', rutaId], {
+        ...previo,
+        paradas: previo.paradas.map((p) =>
+          p.tipo_parada === 'viaje' && p.id === viajeId ? { ...p, contenedor_numero: contenedorNumero } : p,
+        ),
+      });
+    }
     try {
       await api.patch(`/api/rutas/${rutaId}/paradas/${viajeId}/contenedor`, { contenedor_numero: contenedorNumero });
       cargar();
     } catch (err: any) {
+      if (previo) queryClient.setQueryData(['rutas', rutaId], previo);
       show('error', 'No se pudo asignar el contenedor', err.response?.data?.error);
     }
   }
