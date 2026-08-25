@@ -1,6 +1,6 @@
 import { query } from '../../../config/db';
 import { sendText, sendList, sendLocationRequest } from '../graphApi';
-import { estaDentroDeDepartamento, detectarDepartamento, distanciaALaBaseMasCercana } from '../../../services/geoDepartamento.service';
+import { detectarDepartamento, distanciaALaBaseMasCercana } from '../../../services/geoDepartamento.service';
 import { forwardGeocode, CandidatoDireccion } from '../../../services/geocoding.service';
 import { obtenerOCrearCliente } from '../../../services/clientes.service';
 import { escalarAAsesor } from './asesor.flow';
@@ -9,9 +9,11 @@ import type { Sesion } from '../session.store';
 
 /**
  * Capas 2 y 3 de la verificación de ubicación (ver cotizacion.flow.ts):
- *  - Capa 2: valida las coordenadas GPS contra el polígono del departamento
- *    (si se pasa `departamentoEsperado`, ya elegido por el cliente) o lo
- *    autodetecta si no hay uno esperado.
+ *  - Capa 2: detecta el departamento a partir de las coordenadas GPS
+ *    (point-in-polygon) — nunca se le pregunta al cliente de antemano en qué
+ *    departamento está, se lo determina siempre a partir de la ubicación
+ *    real, así no hay manera de que quede un pedido con un departamento
+ *    "elegido" que no coincide con el punto real.
  *  - Capa 3: si el punto no cae en NINGÚN departamento conocido, nunca se
  *    inventa un precio — se registra el pedido en estado 'fuera_de_zona' y
  *    se deriva a un asesor.
@@ -23,7 +25,6 @@ import type { Sesion } from '../session.store';
 export interface ContextoPedidoFueraDeZona {
   tipo?: 'entrega' | 'recambio';
   contenedorRecambioNumero?: string | null;
-  departamentoOriginal?: string | null;
 }
 
 /** Capa 3 en crudo: registra el pedido 'fuera_de_zona' y escala a un asesor. */
@@ -36,13 +37,13 @@ export async function manejarFueraDeZona(
   contextoPedido: ContextoPedidoFueraDeZona = {},
 ): Promise<void> {
   const to = m.from;
-  const { tipo = 'entrega', contenedorRecambioNumero = null, departamentoOriginal = null } = contextoPedido;
+  const { tipo = 'entrega', contenedorRecambioNumero = null } = contextoPedido;
   const distancia = await distanciaALaBaseMasCercana(destinoLat, destinoLng);
 
   const [pedido] = await query<{ numero_pedido: number }>(
     `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, estado, destino_lat, destino_lng, destino_direccion, tipo, contenedor_recambio_numero)
      VALUES ($1,$2,$3,'fuera_de_zona',$4,$5,$6,$7,$8) RETURNING numero_pedido`,
-    [to, m.nombrePerfil ?? null, departamentoOriginal ?? 'sin_zona', destinoLat, destinoLng, destinoDireccion, tipo, contenedorRecambioNumero],
+    [to, m.nombrePerfil ?? null, 'sin_zona', destinoLat, destinoLng, destinoDireccion, tipo, contenedorRecambioNumero],
   );
   obtenerOCrearCliente(to, m.nombrePerfil).catch((e) => console.error('Error dando de alta al cliente:', e));
 
@@ -56,21 +57,16 @@ export async function manejarFueraDeZona(
 }
 
 export type ResultadoVerificacionZona =
-  | { ok: true; departamento: string; mismatchCon?: string; tarifa: { precio: string; moneda: string } | null }
+  | { ok: true; departamento: string; tarifa: { precio: string; moneda: string } | null }
   | { ok: false };
 
 /**
- * Corre capas 2 y 3 completas a partir de un GPS ya recibido.
- *  - Si `departamentoEsperado` no viene: autodetecta el departamento; si no
- *    cae en ninguno -> fuera de zona (ya respondido, `ok:false`).
- *  - Si `departamentoEsperado` viene y el punto SÍ cae ahí: usa ese.
- *  - Si `departamentoEsperado` viene y el punto NO cae ahí: si cae en otro
- *    departamento conocido, devuelve `mismatchCon` para que el caller decida
- *    qué hacer (cotización le pregunta al cliente cuál es el correcto); si
- *    no cae en ninguno -> fuera de zona.
- *  - `requiereTarifa`: si el flujo necesita mostrar/cobrar un precio (cotización,
- *    recambio), exige tarifa activa en la zona detectada — si no hay, avisa y
- *    devuelve `ok:false` (cuenta corriente no cobra acá, así que no la exige).
+ * Corre capas 2 y 3 completas a partir de un GPS ya recibido: autodetecta el
+ * departamento (point-in-polygon); si no cae en ninguno -> fuera de zona (ya
+ * respondido, `ok:false`).
+ * `requiereTarifa`: si el flujo necesita mostrar/cobrar un precio (cotización,
+ * recambio), exige tarifa activa en la zona detectada — si no hay, avisa y
+ * devuelve `ok:false` (cuenta corriente no cobra acá, así que no la exige).
  */
 export async function verificarUbicacionCompleta(
   m: MensajeEntrante,
@@ -79,44 +75,21 @@ export async function verificarUbicacionCompleta(
   lng: number,
   destinoDireccion: string | null,
   opciones: {
-    departamentoEsperado?: string;
     requiereTarifa?: boolean;
     contextoPedidoFueraDeZona?: ContextoPedidoFueraDeZona;
   } = {},
 ): Promise<ResultadoVerificacionZona> {
   const to = m.from;
-  const { departamentoEsperado, requiereTarifa = false, contextoPedidoFueraDeZona } = opciones;
+  const { requiereTarifa = false, contextoPedidoFueraDeZona } = opciones;
 
-  let departamento: string | null;
-  let mismatchCon: string | undefined;
-
-  if (departamentoEsperado) {
-    const dentro = await estaDentroDeDepartamento(lat, lng, departamentoEsperado);
-    if (dentro !== false) {
-      // true (cae adentro) o null (ese departamento no tiene polígono cargado, no bloquea)
-      departamento = departamentoEsperado;
-    } else {
-      const detectado = await detectarDepartamento(lat, lng);
-      if (!detectado) {
-        await manejarFueraDeZona(m, sesion, lat, lng, destinoDireccion, {
-          ...contextoPedidoFueraDeZona,
-          departamentoOriginal: departamentoEsperado,
-        });
-        return { ok: false };
-      }
-      departamento = departamentoEsperado;
-      mismatchCon = detectado;
-    }
-  } else {
-    departamento = await detectarDepartamento(lat, lng);
-    if (!departamento) {
-      await manejarFueraDeZona(m, sesion, lat, lng, destinoDireccion, contextoPedidoFueraDeZona);
-      return { ok: false };
-    }
+  const departamento = await detectarDepartamento(lat, lng);
+  if (!departamento) {
+    await manejarFueraDeZona(m, sesion, lat, lng, destinoDireccion, contextoPedidoFueraDeZona);
+    return { ok: false };
   }
 
   if (!requiereTarifa) {
-    return { ok: true, departamento, mismatchCon, tarifa: null };
+    return { ok: true, departamento, tarifa: null };
   }
 
   const [tarifa] = await query<{ precio: string; moneda: string }>(
@@ -131,7 +104,7 @@ export async function verificarUbicacionCompleta(
     return { ok: false };
   }
 
-  return { ok: true, departamento, mismatchCon, tarifa };
+  return { ok: true, departamento, tarifa };
 }
 
 export type ResultadoDireccionTexto =
@@ -212,13 +185,4 @@ export function normalizarIndicacion(texto: string): string | null {
   const t = texto.trim();
   if (!t || RESPUESTAS_SIN_INDICACION.includes(t.toLowerCase())) return null;
   return t;
-}
-
-/**
- * Suma el departamento ya elegido de antes (si hay uno) a la dirección que
- * escribió el cliente, para que Nominatim tenga más contexto y no confunda
- * calles con el mismo nombre en distintos departamentos.
- */
-export function armarDireccionBusqueda(direccion: string, departamento?: string): string {
-  return departamento ? `${direccion.trim()}, ${departamento}` : direccion.trim();
 }
