@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { query, withTx } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
-import { reservarParaEntrega } from '../../services/contenedorReserva.service';
+import { reservarParaEntrega, liberarReservaEntrega } from '../../services/contenedorReserva.service';
 import { simularDisponibilidad, ParadaSimulada, CapacidadCamion, CAPACIDAD_CAMION_DEFAULT } from './disponibilidad.service';
 import { avisarChoferViaje, avisarChoferRecambio } from '../viajes/viajes.routes';
 import { motivoErrorWa } from '../whatsapp/graphApi';
@@ -404,32 +404,63 @@ rutasRouter.post('/:id/paradas/vaciado', requireRol('admin', 'operador'), async 
   }
 });
 
-/** DELETE /api/rutas/:id/paradas/:tipo/:paradaId — desprende una parada, vuelve a la cola. */
+/**
+ * DELETE /api/rutas/:id/paradas/:tipo/:paradaId — desprende una parada,
+ * vuelve a la cola.
+ *
+ * Bloquea si la ruta ya está cerrada (mismo criterio que agregar paradas
+ * nuevas: una ruta finalizada/cancelada no se toca más). Si la parada de
+ * entrega ya había sido confirmada (`ruta_confirmada_en`, contenedor
+ * reservado vía POST /:id/confirmar), libera esa reserva y limpia el flag —
+ * si no, quedaba "reservado fantasma" y, peor, si la parada se re-rutea más
+ * adelante, /confirmar la saltea creyendo que ya está confirmada y nunca
+ * vuelve a avisarle al chofer (ver ruta_confirmada_en más abajo).
+ */
 rutasRouter.delete('/:id/paradas/:tipo/:paradaId', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const { id: rutaId, tipo, paradaId } = req.params;
   if (tipo !== 'viaje' && tipo !== 'vaciado') return res.status(400).json({ error: 'Tipo de parada inválido.' });
+  const actualizadoPor = `operador:${req.user!.id}`;
 
-  if (tipo === 'vaciado') {
-    const rows = await query(`DELETE FROM ruta_vaciados WHERE id = $1 AND ruta_id = $2 RETURNING id`, [paradaId, rutaId]);
-    if (rows.length === 0) return res.status(404).json({ error: 'Parada no encontrada.' });
-    return res.json({ ok: true });
-  }
+  try {
+    await withTx(async (c) => {
+      const { rows: rutaRows } = await c.query<{ estado: string }>('SELECT estado FROM rutas WHERE id = $1 FOR UPDATE', [rutaId]);
+      if (!rutaRows[0]) fail('Ruta no encontrada.', 404);
+      if (ESTADOS_CERRADOS.includes(rutaRows[0]!.estado as any)) fail('Esta ruta ya está cerrada; no se le puede quitar ni mover paradas.');
 
-  const rows = await query<{ id: string; grupo_id: string | null }>(
-    `UPDATE viajes SET ruta_id = NULL, orden = NULL, chofer_id = NULL, patente = NULL
-       WHERE id = $1 AND ruta_id = $2 RETURNING id, grupo_id`,
-    [paradaId, rutaId],
-  );
-  const viaje = rows[0];
-  if (!viaje) return res.status(404).json({ error: 'Parada no encontrada.' });
-  if (viaje.grupo_id) {
-    await query(
-      `UPDATE viajes SET ruta_id = NULL, orden = NULL, chofer_id = NULL, patente = NULL
-         WHERE grupo_id = $1 AND id <> $2 AND ruta_id = $3`,
-      [viaje.grupo_id, viaje.id, rutaId],
-    );
+      if (tipo === 'vaciado') {
+        const { rows } = await c.query(`DELETE FROM ruta_vaciados WHERE id = $1 AND ruta_id = $2 RETURNING id`, [paradaId, rutaId]);
+        if (rows.length === 0) fail('Parada no encontrada.', 404);
+        return;
+      }
+
+      const { rows } = await c.query<{ id: string; grupo_id: string | null; tipo: string; contenedor_numero: string | null; ruta_confirmada_en: string | null }>(
+        `UPDATE viajes SET ruta_id = NULL, orden = NULL, chofer_id = NULL, patente = NULL, ruta_confirmada_en = NULL
+           WHERE id = $1 AND ruta_id = $2 RETURNING id, grupo_id, tipo, contenedor_numero, ruta_confirmada_en`,
+        [paradaId, rutaId],
+      );
+      const viaje = rows[0];
+      if (!viaje) fail('Parada no encontrada.', 404);
+      if (viaje!.tipo === 'entrega' && viaje!.contenedor_numero) {
+        await liberarReservaEntrega(c, viaje!.contenedor_numero, actualizadoPor);
+      }
+      if (viaje!.grupo_id) {
+        const { rows: parejaRows } = await c.query<{ tipo: string; contenedor_numero: string | null }>(
+          `UPDATE viajes SET ruta_id = NULL, orden = NULL, chofer_id = NULL, patente = NULL, ruta_confirmada_en = NULL
+             WHERE grupo_id = $1 AND id <> $2 AND ruta_id = $3
+             RETURNING tipo, contenedor_numero`,
+          [viaje!.grupo_id, viaje!.id, rutaId],
+        );
+        const pareja = parejaRows[0];
+        if (pareja?.tipo === 'entrega' && pareja.contenedor_numero) {
+          await liberarReservaEntrega(c, pareja.contenedor_numero, actualizadoPor);
+        }
+      }
+    });
+    res.json({ ok: true });
+  } catch (error: any) {
+    if (error.status) res.status(error.status).json({ error: error.message });
+    else throw error;
   }
-  res.json({ ok: true });
 });
 
 const moverParadaSchema = z.object({ ruta_destino_id: z.string().uuid() });
@@ -439,6 +470,12 @@ const moverParadaSchema = z.object({ ruta_destino_id: z.string().uuid() });
  * directo a otra ruta (a diferencia de DELETE, que la desprende a la cola en
  * dos pasos). Caso de uso: se rompe un camión o falta un chofer y hay que
  * repartir sus paradas entre otros camiones ya en curso.
+ *
+ * Bloquea si la ruta de ORIGEN ya está cerrada (antes solo se chequeaba el
+ * destino). Si la parada de entrega ya estaba confirmada, libera la reserva
+ * del contenedor y limpia `ruta_confirmada_en` — la ruta destino la va a
+ * volver a confirmar/reservar por su cuenta, con su propia secuencia y
+ * disponibilidad (puede ser distinta a la de la ruta de origen).
  */
 rutasRouter.post('/:id/paradas/:tipo/:paradaId/mover', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const { id: rutaOrigenId, tipo, paradaId } = req.params;
@@ -447,9 +484,14 @@ rutasRouter.post('/:id/paradas/:tipo/:paradaId/mover', requireRol('admin', 'oper
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
   const { ruta_destino_id: rutaDestinoId } = parsed.data;
   if (rutaDestinoId === rutaOrigenId) return res.status(400).json({ error: 'La ruta de destino tiene que ser distinta de la de origen.' });
+  const actualizadoPor = `operador:${req.user!.id}`;
 
   try {
     const resultado = await withTx(async (c) => {
+      const { rows: origenRows } = await c.query<{ estado: string }>('SELECT estado FROM rutas WHERE id = $1 FOR UPDATE', [rutaOrigenId]);
+      if (!origenRows[0]) fail('Ruta de origen no encontrada.', 404);
+      if (ESTADOS_CERRADOS.includes(origenRows[0]!.estado as any)) fail('La ruta de origen ya está cerrada; no se le pueden mover paradas.');
+
       const { rows: destRows } = await c.query<{ chofer_id: string; patente: string | null; fecha: string; estado: string }>(
         'SELECT chofer_id, patente, fecha, estado FROM rutas WHERE id = $1 FOR UPDATE',
         [rutaDestinoId],
@@ -479,20 +521,28 @@ rutasRouter.post('/:id/paradas/:tipo/:paradaId/mover', requireRol('admin', 'oper
         return { orden: nuevoOrden, advertencias };
       }
 
-      const { rows: viajeRows } = await c.query<{ id: string; grupo_id: string | null; tipo: string }>(
-        `UPDATE viajes SET ruta_id = $1, orden = $2, chofer_id = $3, patente = $4, fecha = $5, origen = $6
+      const { rows: viajeRows } = await c.query<{ id: string; grupo_id: string | null; tipo: string; contenedor_numero: string | null }>(
+        `UPDATE viajes SET ruta_id = $1, orden = $2, chofer_id = $3, patente = $4, fecha = $5, origen = $6, ruta_confirmada_en = NULL
            WHERE id = $7 AND ruta_id = $8
-           RETURNING id, grupo_id, tipo`,
+           RETURNING id, grupo_id, tipo, contenedor_numero`,
         [rutaDestinoId, nuevoOrden, destino!.chofer_id, destino!.patente, destino!.fecha, origen, paradaId, rutaOrigenId],
       );
       const viaje = viajeRows[0];
       if (!viaje) fail('Parada no encontrada en la ruta de origen.', 404);
+      if (viaje!.tipo === 'entrega' && viaje!.contenedor_numero) {
+        await liberarReservaEntrega(c, viaje!.contenedor_numero, actualizadoPor);
+      }
       if (viaje!.grupo_id) {
-        await c.query(
-          `UPDATE viajes SET ruta_id = $1, orden = $2, chofer_id = $3, patente = $4, fecha = $5, origen = $6
-             WHERE grupo_id = $7 AND id <> $8 AND ruta_id = $9`,
+        const { rows: parejaRows } = await c.query<{ tipo: string; contenedor_numero: string | null }>(
+          `UPDATE viajes SET ruta_id = $1, orden = $2, chofer_id = $3, patente = $4, fecha = $5, origen = $6, ruta_confirmada_en = NULL
+             WHERE grupo_id = $7 AND id <> $8 AND ruta_id = $9
+             RETURNING tipo, contenedor_numero`,
           [rutaDestinoId, nuevoOrden, destino!.chofer_id, destino!.patente, destino!.fecha, origen, viaje!.grupo_id, viaje!.id, rutaOrigenId],
         );
+        const pareja = parejaRows[0];
+        if (pareja?.tipo === 'entrega' && pareja.contenedor_numero) {
+          await liberarReservaEntrega(c, pareja.contenedor_numero, actualizadoPor);
+        }
       }
 
       if (viaje!.tipo === 'retiro') {
@@ -513,8 +563,10 @@ const ordenSchema = z.object({
   secuencia: z.array(z.object({ tipo: z.enum(['viaje', 'vaciado']), id: z.string().uuid() })).min(1),
   // Lock optimista: el frontend manda la `version` que tenía cuando cargó la
   // ruta. Si no coincide con la actual, alguien más la modificó mientras
-  // tanto — se rechaza en vez de pisarle el trabajo.
-  version: z.number().int().optional(),
+  // tanto — se rechaza en vez de pisarle el trabajo. Obligatorio: el único
+  // caller real (Rutas.tsx) siempre lo manda, y que sea opcional dejaba
+  // pasar en silencio un bug de frontend que se lo olvidara.
+  version: z.number().int(),
 });
 
 /**
@@ -542,7 +594,7 @@ rutasRouter.patch('/:id/orden', requireRol('admin', 'operador'), async (req: Req
       const ruta = rutaRows[0];
       if (!ruta) fail('Ruta no encontrada.', 404);
       if (ESTADOS_CERRADOS.includes(ruta!.estado as any)) fail('Esta ruta ya está cerrada; no se puede reordenar.');
-      if (version !== undefined && version !== ruta!.version) {
+      if (version !== ruta!.version) {
         fail('Alguien más modificó esta ruta mientras tanto. Recargá para ver los cambios y volvé a intentar.');
       }
 
@@ -620,28 +672,49 @@ rutasRouter.patch('/:id/orden', requireRol('admin', 'operador'), async (req: Req
 
 const contenedorParadaSchema = z.object({ contenedor_numero: z.string().min(1) });
 
-/** PATCH /api/rutas/:id/paradas/:viajeId/contenedor — asigna contenedor validado contra la disponibilidad simulada. */
+/**
+ * PATCH /api/rutas/:id/paradas/:viajeId/contenedor — asigna contenedor
+ * validado contra la disponibilidad simulada.
+ *
+ * Corre dentro de una transacción con la ruta lockeada (FOR UPDATE), mismo
+ * patrón que el resto de los endpoints de este archivo: sin esto, dos
+ * operadores asignando contenedor a paradas distintas de la misma ruta casi
+ * al mismo tiempo podían leer disponibilidad ANTES de que la otra asignación
+ * se confirmara y terminar eligiendo el mismo contenedor para las dos.
+ */
 rutasRouter.patch('/:id/paradas/:viajeId/contenedor', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const { id: rutaId, viajeId } = req.params;
   const parsed = contenedorParadaSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
   const { contenedor_numero } = parsed.data;
 
-  const [viaje] = await query<{ orden: number | null; tipo: string }>(
-    `SELECT orden, tipo FROM viajes WHERE id = $1 AND ruta_id = $2`,
-    [viajeId, rutaId],
-  );
-  if (!viaje) return res.status(404).json({ error: 'Parada no encontrada en esta ruta.' });
-  if (viaje.tipo !== 'entrega') return res.status(400).json({ error: 'Solo se asigna contenedor en una parada de entrega.' });
+  try {
+    await withTx(async (c) => {
+      const ejecutar = async (sql: string, params: any[]) => (await c.query(sql, params)).rows;
+      const { rows: rutaRows } = await c.query('SELECT id FROM rutas WHERE id = $1 FOR UPDATE', [rutaId]);
+      if (!rutaRows[0]) fail('Ruta no encontrada.', 404);
 
-  const { porOrden } = await calcularDisponibilidadRuta(rutaId);
-  const disponibles = porOrden.get(viaje.orden!) ?? [];
-  if (!disponibles.includes(contenedor_numero)) {
-    return res.status(409).json({ error: `El contenedor ${contenedor_numero} no está disponible en esta parada.` });
+      const { rows: viajeRows } = await c.query<{ orden: number | null; tipo: string }>(
+        `SELECT orden, tipo FROM viajes WHERE id = $1 AND ruta_id = $2`,
+        [viajeId, rutaId],
+      );
+      const viaje = viajeRows[0];
+      if (!viaje) fail('Parada no encontrada en esta ruta.', 404);
+      if (viaje!.tipo !== 'entrega') fail('Solo se asigna contenedor en una parada de entrega.', 400);
+
+      const { porOrden } = await calcularDisponibilidadRuta(rutaId, ejecutar);
+      const disponibles = porOrden.get(viaje!.orden!) ?? [];
+      if (!disponibles.includes(contenedor_numero)) {
+        fail(`El contenedor ${contenedor_numero} no está disponible en esta parada.`, 409);
+      }
+
+      await c.query(`UPDATE viajes SET contenedor_numero = $1 WHERE id = $2`, [contenedor_numero, viajeId]);
+    });
+    res.json({ ok: true });
+  } catch (error: any) {
+    if (error.status) res.status(error.status).json({ error: error.message });
+    else throw error;
   }
-
-  await query(`UPDATE viajes SET contenedor_numero = $1 WHERE id = $2`, [contenedor_numero, viajeId]);
-  res.json({ ok: true });
 });
 
 /**
@@ -671,7 +744,7 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
       if (!ruta) fail('Ruta no encontrada.', 404);
       if (ESTADOS_CERRADOS.includes(ruta!.estado as any)) fail('Esta ruta ya está cerrada.');
 
-      const { viajes, porOrden, liberadosPor } = await calcularDisponibilidadRuta(rutaId, ejecutar);
+      const { viajes, porOrden, liberadosPor, advertencias } = await calcularDisponibilidadRuta(rutaId, ejecutar);
       if (viajes.length === 0) fail('La ruta no tiene ninguna parada.');
 
       const pendientes: string[] = [];
@@ -705,9 +778,18 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
       // Los retiros (incl. la mitad-retiro de un recambio) no reservan
       // contenedor — el lleno ya está en lo del cliente — pero sí hace falta
       // marcarlos confirmados para no volver a avisarle al chofer en la
-      // próxima corrida de `confirmar`.
+      // próxima corrida de `confirmar`. Si a esta altura todavía queda una
+      // advertencia de capacidad ("lleno sin vaciar") sin resolver en esta
+      // parada, se trata como una parada no confirmable más — igual que un
+      // contenedor no disponible — en vez de confirmarla y avisarle al
+      // chofer una visita que el camión no puede hacer todavía.
       const retiros = viajes.filter((v) => v.tipo === 'retiro' && !v.ruta_confirmada_en);
       for (const v of retiros) {
+        const advertenciaCapacidad = advertencias.find((a) => a.tipo === 'lleno_sin_vaciar' && a.orden === v.orden);
+        if (advertenciaCapacidad) {
+          pendientes.push(advertenciaCapacidad.mensaje);
+          continue;
+        }
         await c.query(`UPDATE viajes SET ruta_confirmada_en = now() WHERE id = $1`, [v.id]);
         confirmadasAhora.push(v);
       }
@@ -774,13 +856,77 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
 
 const estadoRutaSchema = z.object({ estado: z.enum(['planificada', 'en_curso', 'finalizada', 'cancelada']) });
 
+/**
+ * Transiciones manuales permitidas para PATCH /:id. finalizada es terminal.
+ * cancelada también lo es EXCEPTO por un caso especial (ver más abajo):
+ * reabrirla a planificada, solo admin, solo dentro de una ventana corta —
+ * un escape para el fat-finger ("cancelé la que no era"), sin volver a abrir
+ * la puerta a reabrir libremente cualquier ruta cerrada.
+ */
+const TRANSICIONES_VALIDAS: Record<string, readonly string[]> = {
+  planificada: ['en_curso', 'cancelada'],
+  en_curso: ['finalizada', 'cancelada'],
+  finalizada: [],
+  cancelada: [],
+};
+
+/** Ventana para poder reabrir una ruta cancelada por error (ver TRANSICIONES_VALIDAS). */
+const VENTANA_REAPERTURA_CANCELADA_HORAS = 24;
+
 /** PATCH /api/rutas/:id — transición manual de estado (v1 no tiene ningún disparador automático). */
 rutasRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = estadoRutaSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const [ruta] = await query(`UPDATE rutas SET estado = $1 WHERE id = $2 RETURNING *`, [parsed.data.estado, req.params.id]);
-  if (!ruta) return res.status(404).json({ error: 'Ruta no encontrada.' });
-  res.json(ruta);
+  const nuevoEstado = parsed.data.estado;
+
+  try {
+    const ruta = await withTx(async (c) => {
+      const { rows } = await c.query<{ estado: string; actualizado_en: string }>(
+        'SELECT estado, actualizado_en FROM rutas WHERE id = $1 FOR UPDATE',
+        [req.params.id],
+      );
+      const actual = rows[0];
+      if (!actual) fail('Ruta no encontrada.', 404);
+
+      const esReaperturaDeCancelada = actual!.estado === 'cancelada' && nuevoEstado === 'planificada';
+      if (esReaperturaDeCancelada) {
+        if (req.user!.rol !== 'admin') fail('Solo un admin puede reabrir una ruta cancelada.', 403);
+        const horasDesdeCancelacion = (Date.now() - new Date(actual!.actualizado_en).getTime()) / 3_600_000;
+        if (horasDesdeCancelacion > VENTANA_REAPERTURA_CANCELADA_HORAS) {
+          fail(`Esta ruta se canceló hace más de ${VENTANA_REAPERTURA_CANCELADA_HORAS}hs; ya no se puede reabrir.`);
+        }
+      } else if (nuevoEstado !== actual!.estado && !TRANSICIONES_VALIDAS[actual!.estado]?.includes(nuevoEstado)) {
+        fail(`No se puede pasar de "${actual!.estado}" a "${nuevoEstado}".`);
+      }
+
+      // Al cancelar: libera ya mismo las reservas de las entregas confirmadas
+      // que todavía no se completaron — si no, quedan "reservado fantasma"
+      // para siempre a menos que alguien reabra la ruta a tiempo (mismo
+      // criterio que DELETE/mover de una parada, ver liberarReservaEntrega).
+      // Reabrir después solo vuelve a dejar la ruta confirmable: el próximo
+      // POST /:id/confirmar reserva y avisa al chofer de nuevo, sin arrastrar
+      // estado a medio camino.
+      if (nuevoEstado === 'cancelada') {
+        const { rows: aLiberar } = await c.query<{ id: string; contenedor_numero: string }>(
+          `UPDATE viajes SET ruta_confirmada_en = NULL
+             WHERE ruta_id = $1 AND tipo = 'entrega' AND ruta_confirmada_en IS NOT NULL
+               AND estado IN ('programado', 'en_curso') AND contenedor_numero IS NOT NULL
+             RETURNING id, contenedor_numero`,
+          [req.params.id],
+        );
+        for (const v of aLiberar) {
+          await liberarReservaEntrega(c, v.contenedor_numero, `operador:${req.user!.id}`);
+        }
+      }
+
+      const { rows: actualizada } = await c.query(`UPDATE rutas SET estado = $1 WHERE id = $2 RETURNING *`, [nuevoEstado, req.params.id]);
+      return actualizada[0];
+    });
+    res.json(ruta);
+  } catch (error: any) {
+    if (error.status) res.status(error.status).json({ error: error.message });
+    else throw error;
+  }
 });
 
 /** DELETE /api/rutas/:id — solo si sigue planificada y ninguna parada avanzó. */

@@ -223,23 +223,6 @@ function agruparVisitas(paradas: Parada[]): Visita[] {
   return [...porOrden.values()].sort((a, b) => a.orden - b.orden);
 }
 
-/**
-  Simulación puramente visual de "qué contenedores están a bordo ahora
-  mismo" (recorre toda la ruta ya armada). Es solo para el chip informativo
-  de arriba del panel — la disponibilidad real que valida cada parada de
-  entrega viene de `disponibles`, calculada por el backend.
- */
-function simularAbordo(visitas: Visita[], disponiblesAlInicio: string[]): { disp: string[]; pend: string[] } {
-  const disp = new Set(disponiblesAlInicio);
-  const pend = new Set<string>();
-  for (const v of visitas) {
-    if (v.vaciado) { pend.forEach((c) => disp.add(c)); pend.clear(); continue; }
-    if (v.retiro?.contenedor_numero) pend.add(v.retiro.contenedor_numero);
-    if (v.entrega?.contenedor_numero) disp.delete(v.entrega.contenedor_numero);
-  }
-  return { disp: [...disp], pend: [...pend] };
-}
-
 function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDia, choferes, onCambio }: {
   rutaId: string;
   contenedoresDisponibles: Contenedor[];
@@ -280,11 +263,13 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
     }
   }
 
-  const stockEmpresaDisponible = contenedoresDisponibles
+  // Stock real en depósito (estado 'disponible' = no está con ningún
+  // cliente ni en tránsito), descontando lo que ya está comprometido con
+  // otra ruta del mismo día. No es una simulación de "qué tiene este
+  // camión encima" — es el depósito real, en vivo.
+  const stockDeposito = contenedoresDisponibles
     .map((c) => c.numero)
     .filter((num) => !asignadosAOtrasRutas.has(num));
-
-  const abordo = simularAbordo(visitas, stockEmpresaDisponible);
 
   async function agregarVaciado(e: React.FormEvent) {
     e.preventDefault();
@@ -493,12 +478,11 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
       <RoleGate roles={['admin', 'operador']}>
         <div style={{ padding: '16px 18px' }}>
           <div className="abordo-label" style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-            Stock simulado a bordo:
+            Contenedores disponibles en depósito ({stockDeposito.length}):
           </div>
           <div className="abordo">
-            {abordo.disp.length === 0 && abordo.pend.length === 0 && <span className="cchip none">nada a bordo todavía</span>}
-            {abordo.disp.map((c) => <span key={c} className="cchip">{c}</span>)}
-            {abordo.pend.map((c) => <span key={c} className="cchip pend">{c} · sin vaciar</span>)}
+            {stockDeposito.length === 0 && <span className="cchip none">no hay contenedores libres en depósito</span>}
+            {stockDeposito.map((c) => <span key={c} className="cchip">{c}</span>)}
           </div>
 
           {ruta.advertencias.length > 0 && (
