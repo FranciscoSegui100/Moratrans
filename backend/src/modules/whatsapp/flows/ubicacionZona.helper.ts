@@ -1,8 +1,8 @@
 import { query } from '../../../config/db';
-import { sendText, sendList, sendLocationRequest } from '../graphApi';
+import { sendText, sendLocationRequest } from '../graphApi';
 import { detectarDepartamento, distanciaALaBaseMasCercana } from '../../../services/geoDepartamento.service';
-import { forwardGeocode, CandidatoDireccion } from '../../../services/geocoding.service';
 import { obtenerOCrearCliente } from '../../../services/clientes.service';
+import { extraerLinkMaps, resolverCoordenadasDeLinkMaps } from '../../../services/mapsLink.service';
 import { escalarAAsesor } from './asesor.flow';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
@@ -107,69 +107,50 @@ export async function verificarUbicacionCompleta(
   return { ok: true, departamento, tarifa };
 }
 
-export type ResultadoDireccionTexto =
-  | { tipo: 'sin_resultados' }
-  | { tipo: 'un_candidato'; candidato: CandidatoDireccion }
-  | { tipo: 'varios_candidatos'; candidatos: CandidatoDireccion[] };
-
 /**
- * Dirección escrita por el cliente -> candidatos con coordenadas (Nominatim).
- * El pin GPS sigue siendo más preciso, pero el candidato geocodificado ya
- * trae lat/lng utilizables: el caller puede pasarlo directo a
- * `verificarUbicacionCompleta` y avanzar a la capa 4, sin obligar a mandar
- * el pin — hay dispositivos que no dejan compartir ubicación (regla del
- * dueño: dar siempre las dos opciones, texto o pin).
- */
-export async function buscarCandidatosDireccion(texto: string): Promise<ResultadoDireccionTexto> {
-  const candidatos = await forwardGeocode(texto.trim());
-  if (candidatos.length === 0) return { tipo: 'sin_resultados' };
-  if (candidatos.length === 1) return { tipo: 'un_candidato', candidato: candidatos[0] };
-  return { tipo: 'varios_candidatos', candidatos };
-}
-
-/**
- * El título de una fila de lista de WhatsApp se corta a 24 caracteres — con
- * direcciones reales eso deja casi siempre el mismo prefijo truncado en
- * varias filas ("Av. San Martín 12...", "Av. San Martín 12...") y hace
- * imposible elegir la correcta. La `description` de una fila permite 72
- * caracteres, que sí suele alcanzar para una dirección completa (calle +
- * altura + localidad) — ahí va la dirección entera; el título queda como
- * numeración simple.
- */
-export async function enviarListaCandidatos(to: string, candidatos: CandidatoDireccion[]): Promise<void> {
-  await sendList(
-    to,
-    '📍 ¿Cuál es?',
-    'Encontramos varias direcciones parecidas — elegí la que corresponda:',
-    'Ver direcciones',
-    candidatos.map((c, i) => ({ id: `cand:${i}`, title: `Opción ${i + 1}`, description: c.direccion.slice(0, 72) })),
-  );
-}
-
-/** Extrae el candidato elegido de una respuesta `cand:<idx>` contra la lista guardada en el contexto. */
-export function elegirCandidato(m: MensajeEntrante, candidatos: CandidatoDireccion[]): CandidatoDireccion | null {
-  if (!m.seleccionId?.startsWith('cand:')) return null;
-  const idx = Number(m.seleccionId.replace('cand:', ''));
-  return candidatos[idx] ?? null;
-}
-
-/** Aviso que se suma en la capa 4 cuando la ubicación viene de texto geocodificado, no de un pin real. */
-export const AVISO_DIRECCION_APROXIMADA =
-  '🔎 Esta ubicación es aproximada (la calculamos a partir de la dirección que escribiste). ' +
-  'Si preferís más precisión, tocá "↩️ Mandar otra" y compartí el pin GPS.';
-
-/**
- * Mensaje estándar para pedir la ubicación de entrega: da siempre las dos
- * opciones (pin GPS o dirección escrita) y, si escribe, pide explícitamente
- * calle + número — la indicación extra para el chofer se pregunta recién
- * después de confirmar que la ubicación es correcta (capa 4), no acá.
+ * Mensaje estándar para pedir la ubicación de entrega: siempre a través de
+ * una ubicación real, nunca escribiendo la dirección como texto en el chat.
+ * Dos caminos posibles, ambos terminan en un pin real (lat/lng):
+ *  1. El botón nativo "Enviar ubicación" de WhatsApp, que además de mandar
+ *     la ubicación actual tiene un buscador adentro (lupa) para tipear la
+ *     calle y ajustar el pin a mano.
+ *  2. Buscar la dirección en la app de Google Maps (suele ser más precisa
+ *     que el buscador de WhatsApp) y pegar acá el link que da su botón
+ *     "Compartir" — el bot lo entiende igual que si hubiera mandado el pin
+ *     (ver mapsLink.service.ts / resolverUbicacionMensaje).
  */
 export function mensajePedirUbicacionPasoAPaso(pregunta: string): string {
   return (
     `${pregunta}\n\n` +
-    `Tocá "Enviar ubicación" para mandar el pin GPS (la opción más precisa), ` +
-    `o escribime la dirección con *calle y número*.\nEj: _Av. San Martín 1234_.`
+    `Tocá el botón *"Enviar ubicación"* de abajo 👇 — ahí podés mandar tu ubicación actual, o tocar la 🔍 lupa para buscar tu calle en el mapa.\n\n` +
+    `_Tip: si el buscador de WhatsApp no te da la dirección exacta, buscala en la app de Google Maps y pegá acá el link que te da su botón "Compartir" — lo entiendo igual._`
   );
+}
+
+export type ResultadoUbicacionMensaje =
+  | { tipo: 'ubicacion'; lat: number; lng: number; direccionCruda: string | null }
+  | { tipo: 'link_invalido' }
+  | { tipo: 'nada' };
+
+/**
+ * Extrae una ubicación real de un mensaje entrante: un pin nativo de
+ * WhatsApp (`location`), o un link de Google Maps pegado como texto (ver
+ * mensajePedirUbicacionPasoAPaso) — nunca se acepta una dirección escrita a
+ * mano sin geolocalizar, ver comentario al principio del archivo.
+ */
+export async function resolverUbicacionMensaje(m: MensajeEntrante): Promise<ResultadoUbicacionMensaje> {
+  if (m.tipo === 'location' && m.lat != null && m.lng != null) {
+    return { tipo: 'ubicacion', lat: m.lat, lng: m.lng, direccionCruda: m.ubicacionDireccion || m.ubicacionNombre || null };
+  }
+  if (m.tipo === 'text' && m.texto) {
+    const link = extraerLinkMaps(m.texto);
+    if (link) {
+      const coords = await resolverCoordenadasDeLinkMaps(link);
+      if (coords) return { tipo: 'ubicacion', lat: coords.lat, lng: coords.lng, direccionCruda: null };
+      return { tipo: 'link_invalido' };
+    }
+  }
+  return { tipo: 'nada' };
 }
 
 /** Combina la dirección geocodificada con la indicación libre para el chofer (si el cliente dio una). */

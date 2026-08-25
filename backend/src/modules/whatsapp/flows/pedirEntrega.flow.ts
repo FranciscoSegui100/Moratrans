@@ -3,19 +3,16 @@ import { sendText, sendButtons, sendList, sendLocationRequest } from '../graphAp
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
-import { reverseGeocode, CandidatoDireccion } from '../../../services/geocoding.service';
+import { reverseGeocode } from '../../../services/geocoding.service';
 import { proximosDiasHabiles, formatearFechaLarga } from '../../../services/diasHabiles.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
 import {
   verificarUbicacionCompleta,
-  buscarCandidatosDireccion,
-  enviarListaCandidatos,
-  elegirCandidato,
+  resolverUbicacionMensaje,
   mensajePedirUbicacionPasoAPaso,
   combinarDireccionConIndicacion,
   normalizarIndicacion,
-  AVISO_DIRECCION_APROXIMADA,
 } from './ubicacionZona.helper';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
@@ -30,8 +27,8 @@ const DIAS_A_OFRECER_ENTREGA_CC = 3;
  * no por adelantado). Para el resto de los clientes se los redirige a
  * *Cotizar*, que sí exige el pago antes de reservar contenedor.
  *
- * Pasos: esperando_direccion_entrega [-> elegir_candidato_direccion_entrega]
- * -> confirmar_entrega_cliente -> dia_entrega_cliente -> horario_entrega_cliente
+ * Pasos: esperando_direccion_entrega -> confirmar_entrega_cliente ->
+ * indicacion_entrega_cliente -> dia_entrega_cliente -> horario_entrega_cliente
  * -> titular_entrega_cliente -> confirmar_resumen_entrega -> [crea el viaje].
  *
  * Ubicación: capas 2 y 3 (ver ubicacionZona.helper.ts) — valida contra el
@@ -48,9 +45,6 @@ export async function handlePedirEntrega(m: MensajeEntrante, sesion: Sesion): Pr
 
   if (sesion.paso === 'esperando_direccion_entrega') {
     return manejarDireccion(m, sesion);
-  }
-  if (sesion.paso === 'elegir_candidato_direccion_entrega') {
-    return manejarEleccionCandidato(m, sesion);
   }
   if (sesion.paso === 'confirmar_entrega_cliente') {
     return manejarConfirmacion(m, sesion);
@@ -95,73 +89,27 @@ async function iniciarPedidoDireccion(to: string): Promise<void> {
 
 async function manejarDireccion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
+  const ubicacion = await resolverUbicacionMensaje(m);
 
-  if (m.tipo === 'location' && m.lat != null && m.lng != null) {
-    let destinoDireccion =
-      m.ubicacionDireccion || m.ubicacionNombre || (sesion.contexto.destinoDireccionReferencia as string | undefined) || null;
-    if (!destinoDireccion) {
-      destinoDireccion = await reverseGeocode(m.lat, m.lng);
-    }
+  if (ubicacion.tipo === 'ubicacion') {
+    const destinoDireccion = ubicacion.direccionCruda ?? (await reverseGeocode(ubicacion.lat, ubicacion.lng));
 
-    const resultado = await verificarUbicacionCompleta(m, sesion, m.lat, m.lng, destinoDireccion, {
+    const resultado = await verificarUbicacionCompleta(m, sesion, ubicacion.lat, ubicacion.lng, destinoDireccion, {
       requiereTarifa: true,
       contextoPedidoFueraDeZona: { tipo: 'entrega' },
     });
     if (!resultado.ok) return;
 
-    await pedirConfirmacion(to, sesion, m.lat, m.lng, destinoDireccion, resultado.departamento, resultado.tarifa);
+    await pedirConfirmacion(to, sesion, ubicacion.lat, ubicacion.lng, destinoDireccion, resultado.departamento, resultado.tarifa);
     return;
   }
 
-  if (m.tipo === 'text' && m.texto && m.texto.trim().length >= 5) {
-    const resultado = await buscarCandidatosDireccion(m.texto.trim());
-
-    if (resultado.tipo === 'sin_resultados') {
-      await sendText(
-        to,
-        '🙁 No encontramos esa dirección. Probá describirla distinto (calle + altura + localidad + departamento), ' +
-          'o tocá el botón de "Enviar ubicación" para mandar el pin.',
-      );
-      return;
-    }
-    if (resultado.tipo === 'un_candidato') {
-      const r = await verificarUbicacionCompleta(m, sesion, resultado.candidato.lat, resultado.candidato.lng, resultado.candidato.direccion, {
-        requiereTarifa: true,
-        contextoPedidoFueraDeZona: { tipo: 'entrega' },
-      });
-      if (!r.ok) return;
-      await pedirConfirmacion(to, sesion, resultado.candidato.lat, resultado.candidato.lng, resultado.candidato.direccion, r.departamento, r.tarifa, AVISO_DIRECCION_APROXIMADA);
-      return;
-    }
-    await enviarListaCandidatos(to, resultado.candidatos);
-    await setSesion({
-      telefono: to,
-      flujo: 'pedir_entrega',
-      paso: 'elegir_candidato_direccion_entrega',
-      contexto: { candidatos: resultado.candidatos },
-    });
+  if (ubicacion.tipo === 'link_invalido') {
+    await sendText(to, '🙁 No pude leer ese link de Maps. Probá copiarlo de nuevo desde el botón "Compartir", o usá el botón "Enviar ubicación" de abajo.');
     return;
   }
 
   await sendText(to, mensajePedirUbicacionPasoAPaso('📍 Necesito la dirección.'));
-}
-
-async function manejarEleccionCandidato(m: MensajeEntrante, sesion: Sesion): Promise<void> {
-  const to = m.from;
-  const candidatos = (sesion.contexto.candidatos as CandidatoDireccion[]) ?? [];
-
-  const elegido = elegirCandidato(m, candidatos);
-  if (!elegido) {
-    await manejarRespuestaInvalida(m, 'Por favor, elegí una de las direcciones de la lista. 👆');
-    return;
-  }
-
-  const resultado = await verificarUbicacionCompleta(m, sesion, elegido.lat, elegido.lng, elegido.direccion, {
-    requiereTarifa: true,
-    contextoPedidoFueraDeZona: { tipo: 'entrega' },
-  });
-  if (!resultado.ok) return;
-  await pedirConfirmacion(to, sesion, elegido.lat, elegido.lng, elegido.direccion, resultado.departamento, resultado.tarifa, AVISO_DIRECCION_APROXIMADA);
 }
 
 async function pedirConfirmacion(
@@ -172,14 +120,13 @@ async function pedirConfirmacion(
   destinoDireccion: string | null,
   departamento: string,
   tarifa: { precio: string; moneda: string } | null,
-  avisoExtra?: string,
 ): Promise<void> {
   const resumen = `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`;
   const lineaPrecio = tarifa ? `\nCosto: *${tarifa.moneda} ${Number(tarifa.precio).toLocaleString('es-AR')}*` : '';
 
   await sendButtons(
     to,
-    `${avisoExtra ? avisoExtra + '\n\n' : ''}📍 Confirmá la dirección de entrega:\n\n${resumen}\nZona: *${departamento}*${lineaPrecio}\n\n¿Es correcta?`,
+    `📍 Confirmá la dirección de entrega:\n\n${resumen}\nZona: *${departamento}*${lineaPrecio}\n\n¿Es correcta?`,
     [
       { id: 'entrega_cliente_si', title: '✅ Sí, es correcta' },
       { id: 'entrega_cliente_no', title: '↩️ Volver a enviar' },

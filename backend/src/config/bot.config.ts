@@ -40,6 +40,3 @@ export const TIPOS_LUGAR: { id: string; title: string }[] = [
  * selector normal de Mañana/Tarde — placeholder fácil de ajustar acá.
  */
 export const HORARIO_BARRIO_PRIVADO = { id: 'horario_barrio_privado', title: '🕐 9 a 17hs' };
-
-/** Radio (grados, aprox.) alrededor de Mendoza capital para priorizar resultados de geocodificación de direcciones escritas. */
-export const VIEWBOX_MENDOZA = { minLon: -69.3, minLat: -33.3, maxLon: -68.4, maxLat: -32.4 };
