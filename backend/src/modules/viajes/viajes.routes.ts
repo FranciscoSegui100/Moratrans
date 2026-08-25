@@ -35,6 +35,7 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
             v.destino_lat, v.destino_lng, v.horario_preferido, v.hora_estimada,
             v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id, v.patente, v.grupo_id,
             v.remito, v.importe, v.ubicacion_id, v.ubicacion_direccion, v.ruta_id, v.orden,
+            v.es_cuenta_corriente, v.pago_id,
             -- Origen/destino final del viaje: la entrega sale del depósito
             -- (ubicacion_direccion) y llega a lo del cliente (destino_direccion);
             -- el retiro sale de lo del cliente y llega al vaciadero. No se
@@ -55,7 +56,30 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
               WHEN ct.estado = 'entregado' AND ct.vence_en IS NOT NULL AND ct.vence_en < now() THEN 'vencido'
               WHEN ct.estado = 'entregado' THEN 'alquilado'
               ELSE ct.estado::text
-            END AS contenedor_estado
+            END AS contenedor_estado,
+            -- Comprobantes asociados (inicial de flete + extensiones de alargue_retiro)
+            COALESCE((
+              SELECT json_agg(json_build_object(
+                'id', p.id,
+                'tipo', p.tipo,
+                'monto', p.monto,
+                'estado', p.estado,
+                'es_cuenta_corriente', p.es_cuenta_corriente,
+                'tiene_comprobante', (p.url_comprobante IS NOT NULL),
+                'titular', p.titular_transferencia,
+                'creado_en', p.creado_en
+              ) ORDER BY p.creado_en ASC)
+              FROM pagos p
+              WHERE (p.id = v.pago_id)
+                 OR (p.tipo = 'alargue_retiro'
+                     AND p.contenedor_numero = v.contenedor_numero
+                     AND (p.cliente_telefono = v.cliente_telefono OR v.cliente_telefono IS NULL))
+                 OR (v.pago_id IS NULL
+                     AND p.tipo = 'flete'
+                     AND p.cliente_telefono = v.cliente_telefono
+                     AND p.creado_en::date <= v.fecha
+                     AND p.creado_en >= v.creado_en - interval '3 days')
+            ), '[]'::json) AS comprobantes
        FROM viajes v
        LEFT JOIN choferes c ON c.id = v.chofer_id
        LEFT JOIN contenedores ct ON ct.numero = v.contenedor_numero

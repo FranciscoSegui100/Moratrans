@@ -1,12 +1,23 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpFromLine, ArrowDownToLine, RefreshCw } from 'lucide-react';
+import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
+import { ComprobanteViewer } from '../components/ComprobanteViewer';
 import { formatearFecha } from '../lib/fechas';
 
+interface Comprobante {
+  id: string;
+  tipo: string;
+  monto: string | null;
+  estado: string;
+  es_cuenta_corriente: boolean;
+  tiene_comprobante: boolean;
+  titular: string | null;
+  creado_en: string;
+}
 interface Viaje {
   id: string;
   tipo: 'entrega' | 'retiro';
@@ -32,6 +43,9 @@ interface Viaje {
   ubicacion_direccion: string | null;
   origen_direccion: string | null;
   destino_final_direccion: string | null;
+  es_cuenta_corriente: boolean;
+  pago_id: string | null;
+  comprobantes: Comprobante[];
 }
 interface Contenedor { numero: string; estado: string; vence_en: string | null; }
 interface Tarifa { departamento: string; activo: boolean; }
@@ -63,6 +77,7 @@ export function Viajes() {
   const [asignando, setAsignando] = useState<string | null>(null);
   const [asignarForm, setAsignarForm] = useState({ contenedor_numero: '', chofer_id: '' });
   const [pestana, setPestana] = useState<PestanaViajes>('activos');
+  const [viajeComprobantes, setViajeComprobantes] = useState<Viaje | null>(null);
 
   const { data: viajes = [] } = useQuery({
     queryKey: ['viajes'],
@@ -399,6 +414,7 @@ export function Viajes() {
               <th>Patente</th>
               <th>Nº remito</th>
               <th>Importe</th>
+              <th>Comprobantes</th>
               <th>Estado</th>
               <th>Acciones</th>
             </tr>
@@ -524,6 +540,31 @@ export function Viajes() {
                 </td>
                 <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>
                 <td>
+                  {(() => {
+                    const inicial = v.comprobantes.find((c) => c.tipo !== 'alargue_retiro');
+                    const extensiones = v.comprobantes.filter((c) => c.tipo === 'alargue_retiro');
+                    if (!inicial && extensiones.length === 0) {
+                      return v.es_cuenta_corriente
+                        ? <span className="badge pendiente">📋 Cuenta corriente</span>
+                        : <span className="text-muted">—</span>;
+                    }
+                    return (
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                        {inicial && (
+                          <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
+                            {inicial.es_cuenta_corriente ? '📋 Cuenta corriente' : '🧾 Inicial'}
+                          </button>
+                        )}
+                        {extensiones.length > 0 && (
+                          <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
+                            ⏳ Extensión{extensiones.length > 1 ? ` (${extensiones.length})` : ''}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </td>
+                <td>
                   <RoleGate roles={['admin', 'operador']}>
                     <select
                       className="form-select"
@@ -551,7 +592,7 @@ export function Viajes() {
             ))}
             {viajesAMostrar.length === 0 && (
               <tr>
-                <td colSpan={14} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={15} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   {pestana === 'activos' ? 'No hay viajes activos o programados' : 'No hay viajes en el historial'}
                 </td>
               </tr>
@@ -559,6 +600,42 @@ export function Viajes() {
           </tbody>
         </table>
       </div>
+
+      {viajeComprobantes && (
+        <div className="modal-overlay" onClick={() => setViajeComprobantes(null)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="section-title" style={{ margin: 0 }}>
+                Comprobantes · {viajeComprobantes.contenedor_numero ?? viajeComprobantes.tipo}
+              </div>
+              <button className="modal-close" onClick={() => setViajeComprobantes(null)}>
+                <X size={18} strokeWidth={2} />
+              </button>
+            </div>
+            <p className="text-muted" style={{ marginTop: 0 }}>
+              {formatearFecha(viajeComprobantes.fecha)} · {viajeComprobantes.cliente_telefono ?? '—'} · {viajeComprobantes.destino_final_direccion ?? viajeComprobantes.destino_direccion ?? '—'}
+            </p>
+            {viajeComprobantes.comprobantes.length === 0 && (
+              <p className="text-muted">Sin comprobantes asociados a este viaje.</p>
+            )}
+            {viajeComprobantes.comprobantes.map((c) => (
+              <div key={c.id} style={{ marginBottom: 18 }}>
+                <div className="section-title" style={{ marginBottom: 6 }}>
+                  {c.tipo === 'alargue_retiro' ? '⏳ Extensión de retiro' : '🧾 Pago inicial'}
+                  {c.monto && ` · $${Number(c.monto).toLocaleString('es-AR')}`}
+                  {' · '}<span className={`badge ${c.estado}`}>{c.estado}</span>
+                </div>
+                {c.titular && <p className="text-muted" style={{ margin: '0 0 6px' }}>Titular: {c.titular}</p>}
+                {c.tiene_comprobante ? (
+                  <ComprobanteViewer pagoId={c.id} />
+                ) : (
+                  <span className="text-muted">Sin archivo adjunto (cuenta corriente)</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

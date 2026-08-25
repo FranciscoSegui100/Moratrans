@@ -434,6 +434,8 @@ CREATE TABLE viajes (
   -- no tiene un `pedido` asociado, así que esta es la única marca de que es
   -- deuda de cuenta corriente para el resumen (ver reportes.service.ts).
   es_cuenta_corriente BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Pago vinculado al validar el cobro (null si el viaje se creó directo en el panel).
+  pago_id           UUID REFERENCES pagos(id) ON DELETE SET NULL,
   notas             TEXT,
   creado_en         TIMESTAMPTZ  NOT NULL DEFAULT now(),
   actualizado_en    TIMESTAMPTZ  NOT NULL DEFAULT now()
@@ -441,6 +443,7 @@ CREATE TABLE viajes (
 CREATE INDEX idx_viajes_fecha  ON viajes(fecha);
 CREATE INDEX idx_viajes_estado ON viajes(estado);
 CREATE INDEX idx_viajes_grupo  ON viajes(grupo_id) WHERE grupo_id IS NOT NULL;
+CREATE INDEX idx_viajes_pago_id ON viajes(pago_id) WHERE pago_id IS NOT NULL;
 -- A lo sumo un viaje activo de cada tipo por contenedor (evita asignaciones
 -- duplicadas/contradictorias a choferes distintos); entrega y retiro sí
 -- pueden coexistir activos (el de entrega se cierra recién al confirmar el
