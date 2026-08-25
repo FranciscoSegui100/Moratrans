@@ -83,3 +83,21 @@ export async function reservarParaEntrega(
   }
   // Sigue "ocupado" hasta que vuelva de verdad — no se toca su estado acá.
 }
+
+/**
+ * Simétrica de reservarParaEntrega: se llama al desconfirmar una parada de
+ * entrega (se la desprende de una ruta ya confirmada, o se la mueve a otra —
+ * ver rutas.routes.ts DELETE/mover) para no dejar el contenedor "reservado
+ * fantasma": reservado en el sistema pero sin aparecer en ninguna ruta activa
+ * coherente. Solo revierte contenedores.estado si esta reserva efectivamente
+ * lo había sacado de 'disponible' — el otro camino de reservarParaEntrega (la
+ * reserva "a futuro" sobre un contenedor todavía ocupado por otro cliente) no
+ * toca estado, así que acá tampoco hay nada que revertir en ese caso.
+ */
+export async function liberarReservaEntrega(c: PoolClient, numero: string, actualizadoPor: string): Promise<void> {
+  await c.query(
+    `UPDATE contenedores SET estado = 'disponible', vence_en = NULL, actualizado_por = $2
+       WHERE numero = $1 AND estado = 'reservado'`,
+    [numero, actualizadoPor],
+  );
+}
