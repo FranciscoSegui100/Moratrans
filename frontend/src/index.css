@@ -393,9 +393,16 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  overflow-x: auto;
 }
 .data-table {
   width: 100%;
+  /* Con muchas columnas, `width: 100%` a secas fuerza al navegador a
+     achicar cada una para que entren todas — texto largo (direcciones)
+     terminaba partido palabra por palabra. `min-width` deja que la tabla
+     crezca más allá del contenedor y el scroll horizontal de arriba se
+     encargue, en vez de aplastar el contenido. */
+  min-width: max-content;
   border-collapse: collapse;
 }
 .data-table thead {
