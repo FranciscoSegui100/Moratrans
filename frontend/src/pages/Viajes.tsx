@@ -49,9 +49,11 @@ const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
 };
 
 const formInicial = {
-  tipo: 'entrega', fecha: '', hora_estimada: '', zona: '', contenedor_numero: '', contenedor_numero_entrega: '',
+  tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', contenedor_numero_entrega: '',
   chofer_id: '', destino_direccion: '', remito: '', importe: '', ubicacion_id: '',
 };
+
+type PestanaViajes = 'activos' | 'historial';
 
 export function Viajes() {
   const { show } = useToast();
@@ -60,15 +62,18 @@ export function Viajes() {
   const [loading, setLoading] = useState(false);
   const [asignando, setAsignando] = useState<string | null>(null);
   const [asignarForm, setAsignarForm] = useState({ contenedor_numero: '', chofer_id: '' });
+  const [pestana, setPestana] = useState<PestanaViajes>('activos');
 
   const { data: viajes = [] } = useQuery({
     queryKey: ['viajes'],
     queryFn: () => api.get<Viaje[]>('/api/viajes').then((r) => r.data),
+    refetchInterval: 10_000,
   });
   const { data: contenedores = [] } = useQuery({
     queryKey: ['contenedores'],
     queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
   });
+
   // Retiro: se va a buscar un contenedor que ya está entregado en lo del
   // cliente (venció el alquiler). Entrega: se puede elegir cualquier
   // contenedor que no tenga ya otra entrega reservada — si está ocupado, el
@@ -77,6 +82,7 @@ export function Viajes() {
   const entregasActivas = new Set(
     viajes.filter((v) => v.tipo === 'entrega' && (v.estado === 'programado' || v.estado === 'en_curso')).map((v) => v.contenedor_numero),
   );
+
   // Recambio: el contenedor principal es el LLENO que se retira, mismo
   // criterio que un retiro suelto.
   const contenedoresElegibles = form.tipo === 'retiro' || form.tipo === 'recambio'
@@ -98,6 +104,7 @@ export function Viajes() {
     const fecha = formatearFecha(c.vence_en);
     return { texto: `${c.numero} — vuelve el ${fecha}`, disabled: false };
   }
+
   const { data: zonas = [] } = useQuery({
     queryKey: ['tarifas', 'activas'],
     queryFn: () => api.get<Tarifa[]>('/api/tarifas').then((r) => r.data.filter((t) => t.activo)),
@@ -110,6 +117,7 @@ export function Viajes() {
     queryKey: ['ubicaciones'],
     queryFn: () => api.get<Ubicacion[]>('/api/ubicaciones').then((r) => r.data.filter((u) => u.activo)),
   });
+
   // Depósito para una entrega, vaciadero para un retiro. Si hay una sola
   // activa de ese tipo no hace falta elegir: el backend la autoasigna sola.
   const tipoUbicacion = form.tipo === 'entrega' ? 'deposito' : 'vaciadero';
@@ -123,7 +131,6 @@ export function Viajes() {
     try {
       await api.post('/api/viajes', {
         ...form,
-        hora_estimada: form.hora_estimada || undefined,
         chofer_id: form.chofer_id || undefined,
         contenedor_numero: form.contenedor_numero || undefined,
         contenedor_numero_entrega: form.tipo === 'recambio' ? (form.contenedor_numero_entrega || undefined) : undefined,
@@ -185,13 +192,13 @@ export function Viajes() {
     }
   }
 
-  /** Hora estimada de llegada (entrega) o de retiro (retiro) — la carga el operador, no el cliente. */
-  async function cambiarHoraEstimada(id: string, hora: string) {
+  async function cambiarRemito(id: string, remito: string) {
     try {
-      await api.patch(`/api/viajes/${id}`, { hora_estimada: hora || null });
+      await api.patch(`/api/viajes/${id}`, { remito: remito.trim() || null });
       cargar();
+      show('success', 'Nº de remito actualizado');
     } catch (err: any) {
-      show('error', 'No se pudo guardar la hora estimada', err.response?.data?.error);
+      show('error', 'No se pudo guardar el remito', err.response?.data?.error);
     }
   }
 
@@ -206,11 +213,15 @@ export function Viajes() {
     }
   }
 
+  const viajesActivos = viajes.filter((v) => v.estado === 'programado' || v.estado === 'en_curso');
+  const viajesHistorial = viajes.filter((v) => v.estado === 'completado' || v.estado === 'cancelado');
+  const viajesAMostrar = pestana === 'activos' ? viajesActivos : viajesHistorial;
+
   return (
     <div>
       <div className="page-header">
-        <h2>Viajes programados</h2>
-        <p>Gestión de entregas y retiros de contenedores</p>
+        <h2>Viajes</h2>
+        <p>Gestión operativa de entregas, retiros e historial de viajes</p>
       </div>
 
       <RoleGate roles={['admin', 'operador']}>
@@ -231,12 +242,11 @@ export function Viajes() {
             </div>
             {ubicacionesElegibles.length > 1 && (
               <div className="form-group">
-                <label className="form-label">{form.tipo === 'entrega' ? 'Depósito' : 'Vaciadero'}</label>
+                <label className="form-label">{form.tipo === 'entrega' ? 'Sale de' : 'Se descarga en'}</label>
                 <select
                   className="form-select"
                   value={form.ubicacion_id}
                   onChange={(e) => setForm({ ...form, ubicacion_id: e.target.value })}
-                  required
                 >
                   <option value="">— Elegir —</option>
                   {ubicacionesElegibles.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
@@ -256,15 +266,6 @@ export function Viajes() {
               {minFecha && (
                 <small className="text-muted">Contenedor ocupado: recién se puede elegir desde el {formatearFecha(minFecha)}</small>
               )}
-            </div>
-            <div className="form-group">
-              <label className="form-label">Hora estimada</label>
-              <input
-                type="time"
-                className="form-input"
-                value={form.hora_estimada}
-                onChange={(e) => setForm({ ...form, hora_estimada: e.target.value })}
-              />
             </div>
             <div className="form-group">
               <label className="form-label">Zona</label>
@@ -367,12 +368,27 @@ export function Viajes() {
         </div>
       </RoleGate>
 
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+        <button
+          className={`btn btn-sm ${pestana === 'activos' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setPestana('activos')}
+        >
+          Activos / Programados ({viajesActivos.length})
+        </button>
+        <button
+          className={`btn btn-sm ${pestana === 'historial' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setPestana('historial')}
+        >
+          Historial de realizados ({viajesHistorial.length})
+        </button>
+      </div>
+
       <div className="table-wrapper">
         <table className="data-table">
           <thead>
             <tr>
               <th>Fecha</th>
-              <th>Hora estimada</th>
+              <th>Horario sugerido</th>
               <th>Tipo</th>
               <th>Zona</th>
               <th>Origen</th>
@@ -388,28 +404,14 @@ export function Viajes() {
             </tr>
           </thead>
           <tbody>
-            {viajes.map((v) => (
+            {viajesAMostrar.map((v) => (
               <tr key={v.id}>
                 <td className="strong" style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
-                <td>
-                  <RoleGate roles={['admin', 'operador']}>
-                    <input
-                      type="time"
-                      className="form-input"
-                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '110px' }}
-                      defaultValue={v.hora_estimada?.slice(0, 5) ?? ''}
-                      onBlur={(e) => {
-                        if (e.target.value !== (v.hora_estimada?.slice(0, 5) ?? '')) cambiarHoraEstimada(v.id, e.target.value);
-                      }}
-                    />
-                  </RoleGate>
-                  <RoleGate roles={['finanzas', 'lectura']}>
-                    {v.hora_estimada?.slice(0, 5) ?? <span className="text-muted">—</span>}
-                  </RoleGate>
-                  {v.horario_preferido && (
-                    <div className="text-muted" style={{ fontSize: '0.72rem', marginTop: '2px' }} title="Franja horaria pedida por el cliente">
-                      🕐 pidió: {v.horario_preferido}
-                    </div>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  {v.horario_preferido ? (
+                    <span title="Horario solicitado por el cliente">🕐 {v.horario_preferido}</span>
+                  ) : (
+                    <span className="text-muted">—</span>
                   )}
                 </td>
                 <td>
@@ -497,7 +499,29 @@ export function Viajes() {
                   </RoleGate>
                 </td>
                 <td className="mono">{v.patente ?? <span className="text-muted">—</span>}</td>
-                <td className="mono">{v.remito ?? <span className="text-muted">—</span>}</td>
+                <td className="mono">
+                  <RoleGate roles={['admin', 'operador']}>
+                    <input
+                      type="text"
+                      className="form-input mono"
+                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '105px' }}
+                      placeholder="Nº remito"
+                      defaultValue={v.remito ?? ''}
+                      key={`${v.id}-${v.remito}`}
+                      onBlur={(e) => {
+                        if (e.target.value !== (v.remito ?? '')) {
+                          cambiarRemito(v.id, e.target.value);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                      }}
+                    />
+                  </RoleGate>
+                  <RoleGate roles={['finanzas', 'lectura']}>
+                    {v.remito ?? <span className="text-muted">—</span>}
+                  </RoleGate>
+                </td>
                 <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>
                 <td>
                   <RoleGate roles={['admin', 'operador']}>
@@ -509,6 +533,9 @@ export function Viajes() {
                     >
                       {estados.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select>
+                  </RoleGate>
+                  <RoleGate roles={['finanzas', 'lectura']}>
+                    <span className={`badge ${v.estado}`}>{v.estado}</span>
                   </RoleGate>
                 </td>
                 <td>
@@ -522,10 +549,10 @@ export function Viajes() {
                 </td>
               </tr>
             ))}
-            {viajes.length === 0 && (
+            {viajesAMostrar.length === 0 && (
               <tr>
                 <td colSpan={14} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-                  No hay viajes cargados
+                  {pestana === 'activos' ? 'No hay viajes activos o programados' : 'No hay viajes en el historial'}
                 </td>
               </tr>
             )}
