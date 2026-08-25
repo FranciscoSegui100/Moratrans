@@ -1115,7 +1115,6 @@ body {
 .abordo-label { font-size: 0.72rem; color: var(--text-muted); margin-bottom: 6px; }
 .abordo { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; min-height: 24px; }
 .cchip { font-size: 0.72rem; font-family: var(--font-mono); padding: 2px 9px; border-radius: 99px; background: var(--success-bg); color: var(--success); font-weight: 500; }
-.cchip.pend { background: var(--warning-bg); color: var(--warning); }
 .cchip.none { background: transparent; color: var(--text-muted); font-style: italic; font-family: 'Inter', system-ui, sans-serif; padding-left: 0; }
 .stop { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 9px; display: flex; gap: 11px; align-items: flex-start; background: var(--bg-card); }
 .stop-ord { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.72rem; font-weight: 600; flex-shrink: 0; margin-top: 1px; }
