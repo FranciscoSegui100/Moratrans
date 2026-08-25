@@ -334,12 +334,34 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
         return;
       }
     }
+    // Optimista: la saca de la ruta actual al toque (un recambio mueve las
+    // dos patas — misma grupo_id — como hace el backend).
+    const previo = queryClient.getQueryData<RutaData>(['rutas', rutaId]);
+    if (previo) {
+      const objetivo = previo.paradas.find((p) => p.id === paradaId);
+      const grupoId = objetivo && objetivo.tipo_parada === 'viaje' ? objetivo.grupo_id : null;
+      queryClient.setQueryData<RutaData>(['rutas', rutaId], {
+        ...previo,
+        paradas: previo.paradas.filter((p) =>
+          p.id !== paradaId && !(grupoId && p.tipo_parada === 'viaje' && p.grupo_id === grupoId),
+        ),
+      });
+    }
+    const rutaDestinoId = rutaDestino.id;
     try {
-      await api.post(`/api/rutas/${rutaId}/paradas/${tipo}/${paradaId}/mover`, { ruta_destino_id: rutaDestino.id });
+      await api.post(`/api/rutas/${rutaId}/paradas/${tipo}/${paradaId}/mover`, { ruta_destino_id: rutaDestinoId });
       const nombreDestino = choferes.find((c) => c.id === choferId)?.nombre ?? 'chofer';
       show('success', 'Parada movida', `Se movió la parada a la ruta de ${nombreDestino}.`);
       cargar();
+      // Precalienta la ruta destino: si no se hace esto, React Query recién
+      // dispara el fetch cuando el operador hace clic en ese chofer — la
+      // demora que se nota "del otro lado" es esa primera carga en frío.
+      queryClient.prefetchQuery({
+        queryKey: ['rutas', rutaDestinoId],
+        queryFn: () => api.get<RutaData>(`/api/rutas/${rutaDestinoId}`).then((r) => r.data),
+      });
     } catch (err: any) {
+      if (previo) queryClient.setQueryData(['rutas', rutaId], previo);
       show('error', 'No se pudo mover la parada', err.response?.data?.error);
     }
   }
