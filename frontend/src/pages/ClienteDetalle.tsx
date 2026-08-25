@@ -1,13 +1,25 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Download, Send, Pencil } from 'lucide-react';
+import { ArrowLeft, Download, Send, Pencil, X } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
+import { ComprobanteViewer } from '../components/ComprobanteViewer';
 import { useAuth, tieneRol } from '../context/AuthContext';
 import { formatearFecha } from '../lib/fechas';
+
+interface Comprobante {
+  id: string;
+  tipo: string;
+  monto: string | null;
+  estado: string;
+  es_cuenta_corriente: boolean;
+  tiene_comprobante: boolean;
+  titular: string | null;
+  creado_en: string;
+}
 
 interface Cliente {
   id: string;
@@ -23,6 +35,7 @@ interface ViajeCliente {
   fecha: string;
   estado: string;
   zona: string | null;
+  contenedor_numero?: string | null;
   destino_direccion: string | null;
   destino_lat?: string | null;
   destino_lng?: string | null;
@@ -31,6 +44,8 @@ interface ViajeCliente {
   importe: string | null;
   grupo_id: string | null;
   chofer_nombre: string | null;
+  es_cuenta_corriente?: boolean;
+  comprobantes?: Comprobante[];
 }
 
 const ETIQUETA_CC: Record<Cliente['cuenta_corriente_estado'], { texto: string; clase: string }> = {
@@ -92,6 +107,7 @@ export function ClienteDetalle() {
   const [enviando, setEnviando] = useState(false);
   const [editandoRemito, setEditandoRemito] = useState<string | null>(null);
   const [remitoForm, setRemitoForm] = useState('');
+  const [viajeComprobantes, setViajeComprobantes] = useState<ViajeCliente | null>(null);
 
   async function guardarRemito(viajeId: string) {
     try {
@@ -191,7 +207,7 @@ export function ClienteDetalle() {
                   <tr>
                     <th>FECHA</th><th>CHA/EQU</th><th>PAT</th><th>POSICIÓN</th>
                     <th>TIPO BULTO</th><th>CANTIDAD</th><th>Nº REMITO</th>
-                    <th>IMPORTE</th><th>CHOFER</th><th>ESTADO</th>
+                    <th>IMPORTE</th><th>COMPROBANTES</th><th>CHOFER</th><th>ESTADO</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -232,6 +248,32 @@ export function ClienteDetalle() {
                         )}
                       </td>
                       <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>
+                      <td>
+                        {(() => {
+                          const comprobantes = v.comprobantes ?? [];
+                          const inicial = comprobantes.find((c) => c.tipo !== 'alargue_retiro');
+                          const extensiones = comprobantes.filter((c) => c.tipo === 'alargue_retiro');
+                          if (!inicial && extensiones.length === 0) {
+                            return v.es_cuenta_corriente
+                              ? <span className="badge pendiente">📋 Cuenta corriente</span>
+                              : <span className="text-muted">—</span>;
+                          }
+                          return (
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                              {inicial && (
+                                <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
+                                  {inicial.es_cuenta_corriente ? '📋 Cuenta corriente' : '🧾 Inicial'}
+                                </button>
+                              )}
+                              {extensiones.length > 0 && (
+                                <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
+                                  ⏳ Extensión{extensiones.length > 1 ? ` (${extensiones.length})` : ''}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td>{v.chofer_nombre ?? '—'}</td>
                       <td><span className={`badge ${v.estado}`}>{v.estado}</span></td>
                     </tr>
@@ -241,6 +283,42 @@ export function ClienteDetalle() {
             </div>
           </div>
         ))
+      )}
+
+      {viajeComprobantes && (
+        <div className="modal-overlay" onClick={() => setViajeComprobantes(null)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="section-title" style={{ margin: 0 }}>
+                Comprobantes · {viajeComprobantes.contenedor_numero ?? viajeComprobantes.tipo}
+              </div>
+              <button className="modal-close" onClick={() => setViajeComprobantes(null)}>
+                <X size={18} strokeWidth={2} />
+              </button>
+            </div>
+            <p className="text-muted" style={{ marginTop: 0 }}>
+              {formatearFecha(viajeComprobantes.fecha)} · {viajeComprobantes.destino_direccion ?? viajeComprobantes.zona ?? '—'}
+            </p>
+            {(viajeComprobantes.comprobantes ?? []).length === 0 && (
+              <p className="text-muted">Sin comprobantes asociados a este viaje.</p>
+            )}
+            {(viajeComprobantes.comprobantes ?? []).map((c) => (
+              <div key={c.id} style={{ marginBottom: 18 }}>
+                <div className="section-title" style={{ marginBottom: 6 }}>
+                  {c.tipo === 'alargue_retiro' ? '⏳ Extensión de retiro' : '🧾 Pago inicial'}
+                  {c.monto && ` · $${Number(c.monto).toLocaleString('es-AR')}`}
+                  {' · '}<span className={`badge ${c.estado}`}>{c.estado}</span>
+                </div>
+                {c.titular && <p className="text-muted" style={{ margin: '0 0 6px' }}>Titular: {c.titular}</p>}
+                {c.tiene_comprobante ? (
+                  <ComprobanteViewer pagoId={c.id} />
+                ) : (
+                  <span className="text-muted">Sin archivo adjunto (cuenta corriente)</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

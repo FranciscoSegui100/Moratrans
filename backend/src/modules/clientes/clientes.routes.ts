@@ -64,7 +64,29 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
   const rows = await query(
     `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
             v.destino_lat, v.destino_lng, v.patente,
-            v.remito, v.importe, v.grupo_id, ch.nombre AS chofer_nombre
+            v.remito, v.importe, v.grupo_id, ch.nombre AS chofer_nombre,
+            v.es_cuenta_corriente,
+            -- Mismo criterio que GET /api/viajes (ver viajes.routes.ts): inicial
+            -- vinculado por pago_id, extensiones de alargue_retiro del mismo
+            -- contenedor+cliente creadas después de este viaje.
+            COALESCE((
+              SELECT json_agg(json_build_object(
+                'id', p.id,
+                'tipo', p.tipo,
+                'monto', p.monto,
+                'estado', p.estado,
+                'es_cuenta_corriente', p.es_cuenta_corriente,
+                'tiene_comprobante', (p.url_comprobante IS NOT NULL),
+                'titular', p.titular_transferencia,
+                'creado_en', p.creado_en
+              ) ORDER BY p.creado_en ASC)
+              FROM pagos p
+              WHERE (p.id = v.pago_id)
+                 OR (p.tipo = 'alargue_retiro'
+                     AND p.contenedor_numero = v.contenedor_numero
+                     AND p.cliente_telefono = v.cliente_telefono
+                     AND p.creado_en >= v.creado_en)
+            ), '[]'::json) AS comprobantes
        FROM viajes v
        LEFT JOIN choferes ch ON ch.id = v.chofer_id
       WHERE v.cliente_telefono = $1
