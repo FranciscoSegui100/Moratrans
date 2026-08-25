@@ -73,12 +73,8 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
               WHERE (p.id = v.pago_id)
                  OR (p.tipo = 'alargue_retiro'
                      AND p.contenedor_numero = v.contenedor_numero
-                     AND (p.cliente_telefono = v.cliente_telefono OR v.cliente_telefono IS NULL))
-                 OR (v.pago_id IS NULL
-                     AND p.tipo = 'flete'
                      AND p.cliente_telefono = v.cliente_telefono
-                     AND p.creado_en::date <= v.fecha
-                     AND p.creado_en >= v.creado_en - interval '3 days')
+                     AND p.creado_en >= v.creado_en)
             ), '[]'::json) AS comprobantes
        FROM viajes v
        LEFT JOIN choferes c ON c.id = v.chofer_id
