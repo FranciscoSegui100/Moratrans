@@ -273,7 +273,6 @@ CREATE TABLE tickets (
   pago_id           UUID REFERENCES pagos(id)   ON DELETE SET NULL,
   contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
   estado            estado_ticket NOT NULL DEFAULT 'activo', -- activo -> cerrado
-  pdf_url           TEXT,
   cerrado_en        TIMESTAMPTZ,
   creado_en         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
