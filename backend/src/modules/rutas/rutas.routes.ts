@@ -63,21 +63,25 @@ async function calcularDisponibilidadRuta(
   rutaId: string,
   ejecutar: (sql: string, params: any[]) => Promise<any[]> = query,
 ) {
-  const viajes: ViajeParada[] = await ejecutar(
-    `SELECT id, orden, tipo, contenedor_numero, destino_direccion, destino_lat, destino_lng,
-            horario_preferido, hora_estimada, zona, cliente_telefono,
-            grupo_id, estado, notas, ubicacion_id, origen, completada_en, ruta_confirmada_en
-       FROM viajes WHERE ruta_id = $1 ORDER BY orden`,
-    [rutaId],
-  );
-  const vaciados: VaciadoParada[] = await ejecutar(
-    `SELECT rv.id, rv.orden, rv.ubicacion_id, u.nombre AS ubicacion_nombre, rv.notas
-       FROM ruta_vaciados rv LEFT JOIN ubicaciones u ON u.id = rv.ubicacion_id
-      WHERE rv.ruta_id = $1 ORDER BY rv.orden`,
-    [rutaId],
-  );
-  const disponiblesAlInicio: string[] = (
-    await ejecutar(
+  // Las 4 lecturas son independientes entre sí — se disparan en paralelo en
+  // vez de una detrás de otra. Esta función se llama muy seguido (hasta 5
+  // veces por reordenamiento, ver resolverVaciadosAutomaticos), así que cada
+  // ida y vuelta de red que se ahorra acá se multiplica varias veces.
+  const [viajes, vaciadosRows, disponiblesRows, capacidadRows] = await Promise.all([
+    ejecutar(
+      `SELECT id, orden, tipo, contenedor_numero, destino_direccion, destino_lat, destino_lng,
+              horario_preferido, hora_estimada, zona, cliente_telefono,
+              grupo_id, estado, notas, ubicacion_id, origen, completada_en, ruta_confirmada_en
+         FROM viajes WHERE ruta_id = $1 ORDER BY orden`,
+      [rutaId],
+    ) as Promise<ViajeParada[]>,
+    ejecutar(
+      `SELECT rv.id, rv.orden, rv.ubicacion_id, u.nombre AS ubicacion_nombre, rv.notas
+         FROM ruta_vaciados rv LEFT JOIN ubicaciones u ON u.id = rv.ubicacion_id
+        WHERE rv.ruta_id = $1 ORDER BY rv.orden`,
+      [rutaId],
+    ) as Promise<VaciadoParada[]>,
+    ejecutar(
       `SELECT c.numero
          FROM contenedores c
         WHERE c.estado = 'disponible'
@@ -90,15 +94,16 @@ async function calcularDisponibilidadRuta(
                AND v.estado IN ('programado', 'en_curso')
           )`,
       [rutaId],
-    )
-  ).map((r: { numero: string }) => r.numero);
-
-  const capacidadRows: { capacidad_llenos: number; capacidad_vacios: number }[] = await ejecutar(
-    `SELECT ch.capacidad_llenos, ch.capacidad_vacios
-       FROM rutas r JOIN choferes ch ON ch.id = r.chofer_id
-      WHERE r.id = $1`,
-    [rutaId],
-  );
+    ) as Promise<{ numero: string }[]>,
+    ejecutar(
+      `SELECT ch.capacidad_llenos, ch.capacidad_vacios
+         FROM rutas r JOIN choferes ch ON ch.id = r.chofer_id
+        WHERE r.id = $1`,
+      [rutaId],
+    ) as Promise<{ capacidad_llenos: number; capacidad_vacios: number }[]>,
+  ]);
+  const vaciados = vaciadosRows;
+  const disponiblesAlInicio: string[] = disponiblesRows.map((r) => r.numero);
   const capacidad: CapacidadCamion = capacidadRows[0]
     ? { llenos: capacidadRows[0].capacidad_llenos, vacios: capacidadRows[0].capacidad_vacios }
     : CAPACIDAD_CAMION_DEFAULT;
@@ -237,14 +242,17 @@ rutasRouter.get('/bolsa', async (req: Request, res: Response) => {
 /** GET /api/rutas/:id — ruta + paradas ordenadas + disponibilidad resuelta por parada de entrega. */
 rutasRouter.get('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const [ruta] = await query(
-    `SELECT r.id, r.fecha, r.chofer_id, c.nombre AS chofer_nombre, r.patente, r.estado, r.notas, r.version, r.creado_en
-       FROM rutas r LEFT JOIN choferes c ON c.id = r.chofer_id WHERE r.id = $1`,
-    [id],
-  );
+  const [[ruta], disponibilidad] = await Promise.all([
+    query(
+      `SELECT r.id, r.fecha, r.chofer_id, c.nombre AS chofer_nombre, r.patente, r.estado, r.notas, r.version, r.creado_en
+         FROM rutas r LEFT JOIN choferes c ON c.id = r.chofer_id WHERE r.id = $1`,
+      [id],
+    ),
+    calcularDisponibilidadRuta(id),
+  ]);
   if (!ruta) return res.status(404).json({ error: 'Ruta no encontrada.' });
 
-  const { viajes, vaciados, porOrden, advertencias } = await calcularDisponibilidadRuta(id);
+  const { viajes, vaciados, porOrden, advertencias } = disponibilidad;
 
   const paradas = [
     ...viajes.map((v) => ({
@@ -513,6 +521,11 @@ const ordenSchema = z.object({
  * PATCH /api/rutas/:id/orden — reescribe toda la secuencia (no "mover uno").
  * Dos fases (temporal negativo -> final positivo) para no chocar contra las
  * constraints UNIQUE de orden mientras se reordena dentro de la transacción.
+ *
+ * Antes esto era un UPDATE por parada (dos pasadas → ~2×N idas y vueltas a
+ * la base por cada reordenamiento, la operación más frecuente de la pantalla
+ * de Rutas). Ahora cada fase es un UPDATE ... FROM unnest(...) por tabla: un
+ * puñado de round-trips fijo, no proporcional a la cantidad de paradas.
  */
 rutasRouter.patch('/:id/orden', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const { id: rutaId } = req.params;
@@ -533,29 +546,60 @@ rutasRouter.patch('/:id/orden', requireRol('admin', 'operador'), async (req: Req
         fail('Alguien más modificó esta ruta mientras tanto. Recargá para ver los cambios y volvé a intentar.');
       }
 
-      for (let i = 0; i < secuencia.length; i++) {
-        const p = secuencia[i];
-        const tmp = -(i + 1);
-        if (p.tipo === 'viaje') {
-          await c.query(`UPDATE viajes SET orden = $1 WHERE id = $2 AND ruta_id = $3`, [tmp, p.id, rutaId]);
-        } else {
-          await c.query(`UPDATE ruta_vaciados SET orden = $1 WHERE id = $2 AND ruta_id = $3`, [tmp, p.id, rutaId]);
-        }
+      const viajeItems = secuencia
+        .map((p, i) => ({ ...p, posFinal: i + 1 }))
+        .filter((p) => p.tipo === 'viaje');
+      const vaciadoItems = secuencia
+        .map((p, i) => ({ ...p, posFinal: i + 1 }))
+        .filter((p) => p.tipo === 'vaciado');
+
+      // Fase 1: temporal negativo (índice dentro de cada tabla alcanza para
+      // que sea único; no hace falta que coincida con la posición final).
+      if (viajeItems.length > 0) {
+        await c.query(
+          `UPDATE viajes v SET orden = -x.tmp
+             FROM unnest($1::uuid[], $2::int[]) AS x(id, tmp)
+            WHERE v.id = x.id AND v.ruta_id = $3`,
+          [viajeItems.map((p) => p.id), viajeItems.map((_, i) => i + 1), rutaId],
+        );
       }
-      for (let i = 0; i < secuencia.length; i++) {
-        const p = secuencia[i];
-        const nuevoOrden = i + 1;
-        if (p.tipo === 'viaje') {
-          const { rows } = await c.query<{ grupo_id: string | null }>(
-            `UPDATE viajes SET orden = $1 WHERE id = $2 AND ruta_id = $3 RETURNING grupo_id`,
-            [nuevoOrden, p.id, rutaId],
-          );
-          if (rows[0]?.grupo_id) {
-            await c.query(`UPDATE viajes SET orden = $1 WHERE grupo_id = $2 AND ruta_id = $3`, [nuevoOrden, rows[0].grupo_id, rutaId]);
-          }
-        } else {
-          await c.query(`UPDATE ruta_vaciados SET orden = $1 WHERE id = $2 AND ruta_id = $3`, [nuevoOrden, p.id, rutaId]);
-        }
+      if (vaciadoItems.length > 0) {
+        await c.query(
+          `UPDATE ruta_vaciados v SET orden = -x.tmp
+             FROM unnest($1::uuid[], $2::int[]) AS x(id, tmp)
+            WHERE v.id = x.id AND v.ruta_id = $3`,
+          [vaciadoItems.map((p) => p.id), vaciadoItems.map((_, i) => i + 1), rutaId],
+        );
+      }
+
+      // Fase 2: posición final positiva.
+      if (viajeItems.length > 0) {
+        await c.query(
+          `UPDATE viajes v SET orden = x.pos
+             FROM unnest($1::uuid[], $2::int[]) AS x(id, pos)
+            WHERE v.id = x.id AND v.ruta_id = $3`,
+          [viajeItems.map((p) => p.id), viajeItems.map((p) => p.posFinal), rutaId],
+        );
+        // Recambio: la pareja (grupo_id) que no vino explícita en la secuencia
+        // (agruparVisitas() del frontend manda un solo id por visita) sigue a
+        // la que sí vino — mismo criterio que antes, ahora en un solo UPDATE.
+        await c.query(
+          `UPDATE viajes v2 SET orden = v1.orden
+             FROM viajes v1
+            WHERE v1.grupo_id = v2.grupo_id AND v1.grupo_id IS NOT NULL
+              AND v1.ruta_id = $1 AND v2.ruta_id = $1
+              AND v1.id <> v2.id
+              AND v1.id = ANY($2::uuid[])`,
+          [rutaId, viajeItems.map((p) => p.id)],
+        );
+      }
+      if (vaciadoItems.length > 0) {
+        await c.query(
+          `UPDATE ruta_vaciados v SET orden = x.pos
+             FROM unnest($1::uuid[], $2::int[]) AS x(id, pos)
+            WHERE v.id = x.id AND v.ruta_id = $3`,
+          [vaciadoItems.map((p) => p.id), vaciadoItems.map((p) => p.posFinal), rutaId],
+        );
       }
 
       await resolverVaciadosAutomaticos(c, rutaId);
