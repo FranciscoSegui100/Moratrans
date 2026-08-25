@@ -477,6 +477,12 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
   }
   // Contenedores en un estado desde el que la transición es válida.
   const origen = estado === 'entregado' ? 'reservado' : 'entregado';
+  // El viaje activo tiene que ser del tipo que realmente pide esa acción —
+  // sin esto, un contenedor recién entregado (cuyo viaje de 'entrega' sigue
+  // "activo" hasta que se cierra todo el ciclo, ver retiro.service.ts)
+  // aparecía como candidato para "Ya retiré" aunque nadie hubiera pedido el
+  // retiro todavía.
+  const tipoRequerido = estado === 'entregado' ? 'entrega' : 'retiro';
   // Solo contenedores con un viaje activo asignado a ESTE chofer.
   // Se usa DISTINCT ON (c.numero) para garantizar IDs únicos y no saturar Meta API.
   const conts = await query<{ numero: string; grupo_id: string | null; tipo: string; pareja_numero: string | null; pareja_tipo: string | null }>(
@@ -492,10 +498,11 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
        ) pareja ON TRUE
       WHERE c.estado = $1
         AND v.chofer_id = $2
+        AND v.tipo = $3
         AND v.estado IN ('programado', 'en_curso')
       ORDER BY c.numero, c.actualizado_en DESC
       LIMIT 10`,
-    [origen, choferId],
+    [origen, choferId, tipoRequerido],
   );
   if (conts.length === 0) {
     await sendText(to, `🙁 No tengo contenedores en estado "${origen}" para pasar a "${estado.replace('_', ' ')}".`);
@@ -549,35 +556,34 @@ async function aplicarEstado(
       );
       const vaciadero = await resolverUbicacion('vaciadero');
 
-      // Un recambio (o un "pedir retiro" por WhatsApp) ya deja creada de
-      // antes la fila 'retiro' de este contenedor. Si ya existe, se actualiza.
+      // Tiene que existir un viaje de retiro real (pedido por el cliente,
+      // o generado por un recambio) — no se acepta "ya retiré" ad-hoc sin
+      // que nadie lo haya solicitado, mismo criterio que para el resto de
+      // los estados (ver elegirContenedor, que ya filtra por esto para no
+      // ofrecerlo como opción en primer lugar; esto es la segunda barrera
+      // por si igual llega un id de contenedor que no corresponde).
       const [retiroExistente] = await query<{ id: string }>(
         `SELECT id FROM viajes
           WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
           ORDER BY creado_en DESC LIMIT 1`,
         [numero],
       );
-      let retiroId: string;
-      if (retiroExistente) {
-        retiroId = retiroExistente.id;
-        await query(
-          `UPDATE viajes SET estado = 'en_curso', completada_en = now(),
-                  chofer_id = COALESCE(chofer_id, $2),
-                  destino_direccion = COALESCE(destino_direccion, $3),
-                  zona = COALESCE(zona, $4),
-                  ubicacion_id = COALESCE(ubicacion_id, $5),
-                  ubicacion_direccion = COALESCE(ubicacion_direccion, $6)
-            WHERE id = $1`,
-          [retiroExistente.id, choferId, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
-        );
-      } else {
-        const [nuevoRetiro] = await query<{ id: string }>(
-          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, destino_direccion, zona, estado, notas, ubicacion_id, ubicacion_direccion, completada_en)
-           VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, 'en_curso', 'Retirado del cliente por WhatsApp', $5, $6, now()) RETURNING id`,
-          [choferId, numero, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
-        );
-        retiroId = nuevoRetiro.id;
+      if (!retiroExistente) {
+        await sendText(to, `🙁 El contenedor ${numero} no tiene ningún retiro pedido todavía — no se puede marcar como retirado.`);
+        await clearSesion(to);
+        return menuChofer(to, choferNombre);
       }
+      const retiroId = retiroExistente.id;
+      await query(
+        `UPDATE viajes SET estado = 'en_curso', completada_en = now(),
+                chofer_id = COALESCE(chofer_id, $2),
+                destino_direccion = COALESCE(destino_direccion, $3),
+                zona = COALESCE(zona, $4),
+                ubicacion_id = COALESCE(ubicacion_id, $5),
+                ubicacion_direccion = COALESCE(ubicacion_direccion, $6)
+          WHERE id = $1`,
+        [retiroExistente.id, choferId, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+      );
       avisarSiguienteParadaRuta(retiroId).catch((e) => console.error('Error avisando siguiente parada:', e.message));
       await query(
         `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
@@ -612,6 +618,21 @@ async function aplicarEstado(
   }
 
   try {
+    // El trigger fn_validar_transicion_contenedor solo valida el estado PREVIO
+    // del contenedor, no que este chofer tenga de verdad una entrega asignada
+    // — sin este chequeo, cualquier "entregado" con id de contenedor ajeno
+    // pasaría igual (mismo tipo de problema que 'retirado', ver arriba).
+    const [entregaAsignada] = await query<{ id: string }>(
+      `SELECT id FROM viajes
+        WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
+        LIMIT 1`,
+      [numero, choferId],
+    );
+    if (!entregaAsignada) {
+      await sendText(to, `🙁 No tenés una entrega asignada para el contenedor ${numero}.`);
+      await clearSesion(to);
+      return menuChofer(to, choferNombre);
+    }
     // El trigger fn_validar_transicion_contenedor rechaza transiciones ilegales.
     await query(
       'UPDATE contenedores SET estado = $1, actualizado_por = $2 WHERE numero = $3',
