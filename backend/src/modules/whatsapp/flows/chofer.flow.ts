@@ -5,7 +5,6 @@ import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { blindIndex } from '../../../services/crypto.service';
 import { finalizarRetiro } from '../../../services/retiro.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
-import { sumarDias } from '../../../services/diasHabiles.service';
 import { DIAS_ALQUILER_ANTES_RETIRO } from '../../../config/bot.config';
 import { avisarSiguienteParadaRuta } from '../../viajes/viajes.routes';
 import type { MensajeEntrante } from '../messageRouter';
@@ -434,23 +433,25 @@ async function aplicarVacioRecambio(
     }
 
     const [choferRow] = await query<{ patente: string | null }>('SELECT patente FROM choferes WHERE id = $1', [choferId]);
-    const [viajeEntrega] = await query<{ fecha: string }>(
+    await query(
       `UPDATE viajes SET contenedor_numero = $1, chofer_id = $2, patente = $3
-        WHERE id = $4 AND contenedor_numero IS NULL RETURNING fecha`,
+        WHERE id = $4 AND contenedor_numero IS NULL`,
       [numero, choferId, choferRow?.patente ?? null, entregaId],
     );
 
     // 'reservado' -> 'entregado' directo (mismo trigger que usa cualquier
     // entrega): el chofer ya se lo está dejando al cliente en este momento.
-    await query(`UPDATE contenedores SET estado = 'entregado', actualizado_por = $2 WHERE numero = $1`, [numero, `chofer:${choferId}`]);
-    // El vencimiento es la fecha de entrega + los días de alquiler estándar
-    // (mismo criterio que cotizacion.flow.ts al calcular fecha_retiro_estimada)
-    // — no la fecha de entrega misma, que dejaría el contenedor "vencido"
-    // el mismo día que se lo deja.
-    if (viajeEntrega) {
-      const venceEn = sumarDias(viajeEntrega.fecha, DIAS_ALQUILER_ANTES_RETIRO);
-      await query(`UPDATE contenedores SET vence_en = $2::date WHERE numero = $1`, [numero, venceEn]);
-    }
+    // El vencimiento son los días de alquiler estándar contados desde AHORA
+    // (el momento real de entrega, no la fecha programada del viaje —
+    // si se entregó antes o después de lo previsto, el vencimiento tiene
+    // que correrse con él) — now() ya es un instante real en la base, así
+    // que no hace falta armar ninguna fecha a mano ni pelear con zonas
+    // horarias.
+    await query(
+      `UPDATE contenedores SET estado = 'entregado', vence_en = now() + make_interval(days => $2), actualizado_por = $3
+        WHERE numero = $1`,
+      [numero, DIAS_ALQUILER_ANTES_RETIRO, `chofer:${choferId}`],
+    );
     await query(`UPDATE viajes SET completada_en = now() WHERE id = $1`, [entregaId]);
     avisarSiguienteParadaRuta(entregaId).catch((e) => console.error('Error avisando siguiente parada:', e.message));
 
@@ -634,9 +635,15 @@ async function aplicarEstado(
       return menuChofer(to, choferNombre);
     }
     // El trigger fn_validar_transicion_contenedor rechaza transiciones ilegales.
+    // A esta altura `estado` siempre es 'entregado' (el único otro valor
+    // posible, 'retirado', ya retornó más arriba). El vencimiento son los
+    // días de alquiler estándar contados desde AHORA, el momento real de la
+    // entrega — no la fecha programada del viaje: si se entregó antes o
+    // después de lo previsto, el vencimiento tiene que correrse con él.
     await query(
-      'UPDATE contenedores SET estado = $1, actualizado_por = $2 WHERE numero = $3',
-      [estado, `chofer:${choferId}`, numero],
+      `UPDATE contenedores SET estado = $1, vence_en = now() + make_interval(days => $2), actualizado_por = $3
+        WHERE numero = $4`,
+      [estado, DIAS_ALQUILER_ANTES_RETIRO, `chofer:${choferId}`, numero],
     );
     // El trigger fn_auditar_contenedor ya audita este cambio en historial_contenedores
     // (con chofer_id resuelto desde actualizado_por) — no duplicar el insert acá.

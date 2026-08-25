@@ -13,7 +13,7 @@ import { avisarChoferRecambio } from '../viajes/viajes.routes';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
-import { formatearFechaCorta } from '../../services/diasHabiles.service';
+import { formatearFechaCorta, medianocheArgentina } from '../../services/diasHabiles.service';
 
 export const pagosRouter = Router();
 pagosRouter.use(requireAuth);
@@ -324,7 +324,10 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
 
     if (result.contenedor && result.reservado_ahora) {
       if (venceEn) {
-        await query('UPDATE contenedores SET vence_en = $1 WHERE numero = $2', [venceEn, result.contenedor]);
+        // El operador pisó a mano la fecha que calculó reservarParaEntrega.
+        // vence_en es TIMESTAMPTZ: bindear la fecha pelada cae a medianoche
+        // UTC, que en Argentina se ve como las 21hs del día anterior.
+        await query('UPDATE contenedores SET vence_en = $1 WHERE numero = $2', [medianocheArgentina(venceEn), result.contenedor]);
       }
     }
 
