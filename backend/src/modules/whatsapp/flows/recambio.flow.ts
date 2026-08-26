@@ -40,10 +40,10 @@ import type { Sesion } from '../session.store';
  * (prioritario, verificado por geometría real contra el departamento
  * elegido — si no coincide, el cliente decide, ver
  * ubicacionZona.helper.ts) o calle/número a mano sin buscar en el mapa
- * (marcados `direccion_verificada = false`, ver alerta
- * 'direccion_sin_verificar') — mismo criterio que cotizacion.flow.ts. La
- * zona se recalcula siempre a partir de la dirección nueva, nunca se asume
- * la del contenedor viejo.
+ * (marcados `direccion_verificada = false` — el propio cliente la confirma,
+ * resaltada en negrita, en la capa 4) — mismo criterio que
+ * cotizacion.flow.ts. La zona se recalcula siempre a partir de la dirección
+ * nueva, nunca se asume la del contenedor viejo.
  *
  * Pasos: (elegir_contenedor_recambio) -> confirmar_recambio ->
  * confirmar_ubicacion_recambio [-> elegir_departamento_recambio ->
@@ -355,7 +355,7 @@ async function avanzarACapaCuatroRecambio(
   const resumenUbicacion =
     destinoLat != null && destinoLng != null
       ? `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`
-      : (destinoDireccion as string);
+      : `*${destinoDireccion}*`;
 
   await sendButtons(
     to,
@@ -440,22 +440,11 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
   const direccionVerificada = (sesion.contexto.direccionVerificada as boolean | undefined) ?? true;
   const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
 
-  const [pedido] = await query<{ numero_pedido: number }>(
+  await query(
     `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, tipo, contenedor_recambio_numero)
-     VALUES ($1,$2,$3,$4,'confirmado',$5,$6,$7,$8,$9,'recambio',$10) RETURNING numero_pedido`,
+     VALUES ($1,$2,$3,$4,'confirmado',$5,$6,$7,$8,$9,'recambio',$10)`,
     [to, m.nombrePerfil ?? null, zona, precio, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, numero],
   );
-
-  if (!direccionVerificada) {
-    const [alertaDireccion] = await query(
-      `INSERT INTO alertas (tipo, referencia_id, mensaje)
-       VALUES ('direccion_sin_verificar', $1, $2)
-       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [pedido.numero_pedido.toString(), `Recambio de ${to} (pedido #${pedido.numero_pedido}): dirección escrita a mano sin verificar en el mapa — "${destino}" (${zona})`],
-    );
-    if (alertaDireccion) emitAlerta({ ...alertaDireccion, cliente_telefono: to });
-  }
 
   await clearSesion(to);
   await sendText(
@@ -495,9 +484,9 @@ async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: s
   const vaciadero = await resolverUbicacion('vaciadero');
   const deposito = await resolverUbicacion('deposito');
 
-  const [retiro] = await query<{ id: string }>(
+  await query(
     `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
-     VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, $5, $6, $7, $8, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11) RETURNING id`,
+     VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, $5, $6, $7, $8, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
     [numero, to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
   );
   await query(
@@ -505,17 +494,6 @@ async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: s
      VALUES ('entrega', CURRENT_DATE, $1, $2, $3, $4, $5, $6, $7, $8, TRUE, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
     [to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, precio, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
   );
-
-  if (!direccionVerificada) {
-    const [alertaDireccion] = await query(
-      `INSERT INTO alertas (tipo, referencia_id, mensaje)
-       VALUES ('direccion_sin_verificar', $1, $2)
-       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [retiro.id, `Recambio de ${to} (contenedor ${numero}): dirección escrita a mano sin verificar en el mapa — "${destino}" (${zona})`],
-    );
-    if (alertaDireccion) emitAlerta({ ...alertaDireccion, cliente_telefono: to });
-  }
 
   const [alerta] = await query(
     `INSERT INTO alertas (tipo, referencia_id, mensaje)

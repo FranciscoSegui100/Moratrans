@@ -23,9 +23,9 @@ import type { Sesion } from '../session.store';
  *    se deriva a un asesor.
  * Si en cambio el cliente escribe calle y número a mano, no se busca en el
  * mapa ni se puede validar contra el departamento elegido — se guarda tal
- * cual, marcada `direccion_verificada = false` para que un asesor la
- * confirme (ver mensajePedirCalleNumero y alerta 'direccion_sin_verificar'
- * en cada flujo).
+ * cual (marcada `direccion_verificada = false`) y es el propio cliente
+ * quien la confirma, resaltada en negrita, en la capa 4 (ver
+ * mensajePedirCalleNumero).
  * La capa 4 (confirmación explícita "¿es el destino?") queda a criterio de
  * cada flujo — acá no se manda ningún mensaje de confirmación.
  */
@@ -160,7 +160,7 @@ export async function pedirMetodoUbicacion(to: string, departamento: string): Pr
 export function mensajePedirCalleNumero(departamento: string): string {
   return (
     `✍️ *ESCRIBÍ CALLE Y NÚMERO DEL DEPARTAMENTO ${departamento.toUpperCase()}*\n\n` +
-    `_Ojo: esta dirección no se busca en el mapa — una persona del equipo la va a confirmar con vos antes de despachar el contenedor._`
+    `_Ojo: esta dirección no se busca en el mapa — te la vamos a repetir para que la confirmes._`
   );
 }
 

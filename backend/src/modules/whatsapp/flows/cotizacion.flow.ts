@@ -4,7 +4,6 @@ import { setSesion, clearSesion } from '../session.store';
 import { datosBancarios } from './pago.flow';
 import { obtenerOCrearCliente } from '../../../services/clientes.service';
 import { reverseGeocode } from '../../../services/geocoding.service';
-import { emitAlerta } from '../../../config/socket';
 import {
   pedirDepartamento,
   departamentoElegido,
@@ -47,9 +46,8 @@ import type { Sesion } from '../session.store';
  *  2. Calle y número escritos a mano, del departamento ya elegido — NO se
  *     busca en el mapa (nada de geocodificar texto libre, con su riesgo de
  *     ambigüedad entre calles repetidas). Se guarda tal cual la escribe el
- *     cliente, marcada como pendiente de verificación manual
- *     (`direccion_verificada = false`) — un asesor la confirma con el
- *     cliente antes de despachar (ver alerta 'direccion_sin_verificar').
+ *     cliente (`direccion_verificada = false`), y es el propio cliente quien
+ *     la confirma, resaltada en negrita, en la capa 4.
  * En ambos casos, recién en la confirmación final (capa 4) se muestra el
  * precio — así el cliente no elige departamento en base al precio.
  *
@@ -85,7 +83,7 @@ async function avanzarAConfirmarUbicacion(
   const resumenUbicacion =
     destinoLat != null && destinoLng != null
       ? `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`
-      : (destinoDireccion as string);
+      : `*${destinoDireccion}*`;
 
   const tarifa = await tarifaDeZona(departamento);
   const lineaPrecio = tarifa ? `\nPrecio: *${tarifa.moneda} ${Number(tarifa.precio).toLocaleString('es-AR')}*` : '';
@@ -543,20 +541,6 @@ async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion, o
   // así la pantalla Clientes del panel refleja a todo el que cotizó, no
   // solo a quien pidió cuenta corriente.
   obtenerOCrearCliente(to, m.nombrePerfil).catch((e) => console.error('Error dando de alta al cliente:', e));
-
-  // Dirección escrita a mano, sin buscarla en el mapa (ver
-  // manejarUbicacionTexto) -> alerta para que un asesor la confirme con el
-  // cliente antes de despachar.
-  if (!direccionVerificada) {
-    const [alerta] = await query(
-      `INSERT INTO alertas (tipo, referencia_id, mensaje)
-       VALUES ('direccion_sin_verificar', $1, $2)
-       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [pedido.numero_pedido.toString(), `Pedido #${pedido.numero_pedido}: dirección escrita a mano sin verificar en el mapa — "${destinoDireccion}" (${departamento})`],
-    );
-    if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
-  }
 
   await sendText(
     to,

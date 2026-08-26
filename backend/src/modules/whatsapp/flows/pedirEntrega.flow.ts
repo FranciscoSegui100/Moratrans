@@ -42,9 +42,9 @@ const DIAS_A_OFRECER_ENTREGA_CC = 3;
  * Mismo criterio que cotizacion.flow.ts (ver comentario ahí): se elige
  * departamento primero, después pin (prioritario, verificado por geometría
  * real — si no coincide, el cliente decide) o calle/número escritos a mano
- * sin buscar en el mapa (marcados `direccion_verificada = false` para que
- * un asesor los confirme, ver alerta 'direccion_sin_verificar'). Acá SÍ se
- * exige tarifa activa (`requiereTarifa: true`) en el pin: aunque cuenta
+ * sin buscar en el mapa (marcados `direccion_verificada = false` — el
+ * propio cliente la confirma, resaltada en negrita, en la capa 4). Acá SÍ
+ * se exige tarifa activa (`requiereTarifa: true`) en el pin: aunque cuenta
  * corriente no paga en el momento, el costo de cada entrega se muestra al
  * cliente y se guarda en `viajes.importe`.
  */
@@ -240,7 +240,7 @@ async function pedirConfirmacion(
   const resumen =
     destinoLat != null && destinoLng != null
       ? `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`
-      : (destinoDireccion as string);
+      : `*${destinoDireccion}*`;
   const lineaPrecio = tarifa ? `\nCosto: *${tarifa.moneda} ${Number(tarifa.precio).toLocaleString('es-AR')}*` : '';
 
   await sendButtons(
@@ -407,17 +407,6 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
     [viaje.id, `${to} pidió una entrega por cuenta corriente (a nombre de ${titular})`],
   );
   if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
-
-  if (!direccionVerificada) {
-    const [alertaDireccion] = await query(
-      `INSERT INTO alertas (tipo, referencia_id, mensaje)
-       VALUES ('direccion_sin_verificar', $1, $2)
-       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [viaje.id, `Entrega de ${to}: dirección escrita a mano sin verificar en el mapa — "${destinoDireccion}" (${departamento})`],
-    );
-    if (alertaDireccion) emitAlerta({ ...alertaDireccion, cliente_telefono: to });
-  }
   emitRecursoActualizado('viajes');
 
   await clearSesion(to);
