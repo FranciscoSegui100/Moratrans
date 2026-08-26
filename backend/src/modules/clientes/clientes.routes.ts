@@ -100,17 +100,17 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
 const createSchema = z.object({
   nombre: z.string().trim().min(1, 'Falta el nombre'),
   telefono: z.string().trim().min(6, 'Falta el teléfono'),
-  // Permite dar de alta la cuenta corriente en el mismo paso, sin que el
-  // cliente tenga que pedirla por WhatsApp primero (ver cuenta_corriente_estado
-  // en pago.flow.ts: sólo 'aprobada' lo habilita a pagar así).
-  cuenta_corriente_estado: z.enum(['sin_pedir', 'aprobada']).optional().default('sin_pedir'),
+  // El operador elige de entrada si lo está cargando como cliente de cuenta
+  // corriente (ya conocido de antes del sistema) u ocasional (paga cada
+  // viaje por transferencia) — a diferencia del que se crea solo al cotizar
+  // por WhatsApp, que siempre arranca en 'sin_pedir'.
+  cuenta_corriente_estado: z.enum(['sin_pedir', 'aprobada']),
 });
 
 /**
  * POST /api/clientes — alta manual de un cliente que todavía no cotizó por
  * WhatsApp (hoy la tabla sólo se llena sola cuando cotizan, ver GET /
- * vacío). Pensado para poder darle cuenta corriente de entrada a un cliente
- * conocido de antes del sistema, sin esperar a que escriba al bot.
+ * vacío).
  */
 clientesRouter.post('/', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const parsed = createSchema.safeParse(req.body);

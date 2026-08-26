@@ -37,7 +37,9 @@ export function Clientes() {
   const [pestana, setPestana] = useState<Pestana>('cuenta_corriente');
   const [enviando, setEnviando] = useState<string | null>(null);
   const [mostrarAlta, setMostrarAlta] = useState(false);
-  const [altaForm, setAltaForm] = useState({ nombre: '', telefono: '', conCuentaCorriente: false });
+  const [altaForm, setAltaForm] = useState<{ nombre: string; telefono: string; tipo: 'cuenta_corriente' | 'ocasional' }>(
+    { nombre: '', telefono: '', tipo: 'cuenta_corriente' },
+  );
   const [creando, setCreando] = useState(false);
 
   const { data: todosLosClientes = [] } = useQuery({
@@ -80,11 +82,11 @@ export function Clientes() {
       await api.post('/api/clientes', {
         nombre: altaForm.nombre.trim(),
         telefono: altaForm.telefono.trim(),
-        cuenta_corriente_estado: altaForm.conCuentaCorriente ? 'aprobada' : 'sin_pedir',
+        cuenta_corriente_estado: altaForm.tipo === 'cuenta_corriente' ? 'aprobada' : 'sin_pedir',
       });
       queryClient.invalidateQueries({ queryKey: ['clientes'] });
-      show('success', 'Cliente creado', altaForm.conCuentaCorriente ? 'Con cuenta corriente activa.' : undefined);
-      setAltaForm({ nombre: '', telefono: '', conCuentaCorriente: false });
+      show('success', 'Cliente creado', altaForm.tipo === 'cuenta_corriente' ? 'Con cuenta corriente activa.' : 'Como ocasional.');
+      setAltaForm({ nombre: '', telefono: '', tipo: 'cuenta_corriente' });
       setMostrarAlta(false);
     } catch (err: any) {
       show('error', 'No se pudo crear el cliente', err.response?.data?.error);
@@ -146,14 +148,25 @@ export function Clientes() {
               placeholder="261 5 12-3456"
             />
           </div>
-          <label className="form-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '6px', paddingBottom: '10px' }}>
-            <input
-              type="checkbox"
-              checked={altaForm.conCuentaCorriente}
-              onChange={(e) => setAltaForm({ ...altaForm, conCuentaCorriente: e.target.checked })}
-            />
-            Dar de alta la cuenta corriente ya
-          </label>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label className="form-label">Tipo</label>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${altaForm.tipo === 'cuenta_corriente' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setAltaForm({ ...altaForm, tipo: 'cuenta_corriente' })}
+              >
+                Cuenta corriente
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${altaForm.tipo === 'ocasional' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setAltaForm({ ...altaForm, tipo: 'ocasional' })}
+              >
+                Ocasional
+              </button>
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: '8px', paddingBottom: '2px' }}>
             <button className="btn btn-success" onClick={crearCliente} disabled={creando}>
               {creando ? 'Creando...' : 'Crear'}
