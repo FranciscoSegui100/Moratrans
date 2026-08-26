@@ -8,9 +8,7 @@ import { tipoLabel } from '../lib/alertLabels';
 import { formatearFechaHora } from '../lib/fechas';
 
 export function Alertas() {
-  const { alertas: todasLasAlertas, resolver, validarPago, rechazarPago, confirmarRetiro, enviarFactura } = useAlertas();
-  // Los pedidos de asesor tienen su propia sección ("Pide Asesoría"), acá no se muestran.
-  const alertas = todasLasAlertas.filter((a) => a.tipo !== 'solicita_asesor');
+  const { alertas, resolver, validarPago, rechazarPago, confirmarRetiro, enviarFactura } = useAlertas();
   const { show } = useToast();
   const [procesando, setProcesando] = useState<string | null>(null);
   const [facturaFile, setFacturaFile] = useState<Record<string, File | undefined>>({});
