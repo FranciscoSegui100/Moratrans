@@ -142,7 +142,7 @@ export function Layout({ children }: { children: ReactNode }) {
     <div className="layout">
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <div className="sidebar-logo-mark">MT</div>
+          <img src="/logo.png" alt="MoraTrans" className="sidebar-logo-mark" />
           <div>
             <h1>Moratrans</h1>
             <span>Panel logístico</span>
