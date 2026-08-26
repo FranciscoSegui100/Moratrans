@@ -100,16 +100,17 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
 const createSchema = z.object({
   nombre: z.string().trim().min(1, 'Falta el nombre'),
   telefono: z.string().trim().min(6, 'Falta el teléfono'),
+  // El operador elige de entrada si lo está cargando como cliente de cuenta
+  // corriente (ya conocido de antes del sistema) u ocasional (paga cada
+  // viaje por transferencia) — a diferencia del que se crea solo al cotizar
+  // por WhatsApp, que siempre arranca en 'sin_pedir'.
+  cuenta_corriente_estado: z.enum(['sin_pedir', 'aprobada']),
 });
 
 /**
  * POST /api/clientes — alta manual de un cliente que todavía no cotizó por
  * WhatsApp (hoy la tabla sólo se llena sola cuando cotizan, ver GET /
- * vacío). Siempre entra con cuenta corriente aprobada (a diferencia del que
- * se crea solo al cotizar por WhatsApp, que arranca en 'sin_pedir'): si un
- * operador lo está cargando a mano acá es porque ya es un cliente conocido
- * de antes del sistema, no alguien que hay que hacer pasar por el flujo de
- * pedir/aprobar.
+ * vacío).
  */
 clientesRouter.post('/', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const parsed = createSchema.safeParse(req.body);
@@ -118,9 +119,9 @@ clientesRouter.post('/', requireRol('admin', 'operador', 'finanzas'), async (req
   try {
     const [row] = await query(
       `INSERT INTO clientes (nombre, telefono, cuenta_corriente_estado)
-       VALUES ($1, $2, 'aprobada')
+       VALUES ($1, $2, $3)
        RETURNING id, nombre, telefono, cuenta_corriente_estado, numero_plan`,
-      [parsed.data.nombre, telefono],
+      [parsed.data.nombre, telefono, parsed.data.cuenta_corriente_estado],
     );
     res.status(201).json(row);
   } catch (e: any) {
