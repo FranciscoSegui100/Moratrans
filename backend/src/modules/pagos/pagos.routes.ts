@@ -13,7 +13,7 @@ import { avisarChoferRecambio } from '../viajes/viajes.routes';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
-import { formatearFechaCorta, medianocheArgentina } from '../../services/diasHabiles.service';
+import { formatearFechaCorta, formatearFechaLarga, medianocheArgentina } from '../../services/diasHabiles.service';
 
 export const pagosRouter = Router();
 pagosRouter.use(requireAuth);
@@ -284,7 +284,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       [pagoId, req.user!.id, contenedorNorm],
     );
 
-    // Datos para el ticket + para avisarle al chofer adónde tiene que llevar el contenedor.
+    // Datos para el comprobante + para avisarle al chofer adónde tiene que llevar el contenedor.
     const [info] = await query<{
       cliente_telefono: string;
       cliente_nombre: string | null;
@@ -299,13 +299,18 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       pedido_tipo: string | null;
       contenedor_recambio_numero: string | null;
       fecha_entrega: string | null;
+      numero_pedido: number | null;
+      fecha_retiro_estimada: string | null;
+      titular_transferencia: string | null;
     }>(
-      `SELECT p.cliente_telefono, pe.cliente_nombre, pe.zona, pe.precio, td.moneda,
+      `SELECT p.cliente_telefono, COALESCE(c.nombre, pe.cliente_nombre) AS cliente_nombre, pe.zona, pe.precio, td.moneda,
               pe.destino_lat, pe.destino_lng, pe.destino_direccion, pe.horario_preferido, p.es_cuenta_corriente,
-              pe.tipo AS pedido_tipo, pe.contenedor_recambio_numero, pe.fecha_entrega
+              pe.tipo AS pedido_tipo, pe.contenedor_recambio_numero, pe.fecha_entrega,
+              pe.numero_pedido, pe.fecha_retiro_estimada, p.titular_transferencia
          FROM pagos p
          LEFT JOIN pedidos pe ON pe.id = p.pedido_id
          LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
+         LEFT JOIN clientes c ON c.telefono = p.cliente_telefono
         WHERE p.id = $1`,
       [pagoId],
     );
@@ -402,11 +407,19 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
     // Envío del PDF (no bloqueante para la respuesta HTTP)
     enviarTicketPorWhatsApp({
       ticketId: result.ticket_id,
+      numeroPedido: info?.numero_pedido ?? null,
       contenedor: result.contenedor,
       zona: info?.zona ?? '—',
+      destinoDireccion: info?.destino_direccion ?? null,
+      fechaEntrega: info?.fecha_entrega ? formatearFechaLarga(info.fecha_entrega) : null,
+      fechaRetiroEstimada: info?.fecha_retiro_estimada ? formatearFechaLarga(info.fecha_retiro_estimada) : null,
+      horarioPreferido: info?.horario_preferido ?? null,
       precio: info?.precio,
       moneda: info?.moneda ?? undefined,
+      clienteNombre: info?.cliente_nombre ?? null,
       clienteTelefono: info.cliente_telefono,
+      medioPago: info?.es_cuenta_corriente ? 'cuenta_corriente' : 'transferencia',
+      titularTransferencia: info?.titular_transferencia ?? null,
       fecha: new Date(),
     }).catch((e) => {
       const motivo = motivoErrorWa(e);
