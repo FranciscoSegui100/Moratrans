@@ -168,3 +168,16 @@ clientesRouter.patch('/:id', requireRol('admin', 'operador', 'finanzas'), async 
     }
   }
 });
+
+/**
+ * DELETE /api/clientes/:id — borrar un cliente ocasional cargado por error o
+ * que no corresponde mantener (ej. un duplicado, un número de prueba). No
+ * hay ON DELETE CASCADE desde viajes/pagos (se vinculan por teléfono, no por
+ * FK a clientes.id) así que esto no borra ningún historial de viajes; sólo
+ * contenedores.cliente_id se pone en NULL si tenía alguno asignado.
+ */
+clientesRouter.delete('/:id', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+  const [row] = await query(`DELETE FROM clientes WHERE id = $1 RETURNING id`, [req.params.id]);
+  if (!row) return res.status(404).json({ error: 'Cliente inexistente' });
+  res.status(204).send();
+});

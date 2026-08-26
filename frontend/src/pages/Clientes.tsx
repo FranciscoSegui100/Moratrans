@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Check, X, Download, Pencil, ArrowRight, Send, Plus } from 'lucide-react';
+import { Check, X, Download, Pencil, ArrowRight, Send, Plus, Trash2 } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -57,6 +57,17 @@ export function Clientes() {
       show('success', estado === 'aprobada' ? 'Cuenta corriente aprobada' : 'Cuenta corriente rechazada');
     } catch {
       show('error', 'No se pudo actualizar la cuenta corriente');
+    }
+  }
+
+  async function eliminarCliente(c: Cliente) {
+    if (!confirm(`¿Eliminar a ${c.nombre}? No se puede deshacer.`)) return;
+    try {
+      await api.delete(`/api/clientes/${c.id}`);
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      show('success', 'Cliente eliminado');
+    } catch (err: any) {
+      show('error', 'No se pudo eliminar', err.response?.data?.error);
     }
   }
 
@@ -278,6 +289,17 @@ export function Clientes() {
                             disabled={enviando === c.telefono}
                           >
                             <Send size={13} strokeWidth={1.75} /> {enviando === c.telefono ? '...' : 'Enviar'}
+                          </button>
+                        </RoleGate>
+                      )}
+                      {pestana === 'ocasionales' && (
+                        <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                          <button
+                            className="btn btn-danger btn-sm"
+                            title="Eliminar cliente"
+                            onClick={() => eliminarCliente(c)}
+                          >
+                            <Trash2 size={13} strokeWidth={1.75} /> Eliminar
                           </button>
                         </RoleGate>
                       )}
