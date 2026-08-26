@@ -40,3 +40,13 @@ export const TIPOS_LUGAR: { id: string; title: string }[] = [
  * selector normal de Mañana/Tarde — placeholder fácil de ajustar acá.
  */
 export const HORARIO_BARRIO_PRIVADO = { id: 'horario_barrio_privado', title: '🕐 9 a 17hs' };
+
+/**
+ * Mensaje fijo que recibe cualquier cliente mientras el bot está apagado
+ * manualmente desde el panel (botón "Desactivar bot" en el Dashboard, ver
+ * botConfig.service.ts). No afecta a los choferes.
+ */
+export const MENSAJE_BOT_DESACTIVADO =
+  '👋 ¡Hola! Somos *MoraTrans* 🚚.\n\n' +
+  'Nuestro horario de atención es de *8:00 a 15:00 hs*, de lunes a viernes. En este momento no podemos responder por acá.\n\n' +
+  'Para cualquier consulta urgente, comunicate al 📞 *261111154*.';

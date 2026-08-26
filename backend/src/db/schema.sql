@@ -624,6 +624,22 @@ CREATE TABLE tokens_accion (
 CREATE INDEX idx_tokens_accion_usuario ON tokens_accion(usuario_id);
 
 -- ---------------------------------------------------------------------
+-- 10.b CONFIGURACIÓN DEL BOT
+-- ---------------------------------------------------------------------
+-- Interruptor manual para pausar la atención automática a CLIENTES (ej.
+-- fuera de horario) sin tocar código ni la sesión de nadie — ver
+-- botConfig.service.ts y el botón "Desactivar bot" del Dashboard. No afecta
+-- a los choferes (ver messageRouter.ts::enrutar), que siguen operando su
+-- propio menú siempre; la logística en curso no puede depender de este switch.
+CREATE TABLE configuracion_bot (
+  id              SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1), -- fila única (singleton)
+  bot_activo      BOOLEAN NOT NULL DEFAULT TRUE,
+  actualizado_por UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+  actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO configuracion_bot (id, bot_activo) VALUES (1, TRUE);
+
+-- ---------------------------------------------------------------------
 -- 11. ROW LEVEL SECURITY
 -- El backend accede con conexión directa (pg.Pool), no vía la API
 -- PostgREST de Supabase: no hacen falta policies, solo bloquear el
@@ -651,5 +667,6 @@ ALTER TABLE sesiones               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dispositivos_conocidos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_eventos           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tokens_accion          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE configuracion_bot      ENABLE ROW LEVEL SECURITY;
 
 COMMIT;
