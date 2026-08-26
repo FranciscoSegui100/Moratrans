@@ -8,6 +8,7 @@ import { formatearFechaHora } from '../lib/fechas';
 interface Comprobante {
   id: string;
   cliente_telefono: string;
+  cliente_nombre: string | null;
   monto: string | null;
   estado: string;
   tipo: 'flete' | 'alargue_retiro';
@@ -54,7 +55,7 @@ export function Comprobantes() {
                   <div className="pago-avatar"><Receipt strokeWidth={1.75} /></div>
                   <div className="pago-info">
                     <div className="pago-phone">
-                      {c.cliente_telefono}{' '}
+                      {c.cliente_nombre ? `${c.cliente_nombre} · ${c.cliente_telefono}` : c.cliente_telefono}{' '}
                       <span className={`badge ${c.estado}`} style={{ marginLeft: '6px' }}>{c.estado}</span>
                     </div>
                     <div className="pago-detail">
