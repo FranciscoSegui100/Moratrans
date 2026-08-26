@@ -1,4 +1,5 @@
 import { PoolClient } from 'pg';
+import { formatearFechaCorta, medianocheArgentina } from './diasHabiles.service';
 
 /** Mismo patrón que el resto del código: un error con `.status` que las rutas mapean a la respuesta HTTP. */
 function fail(msg: string): never {
@@ -58,11 +59,14 @@ export async function reservarParaEntrega(
   if (cont!.estado === 'disponible') {
     // La fecha de la entrega ES el vencimiento: cuándo se espera que este
     // contenedor vuelva una vez alquilado (no al programar el retiro — para
-    // entonces la alerta de "por vencer" ya llegaría tarde).
+    // entonces la alerta de "por vencer" ya llegaría tarde). vence_en es
+    // TIMESTAMPTZ: bindear la fecha pelada (`::date`) la hace caer a
+    // medianoche UTC, que en Argentina se ve como las 21hs del día
+    // anterior — medianocheArgentina() guarda el instante correcto.
     await c.query(
-      `UPDATE contenedores SET estado = 'reservado', vence_en = $2::date, actualizado_por = $3
+      `UPDATE contenedores SET estado = 'reservado', vence_en = $2, actualizado_por = $3
          WHERE numero = $1 AND estado = 'disponible'`,
-      [numero, fecha, actualizadoPor],
+      [numero, medianocheArgentina(fecha), actualizadoPor],
     );
     return;
   }
@@ -79,7 +83,7 @@ export async function reservarParaEntrega(
   }
   const venceFecha = new Date(cont!.vence_en!).toISOString().slice(0, 10);
   if (fecha < venceFecha) {
-    fail(`El contenedor ${numero} vuelve el ${new Date(cont!.vence_en!).toLocaleDateString('es-AR')}; elegí esa fecha o una posterior.`);
+    fail(`El contenedor ${numero} vuelve el ${formatearFechaCorta(cont!.vence_en!)}; elegí esa fecha o una posterior.`);
   }
   // Sigue "ocupado" hasta que vuelva de verdad — no se toca su estado acá.
 }

@@ -30,6 +30,7 @@ import { ubicacionesRouter } from './modules/ubicaciones/ubicaciones.routes';
 import { usuariosRouter } from './modules/usuarios/usuarios.routes';
 import { auditoriaRouter } from './modules/auditoria/auditoria.routes';
 import { chatRouter } from './modules/chat/chat.routes';
+import { configRouter } from './modules/config/config.routes';
 import { pool } from './config/db';
 
 export function crearApp() {
@@ -102,6 +103,7 @@ export function crearApp() {
   app.use('/api', broadcastCambios);
 
   app.use('/api/dashboard', dashboardRouter);
+  app.use('/api/config', configRouter);
   app.use('/api/pagos', pagosRouter);
   app.use('/api/alertas', alertasRouter);
   app.use('/api/choferes', choferesRouter);

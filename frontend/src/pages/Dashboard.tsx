@@ -1,6 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
-import { Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, Power, TriangleAlert } from 'lucide-react';
 import { api } from '../api/client';
+import { RoleGate } from '../components/RoleGate';
+import { useToast } from '../components/Toast';
 
 interface Kpis {
   contenedores_activos: number;
@@ -12,6 +14,11 @@ interface Kpis {
 interface EstadoDist {
   estado: string;
   total: number;
+}
+
+interface EstadoBot {
+  bot_activo: boolean;
+  actualizado_en: string;
 }
 
 const kpiConfig = [
@@ -30,6 +37,8 @@ const estadoColors: Record<string, string> = {
 };
 
 export function Dashboard() {
+  const { show } = useToast();
+  const queryClient = useQueryClient();
   const { data: kpis = null } = useQuery({
     queryKey: ['dashboard', 'kpis'],
     queryFn: () => api.get<Kpis>('/api/dashboard/kpis').then((r) => r.data),
@@ -38,14 +47,57 @@ export function Dashboard() {
     queryKey: ['dashboard', 'contenedores'],
     queryFn: () => api.get<EstadoDist[]>('/api/dashboard/contenedores').then((r) => r.data),
   });
+  const { data: estadoBot } = useQuery({
+    queryKey: ['config', 'bot'],
+    queryFn: () => api.get<EstadoBot>('/api/config/bot').then((r) => r.data),
+  });
   const totalContenedores = distribucion.reduce((s, d) => s + d.total, 0) || 1;
+
+  async function toggleBot() {
+    const activarlo = estadoBot?.bot_activo === false;
+    const aviso = activarlo
+      ? '¿Reactivar el bot? Los clientes van a volver a recibir respuestas automáticas.'
+      : '¿Desactivar el bot? Mientras esté apagado, TODOS los clientes van a recibir el mensaje de fuera de horario en vez de la respuesta automática habitual. Los choferes no se ven afectados.';
+    if (!confirm(aviso)) return;
+    try {
+      const { data } = await api.patch<EstadoBot>('/api/config/bot', { bot_activo: activarlo });
+      queryClient.setQueryData(['config', 'bot'], data);
+      show('success', activarlo ? 'Bot reactivado' : 'Bot desactivado', activarlo ? undefined : 'Los clientes ahora reciben el mensaje de fuera de horario.');
+    } catch (err: any) {
+      show('error', 'No se pudo cambiar el estado del bot', err.response?.data?.error || 'Error desconocido');
+    }
+  }
 
   return (
     <div>
       <div className="page-header">
-        <h2>Dashboard</h2>
-        <p>Resumen general del sistema logístico</p>
+        <div>
+          <h2>Dashboard</h2>
+          <p>Resumen general del sistema logístico</p>
+        </div>
+        <RoleGate roles={['admin', 'operador']}>
+          <button
+            className={`btn btn-sm ${estadoBot?.bot_activo === false ? 'btn-success' : 'btn-danger'}`}
+            onClick={toggleBot}
+          >
+            <Power size={16} strokeWidth={2} />
+            {estadoBot?.bot_activo === false ? 'Activar bot' : 'Desactivar bot'}
+          </button>
+        </RoleGate>
       </div>
+
+      {estadoBot?.bot_activo === false && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: '10px',
+            background: 'var(--warning-bg)', border: '1px solid var(--warning)', borderRadius: 'var(--radius)',
+            padding: '10px 14px', marginBottom: '16px', fontSize: '0.85rem', color: 'var(--warning)',
+          }}
+        >
+          <TriangleAlert size={18} strokeWidth={2} />
+          El bot está <strong>desactivado</strong>: los clientes reciben el mensaje de fuera de horario en vez de respuestas automáticas.
+        </div>
+      )}
 
       {/* KPI Cards */}
       <div className="kpi-grid">

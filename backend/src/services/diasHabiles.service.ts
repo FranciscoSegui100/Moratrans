@@ -47,6 +47,34 @@ export function formatearFechaLarga(fechaISO: string): string {
   return `${DIAS_SEMANA[fecha.getDay()]} ${d} de ${MESES[m - 1]}`;
 }
 
+/**
+ * "28/08/2026" — para mensajes cortos (WhatsApp, errores). A diferencia de
+ * `new Date(fechaISO).toLocaleDateString('es-AR')`, no pasa por UTC: esa
+ * conversión interpreta "2026-08-28" como medianoche UTC y, en horario
+ * Argentina (UTC-3), lo muestra retrocedido un día.
+ */
+export function formatearFechaCorta(fechaISO: string): string {
+  const [y, m, d] = fechaISO.slice(0, 10).split('-');
+  return `${d}/${m}/${y}`;
+}
+
+/**
+ * Instante UTC de la medianoche de `fechaISO` en Argentina (formato ISO,
+ * listo para bindear a una columna TIMESTAMPTZ como contenedores.vence_en).
+ * Argentina no tiene horario de verano — está fija en UTC-3 todo el año —
+ * así que sumar 3 horas siempre da el resultado correcto, sin necesitar
+ * tablas de zonas horarias.
+ *
+ * Sin esto, escribir `vence_en = $1::date` (o bindear el string pelado
+ * directo) hace que Postgres interprete la fecha como medianoche UTC —
+ * en horario argentino eso se ve como las 21hs del día ANTERIOR (ver
+ * formatearFechaCorta arriba, mismo bug de raíz pero al guardar en vez de
+ * al mostrar).
+ */
+export function medianocheArgentina(fechaISO: string): string {
+  return `${fechaISO.slice(0, 10)}T03:00:00.000Z`;
+}
+
 /** Suma `dias` días de calendario (no hábiles) a una fecha ISO. Usado para fecha_retiro_estimada. */
 export function sumarDias(fechaISO: string, dias: number): string {
   const [y, m, d] = fechaISO.split('-').map(Number);

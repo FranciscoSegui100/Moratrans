@@ -168,6 +168,21 @@ function etiquetaEspera(dias: number, fecha: string): string {
   return `hace ${dias} días`;
 }
 
+type GrupoDia = 'atrasados' | 'hoy' | 'proximos';
+
+function grupoDia(fecha: string): GrupoDia {
+  const dias = diasEspera(fecha);
+  if (dias > DIAS_ALERTA_COLA) return 'atrasados';
+  if (dias <= 0) return dias === 0 ? 'hoy' : 'proximos';
+  return 'atrasados'; // dias === 1 ("hace 1 día"): todavía no es 2+, pero tampoco es hoy — va con atrasados para no perderlo de vista en su propio grupo "Hoy".
+}
+
+const ETIQUETA_GRUPO_DIA: Record<GrupoDia, string> = {
+  atrasados: 'Atrasados',
+  hoy: 'Hoy',
+  proximos: 'Próximos',
+};
+
 // ── Detalle de una ruta (paradas, confirmación, vaciados) ─────────────────────
 
 interface ParadaViaje {
@@ -713,19 +728,27 @@ export function Rutas() {
   const visitasDelDia = agruparPendientes(viajesDelDia).length;
   const ruteados = agruparPendientes(viajesDelDia.filter((v) => v.ruta_id)).length;
 
-  // Agrupamiento por zona de los pedidos sin rutear — dentro de cada zona y
-  // entre zonas, el más antiguo primero (la cola no filtra por fecha para no
-  // perder pedidos viejos, así que hay que ordenar para no perderlos de vista).
-  const visitasPorZona = (() => {
-    const map = new Map<string, VisitaPendiente[]>();
+  // Agrupamiento en dos niveles de los pedidos sin rutear: primero por día
+  // (Atrasados / Hoy / Próximos, para no confundir pedidos de hoy con los de
+  // mañana al armar rutas) y dentro de cada día, por zona — igual que antes.
+  // La cola no filtra por fecha a propósito, para no perder pedidos viejos
+  // de vista, así que hay que ordenar para no perderlos.
+  const bolsaAgrupada = (() => {
     const ordenadas = [...visitasPendientes].sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const porGrupo = new Map<GrupoDia, Map<string, VisitaPendiente[]>>();
     for (const v of ordenadas) {
+      const grupo = grupoDia(v.fecha);
       const zona = v.zona ?? (v.destino_direccion ? v.destino_direccion.split(',')[0] : 'Sin zona');
-      const lista = map.get(zona) ?? [];
+      const porZona = porGrupo.get(grupo) ?? new Map<string, VisitaPendiente[]>();
+      const lista = porZona.get(zona) ?? [];
       lista.push(v);
-      map.set(zona, lista);
+      porZona.set(zona, lista);
+      porGrupo.set(grupo, porZona);
     }
-    return [...map.entries()].sort((a, b) => a[1][0].fecha.localeCompare(b[1][0].fecha));
+    const orden: GrupoDia[] = ['atrasados', 'hoy', 'proximos'];
+    return orden
+      .filter((g) => porGrupo.has(g))
+      .map((grupo) => ({ grupo, zonas: [...porGrupo.get(grupo)!.entries()] }));
   })();
 
   // Selecciona la primera ruta del día automáticamente cuando cambia la fecha o cargan los datos.
@@ -740,9 +763,18 @@ export function Rutas() {
     queryClient.invalidateQueries({ queryKey: ['viajes', 'del-dia', fecha] });
   };
 
+  /** Agrega/confirma una ruta en la caché de la lista del día sin esperar el refetch de recargarListas(). */
+  function agregarRutaOptimista(r: Ruta) {
+    queryClient.setQueryData<Ruta[]>(['rutas', fecha], (prev = []) =>
+      prev.some((x) => x.id === r.id) ? prev : [...prev, r]);
+  }
+
   async function armarRuta(choferId: string) {
     try {
       const { data } = await api.post<Ruta>('/api/rutas', { fecha, chofer_id: choferId });
+      // Optimista: la pestaña del chofer aparece al toque, sin esperar el
+      // refetch — recargarListas() la reconfirma igual con el dato real.
+      agregarRutaOptimista(data);
       recargarListas();
       setRutaSeleccionada(data.id);
     } catch (err: any) {
@@ -752,11 +784,25 @@ export function Rutas() {
 
   async function asignarAChofer(visita: VisitaPendiente, choferId: string) {
     if (!choferId) return;
+
+    // Optimista: la saca de la bolsa al toque — antes se quedaba en pantalla
+    // hasta que volvían las 3 queries que invalida recargarListas(), y esa
+    // espera era la demora que más se notaba al armar una ruta.
+    const previoCola = queryClient.getQueryData<ViajePendiente[]>(['rutas', 'bolsa']);
+    if (previoCola) {
+      const idsAQuitar = new Set([visita.entrega?.id, visita.retiro?.id, visita.id].filter(Boolean) as string[]);
+      queryClient.setQueryData<ViajePendiente[]>(
+        ['rutas', 'bolsa'],
+        previoCola.filter((v) => !idsAQuitar.has(v.id)),
+      );
+    }
+
     try {
       let ruta = rutas.find((r) => r.chofer_id === choferId);
       if (!ruta) {
         const res = await api.post<Ruta>('/api/rutas', { fecha, chofer_id: choferId });
         ruta = res.data;
+        agregarRutaOptimista(ruta);
       }
       const viajeId = visita.entrega?.id ?? visita.retiro?.id ?? visita.id;
       await api.post(`/api/rutas/${ruta.id}/paradas`, { viaje_id: viajeId });
@@ -764,7 +810,16 @@ export function Rutas() {
       show('success', 'Pedido asignado', `Asignado a la ruta de ${nombreChofer}.`);
       setRutaSeleccionada(ruta.id);
       recargarListas();
+      // Precalienta el detalle del chofer destino (mismo criterio que
+      // moverParadaA): sin esto, la demora "del otro lado" es la primera
+      // carga en frío de esa pestaña recién al hacer clic en ella.
+      const rutaId = ruta.id;
+      queryClient.prefetchQuery({
+        queryKey: ['rutas', rutaId],
+        queryFn: () => api.get<RutaData>(`/api/rutas/${rutaId}`).then((r) => r.data),
+      });
     } catch (err: any) {
+      if (previoCola) queryClient.setQueryData(['rutas', 'bolsa'], previoCola);
       show('error', 'No se pudo asignar el pedido', err.response?.data?.error || 'Error desconocido');
     }
   }
@@ -825,12 +880,25 @@ export function Rutas() {
             <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes en la bolsa.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: 'calc(100vh - 240px)', overflowY: 'auto', paddingRight: '4px' }}>
-              {visitasPorZona.map(([zona, items]) => (
-                <div key={zona} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', background: 'var(--bg-surface)', padding: '4px 8px', borderRadius: 'var(--radius-sm)' }}>
-                    📍 {zona} ({items.length})
+              {bolsaAgrupada.map(({ grupo, zonas }) => (
+                <div key={grupo} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    fontSize: '0.78rem', fontWeight: 700,
+                    color: grupo === 'atrasados' ? 'var(--danger)' : grupo === 'proximos' ? 'var(--text-muted)' : 'var(--text-primary)',
+                    padding: '4px 8px', borderRadius: 'var(--radius-sm)',
+                    background: grupo === 'atrasados' ? 'var(--warning-bg)' : 'transparent',
+                  }}>
+                    {grupo === 'atrasados' && <AlertTriangle size={13} strokeWidth={2} />}
+                    {ETIQUETA_GRUPO_DIA[grupo]}
                   </div>
-                  {items.map((visita) => {
+
+                  {zonas.map(([zona, items]) => (
+                    <div key={zona} style={{ display: 'flex', flexDirection: 'column', gap: '8px', opacity: grupo === 'proximos' ? 0.75 : 1 }}>
+                      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', background: 'var(--bg-surface)', padding: '4px 8px', borderRadius: 'var(--radius-sm)' }}>
+                        📍 {zona} ({items.length})
+                      </div>
+                      {items.map((visita) => {
                     const fuenteDireccion = visita.destino_direccion
                       ? visita
                       : visita.entrega?.destino_direccion
@@ -897,7 +965,9 @@ export function Rutas() {
                         </div>
                       </div>
                     );
-                  })}
+                      })}
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>

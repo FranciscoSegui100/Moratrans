@@ -1,6 +1,8 @@
 import { query } from '../../config/db';
-import { sendList } from './graphApi';
+import { sendList, sendText } from './graphApi';
 import { getSesion, clearSesion, setSesion } from './session.store';
+import { botEstaActivo } from '../../services/botConfig.service';
+import { MENSAJE_BOT_DESACTIVADO } from '../../config/bot.config';
 import { handleCotizacion, handlePedirNuevoContenedor } from './flows/cotizacion.flow';
 import { handlePago } from './flows/pago.flow';
 import { handleChofer } from './flows/chofer.flow';
@@ -95,7 +97,8 @@ function pideAsesor(m: MensajeEntrante): boolean {
 
 /**
  * Enrutador principal. Decide el flujo según:
- *  1. Si el teléfono pertenece a un chofer -> flujo chofer.
+ *  1. Si el teléfono pertenece a un chofer -> flujo chofer (exento del punto 1.b).
+ *  1.b. Bot desactivado a mano desde el panel -> mensaje fijo, corta acá.
  *  2. Comandos globales (menú / asesor) -> funcionan en cualquier momento,
  *     incluso en medio de otro flujo.
  *  3. Un comprobante (imagen/documento) -> siempre al flujo de pago.
@@ -112,6 +115,14 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
 
   if (chofer.length > 0 || sesion.flujo === 'chofer') {
     return handleChofer(m, sesion);
+  }
+
+  // 1.b) Interruptor manual "Desactivar bot" (Dashboard): pausa la atención
+  // automática a CUALQUIER cliente, sin tocar sesión ni flujo — se ignora
+  // todo lo demás y siempre se responde el mismo aviso. No afecta a
+  // choferes (ya se filtraron arriba).
+  if (!(await botEstaActivo())) {
+    return sendText(m.from, MENSAJE_BOT_DESACTIVADO);
   }
 
   // 2) Comandos globales: funcionan siempre, sin importar en qué flujo esté.
