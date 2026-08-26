@@ -20,6 +20,7 @@ import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
 import { useToast } from './Toast';
 import { tipoLabel } from '../lib/alertLabels';
+import { playAlertSound } from '../lib/notificationSound';
 
 interface AlertaSocket { tipo: string; mensaje: string; cliente_telefono?: string | null }
 
@@ -93,6 +94,7 @@ export function Layout({ children }: { children: ReactNode }) {
       else setAlertCount((c) => c + 1);
       if (a.tipo === 'pago_pendiente_validacion') setPagosCount((c) => c + 1);
       show('info', tipoLabel[a.tipo] ?? a.tipo, a.cliente_telefono ? `${a.cliente_telefono} · ${a.mensaje}` : a.mensaje);
+      playAlertSound();
     };
     socket.on('connect', cargarConteo);
     socket.on('nueva_alerta', onNuevaAlerta);
