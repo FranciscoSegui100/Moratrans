@@ -102,6 +102,13 @@ function colapsarPalabrasRepetidas(texto: string): string {
  * "Clark 246 Store, J. y M. Clark 246, ..."), lo que confunde la búsqueda
  * de texto completo de Nominatim — si la búsqueda completa no encuentra
  * nada, se reintenta sacando el primer segmento (separado por coma).
+ *
+ * Nominatim (OpenStreetMap) no tiene cargada la altura exacta de todas las
+ * calles — cuando no la tiene, el resultado cae al centro de la calle sin
+ * avisar. Si pasa eso, se conserva igual la calle+altura tal como la mandó
+ * Google (que sí la tiene, aunque el mapa gratuito no pueda ubicarla con
+ * precisión) y se lo marca explícitamente, para que quede claro en la
+ * confirmación "¿es este el destino?" que conviene revisar bien el pin.
  */
 async function geocodificarDireccion(direccionCruda: string): Promise<CoordenadasLinkMaps | null> {
   const segmentos = direccionCruda
@@ -116,12 +123,17 @@ async function geocodificarDireccion(direccionCruda: string): Promise<Coordenada
 
   for (const intento of intentos) {
     const resultado = await buscarEnNominatim(intento);
-    if (resultado) return resultado;
+    if (!resultado) continue;
+    if (!resultado.tieneNumero) {
+      const calleConNumero = segmentosUnicos.find((s) => /\d/.test(s)) ?? intento;
+      resultado.direccion = `${calleConNumero} (altura aproximada — revisá bien el pin abajo)`;
+    }
+    return resultado;
   }
   return null;
 }
 
-async function buscarEnNominatim(direccion: string): Promise<CoordenadasLinkMaps | null> {
+async function buscarEnNominatim(direccion: string): Promise<(CoordenadasLinkMaps & { tieneNumero: boolean }) | null> {
   const { data } = await axios.get('https://nominatim.openstreetmap.org/search', {
     params: {
       format: 'jsonv2',
@@ -139,6 +151,7 @@ async function buscarEnNominatim(direccion: string): Promise<CoordenadasLinkMaps
   if (!Array.isArray(data) || data.length === 0) return null;
   const r = data[0];
   const a = r.address as Record<string, string> | undefined;
+  const tieneNumero = !!a?.house_number;
   const calle = a ? [a.road, a.house_number].filter(Boolean).join(' ') : '';
   const localidad = a ? a.suburb || a.city_district || a.city || a.town || a.village || a.county : '';
   const partes = [calle, localidad].filter(Boolean);
@@ -146,5 +159,6 @@ async function buscarEnNominatim(direccion: string): Promise<CoordenadasLinkMaps
     lat: Number(r.lat),
     lng: Number(r.lon),
     direccion: partes.length > 0 ? partes.join(', ') : (r.display_name as string),
+    tieneNumero,
   };
 }
