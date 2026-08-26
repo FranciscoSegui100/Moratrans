@@ -3,7 +3,6 @@ import { sendText, sendButtons, sendList, sendLocationRequest } from '../graphAp
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
-import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
 import { reverseGeocode } from '../../../services/geocoding.service';
 import { proximosDiasHabiles, formatearFechaLarga } from '../../../services/diasHabiles.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
@@ -37,8 +36,8 @@ const DIAS_A_OFRECER_ENTREGA_CC = 3;
  * [ubicacion_pin_entrega [-> confirmar_departamento_pin_entrega, si el pin
  * no coincide con el departamento elegido] | ubicacion_texto_entrega] ->
  * confirmar_entrega_cliente -> indicacion_entrega_cliente ->
- * dia_entrega_cliente -> horario_entrega_cliente -> titular_entrega_cliente
- * -> confirmar_resumen_entrega -> [crea el viaje].
+ * dia_entrega_cliente -> horario_entrega_cliente -> confirmar_resumen_entrega
+ * -> [crea el viaje].
  *
  * Mismo criterio que cotizacion.flow.ts (ver comentario ahí): se elige
  * departamento primero, después pin (prioritario, verificado por geometría
@@ -78,9 +77,6 @@ export async function handlePedirEntrega(m: MensajeEntrante, sesion: Sesion): Pr
   }
   if (sesion.paso === 'horario_entrega_cliente') {
     return manejarHorario(m, sesion);
-  }
-  if (sesion.paso === 'titular_entrega_cliente') {
-    return manejarTitular(m, sesion);
   }
   if (sesion.paso === 'confirmar_resumen_entrega') {
     return manejarConfirmacionResumen(m, sesion);
@@ -318,46 +314,32 @@ async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void>
     await pedirHorarioPreferido(to, 'Elegí una de las opciones de abajo. 👇');
     return;
   }
-  await sendText(to, '🙋 ¿A nombre de quién hacemos la reserva?');
-  await setSesion({ ...sesion, paso: 'titular_entrega_cliente', contexto: { ...sesion.contexto, horarioPreferido: opcion.title } });
-}
 
-async function manejarTitular(m: MensajeEntrante, sesion: Sesion): Promise<void> {
-  const to = m.from;
-  const titular = (m.texto ?? '').trim();
-  if (m.tipo !== 'text' || titular.length < 2) {
-    await manejarRespuestaInvalida(m, '🙋 Decime el nombre de la persona o empresa a nombre de quién hacemos la reserva.');
-    return;
-  }
-
-  const { destinoDireccion, destinoLat, destinoLng, departamento, direccionVerificada, precio, moneda, fechaEntrega, horarioPreferido } = sesion.contexto as {
+  const { destinoDireccion, destinoLat, destinoLng, departamento, precio, moneda, fechaEntrega } = sesion.contexto as {
     destinoDireccion: string | null;
     destinoLat: number | null;
     destinoLng: number | null;
     departamento: string;
-    direccionVerificada: boolean;
     precio: string | null;
     moneda: string | null;
     fechaEntrega: string;
-    horarioPreferido: string;
   };
 
   const lineaPrecio = precio ? `\nCosto: *${moneda} ${Number(precio).toLocaleString('es-AR')}*` : '';
   await sendButtons(
     to,
     `📦 *Resumen del pedido*\n\n` +
-      `A nombre de: ${titular}\n` +
       `Dirección: ${destinoDireccion ?? `ubicación compartida (${destinoLat}, ${destinoLng})`}\n` +
       `Zona: *${departamento}*${lineaPrecio}\n` +
       `Fecha de entrega: ${formatearFechaLarga(fechaEntrega)}\n` +
-      `Franja horaria: ${horarioPreferido}\n\n` +
+      `Franja horaria: ${opcion.title}\n\n` +
       `¿Está todo correcto?`,
     [
       { id: 'resumen_entrega_si', title: '✅ Sí, confirmar' },
       { id: 'resumen_entrega_no', title: '↩️ Corregir' },
     ],
   );
-  await setSesion({ ...sesion, paso: 'confirmar_resumen_entrega', contexto: { ...sesion.contexto, titular } });
+  await setSesion({ ...sesion, paso: 'confirmar_resumen_entrega', contexto: { ...sesion.contexto, horarioPreferido: opcion.title } });
 }
 
 async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -372,7 +354,7 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
     return;
   }
 
-  const { destinoDireccion, destinoLat, destinoLng, departamento, direccionVerificada, precio, horarioPreferido, fechaEntrega, titular } = sesion.contexto as {
+  const { destinoDireccion, destinoLat, destinoLng, departamento, direccionVerificada, precio, horarioPreferido, fechaEntrega } = sesion.contexto as {
     destinoDireccion: string | null;
     destinoLat: number | null;
     destinoLng: number | null;
@@ -381,16 +363,7 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
     precio: string | null;
     horarioPreferido: string;
     fechaEntrega: string;
-    titular: string;
   };
-
-  // Este flujo ya pregunta "¿a nombre de quién?" (titular) más arriba — si
-  // todavía no tenemos un nombre real guardado para este teléfono (nombre
-  // de perfil de WhatsApp vacío), se aprovecha ese dato en vez de volver a
-  // preguntar (ver necesitaNombre en clientes.service.ts).
-  if (await necesitaNombre(to)) {
-    await obtenerOCrearCliente(to, titular);
-  }
 
   // Depósito de donde sale el contenedor (si hay uno solo activo cargado; si
   // hay varios, se completa después desde el panel — mismo criterio que el
@@ -403,7 +376,7 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
      RETURNING id`,
     [
       fechaEntrega, to, departamento, destinoDireccion, destinoLat, destinoLng, direccionVerificada, horarioPreferido, precio,
-      `Pedido de entrega por WhatsApp (cuenta corriente). Solicitado por: ${titular}`,
+      'Pedido de entrega por WhatsApp (cuenta corriente).',
       deposito?.id ?? null, deposito?.direccion ?? null,
     ],
   );
@@ -413,7 +386,7 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
      VALUES ('entrega_solicitada', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [viaje.id, `${to} pidió una entrega por cuenta corriente (a nombre de ${titular})`],
+    [viaje.id, `${to} pidió una entrega por cuenta corriente`],
   );
   if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
   emitRecursoActualizado('viajes');
