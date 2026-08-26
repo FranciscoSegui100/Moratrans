@@ -188,10 +188,21 @@ function generarTicketPDF(d: DatosTicket): Promise<Buffer> {
   });
 }
 
+/** Nombre de archivo prolijo (sin tildes/espacios/símbolos raros) a partir de un texto libre. */
+function limpiarNombreArchivo(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // saca tildes
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 /** Genera el comprobante, lo guarda en Supabase Storage y lo envía al cliente por WhatsApp. */
 export async function enviarTicketPorWhatsApp(d: DatosTicket): Promise<void> {
   const buffer = await generarTicketPDF(d);
-  const filename = `comprobante_${d.ticketId}.pdf`;
+  const nombreCliente = limpiarNombreArchivo(d.clienteNombre || 'Cliente');
+  const zona = limpiarNombreArchivo(d.zona);
+  const filename = `Comprobante_${nombreCliente}_${zona}_${d.ticketId}.pdf`;
   await subirArchivo(buffer, `tickets/${filename}`, 'application/pdf');
   const mediaId = await uploadMedia(buffer, 'application/pdf', filename);
   const caption = d.contenedor
