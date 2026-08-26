@@ -269,11 +269,14 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
   // ver un precio antes de decidir — y como es una relación recurrente
   // (varios contenedores a lo largo del tiempo), se le ofrece todo lo que
   // puede necesitar sin tener que escribir texto libre para encontrarlo.
+  const saludo = cliente?.nombre && cliente.nombre !== 'Sin nombre' ? `👋 ¡Hola, ${cliente.nombre.split(' ')[0]}!` : '👋 ¡Hola!';
+
   if (esCuentaCorriente) {
     await sendList(
       to,
-      `👋 ¡Hola, ${cliente.nombre}!`,
-      'Soy el asistente de *MoraTrans* 🚚. Tenés *cuenta corriente activa* — ¿en qué te ayudo hoy?\n\n' +
+      saludo,
+      'Soy el asistente virtual de *MoraTrans* 🚚 — más de 30 años de experiencia en transporte y logística de contenedores.\n\n' +
+        'Tenés *cuenta corriente activa* — ¿en qué te ayudo hoy?\n\n' +
         '_Escribí *menú* cuando quieras volver acá, y *asesor* si preferís hablar con una persona._',
       'Ver opciones',
       [
@@ -301,8 +304,9 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
 
   await sendList(
     to,
-    '👋 ¡Hola!',
-    'Soy el asistente de *MoraTrans* 🚚. ¿En qué te ayudo hoy?\n\n' +
+    saludo,
+    'Soy el asistente virtual de *MoraTrans* 🚚 — más de 30 años de experiencia en transporte y logística de contenedores.\n\n' +
+      '¿En qué te puedo ayudar hoy?\n\n' +
       '_Escribí *menú* cuando quieras volver acá, y *asesor* si preferís hablar con una persona._',
     'Ver opciones',
     opciones,
