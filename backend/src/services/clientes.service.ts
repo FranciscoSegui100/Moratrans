@@ -24,3 +24,14 @@ export async function obtenerOCrearCliente(telefono: string, nombre?: string | n
   );
   return row;
 }
+
+/**
+ * El nombre de perfil de WhatsApp no siempre está puesto (queda "Sin
+ * nombre" en el panel) — se usa recién al confirmar un pedido, no en el
+ * primer contacto, para no dar de alta un cliente por cada teléfono que
+ * solo anduvo mirando el menú sin llegar a pedir nada.
+ */
+export async function necesitaNombre(telefono: string): Promise<boolean> {
+  const [row] = await query<{ nombre: string }>('SELECT nombre FROM clientes WHERE telefono = $1', [telefono]);
+  return !row || row.nombre === 'Sin nombre';
+}
