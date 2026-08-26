@@ -4,8 +4,14 @@ import { setSesion, clearSesion } from '../session.store';
 import { datosBancarios } from './pago.flow';
 import { obtenerOCrearCliente } from '../../../services/clientes.service';
 import { reverseGeocode } from '../../../services/geocoding.service';
+import { emitAlerta } from '../../../config/socket';
 import {
-  verificarUbicacionCompleta,
+  pedirDepartamento,
+  departamentoElegido,
+  pedirMetodoUbicacion,
+  mensajePedirCalleNumero,
+  verificarUbicacionConDepartamentoElegido,
+  preguntarMismatchDepartamento,
   resolverUbicacionMensaje,
   mensajePedirUbicacionPasoAPaso,
   combinarDireccionConIndicacion,
@@ -21,30 +27,35 @@ import type { Sesion } from '../session.store';
 
 /**
  * Flujo de cotización / pedido (menú cerrado):
- *   inicio -> ubicacion -> confirmar_ubicacion (capa 4) -> indicacion_chofer
- *   -> tipo_lugar -> [barrio_privado] -> emplazamiento -> dia_entrega ->
- *   horario -> [crea el pedido]
+ *   inicio -> elegir_departamento -> elegir_metodo_ubicacion ->
+ *   [ubicacion_pin [-> confirmar_departamento_pin, si el pin no coincide
+ *   con el departamento elegido] | ubicacion_texto] -> confirmar_ubicacion
+ *   (capa 4) -> indicacion_chofer -> tipo_lugar -> [barrio_privado] ->
+ *   emplazamiento -> dia_entrega -> horario -> [crea el pedido]
  *
- * No se pregunta el departamento por adelantado: siempre se detecta a
- * partir de la ubicación real (ver verificarUbicacionCompleta en
- * ubicacionZona.helper.ts). Preguntarlo antes era peor, no mejor — un
- * cliente puede no saber en qué departamento cae su dirección (sobre todo
- * cerca de un límite), y si elegía uno y después la ubicación real caía en
- * otro, el bot dejaba "ganar" a lo elegido a mano por sobre la geometría
- * real: quedaba un pedido con la dirección de un departamento pero
- * facturado con la tarifa de otro.
- *
- * Ubicación: solo por el botón nativo "Enviar ubicación" de WhatsApp, nunca
- * escribiendo la dirección como texto en el chat — ese botón ya incluye un
- * buscador de direcciones adentro (mapa con lupa), así que cubre tanto
- * "mandar mi ubicación actual" como "buscar mi calle a mano", sin el riesgo
- * de ambigüedad de geocodificar texto libre (calles repetidas en varios
- * departamentos, direcciones incompletas, etc.). Si el cliente escribe en
- * vez de usar el botón, se le repite el pedido de ubicación.
+ * Se vuelve a preguntar el departamento primero (a diferencia de una
+ * versión anterior de este flujo que lo sacó): el cliente elige a mano, y
+ * después dos formas de dar la dirección exacta dentro de ese
+ * departamento:
+ *  1. Pin GPS (prioritario, se aclara que es más preciso) — se sigue
+ *     verificando por geometría real (point-in-polygon). Si el pin cae en
+ *     otro departamento del elegido, no se resuelve solo: se le pregunta al
+ *     cliente si quiere cambiar la cotización al departamento real o volver
+ *     a mandar la ubicación (ver verificarUbicacionConDepartamentoElegido /
+ *     preguntarMismatchDepartamento en ubicacionZona.helper.ts) — sin
+ *     mostrar precios en esa pregunta, para no influenciar la respuesta.
+ *  2. Calle y número escritos a mano, del departamento ya elegido — NO se
+ *     busca en el mapa (nada de geocodificar texto libre, con su riesgo de
+ *     ambigüedad entre calles repetidas). Se guarda tal cual la escribe el
+ *     cliente, marcada como pendiente de verificación manual
+ *     (`direccion_verificada = false`) — un asesor la confirma con el
+ *     cliente antes de despachar (ver alerta 'direccion_sin_verificar').
+ * En ambos casos, recién en la confirmación final (capa 4) se muestra el
+ * precio — así el cliente no elige departamento en base al precio.
  *
  * handlePedirNuevoContenedor(): cliente ocasional con contenedor que pide
- * otro — misma dirección (ya verificada antes, no se repite capa 4) u otra
- * (reusa `ubicacion`).
+ * otro — misma dirección (ya verificada antes, no se repite nada de esto) u
+ * otra (arranca de nuevo por elegir_departamento).
  */
 
 /** Precio activo de una zona, o null si no está cargada/activa. */
@@ -69,6 +80,7 @@ async function avanzarAConfirmarUbicacion(
   destinoLat: number | null,
   destinoLng: number | null,
   destinoDireccion: string | null,
+  direccionVerificada: boolean,
 ): Promise<void> {
   const resumenUbicacion =
     destinoLat != null && destinoLng != null
@@ -90,7 +102,7 @@ async function avanzarAConfirmarUbicacion(
   await setSesion({
     ...sesion,
     paso: 'confirmar_ubicacion',
-    contexto: { departamento, destinoLat, destinoLng, destinoDireccion },
+    contexto: { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada },
   });
 }
 
@@ -141,25 +153,53 @@ async function pedirDiaEntrega(to: string, sesion: Sesion): Promise<void> {
   await setSesion({ ...sesion, paso: 'dia_entrega' });
 }
 
-/**
- * Ubicación de entrega: solo por el botón "Enviar ubicación" (ver
- * mensajePedirUbicacionPasoAPaso) — detecta el departamento a partir del
- * pin real, nunca se pregunta antes (ver comentario al principio del
- * archivo). Si no cae en ninguna zona conocida -> caso borde "fuera de
- * zona". Si cae en una zona sin tarifa activa, se le avisa. Si todo da
- * bien, avanza a la confirmación de capa 4. Si el cliente escribe texto en
- * vez de usar el botón, se le repite el pedido — no se intenta geocodificar.
- */
-async function manejarUbicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+/** Paso "elegir_metodo_ubicacion": pin (prioritario) o escribir la dirección. */
+async function manejarMetodoUbicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
+  const departamento = sesion.contexto.departamento as string;
+
+  if (m.seleccionId === 'metodo_pin') {
+    await setSesion({ ...sesion, paso: 'ubicacion_pin' });
+    await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso(`📍 Mandanos el pin de la dirección en *${departamento}*.`));
+    return;
+  }
+  if (m.seleccionId === 'metodo_texto') {
+    await setSesion({ ...sesion, paso: 'ubicacion_texto' });
+    await sendText(to, mensajePedirCalleNumero(departamento));
+    return;
+  }
+  await manejarRespuestaInvalida(m, 'Elegí una de las opciones de abajo. 👇');
+}
+
+/**
+ * Paso "ubicacion_pin": pin real (o link de Maps) — se verifica contra el
+ * departamento ya elegido por geometría real (ver
+ * verificarUbicacionConDepartamentoElegido). Si no coincide, no se decide
+ * solo (ver manejarMismatchDepartamento).
+ */
+async function manejarUbicacionPin(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const departamento = sesion.contexto.departamento as string;
   const ubicacion = await resolverUbicacionMensaje(m);
 
   if (ubicacion.tipo === 'ubicacion') {
-    const resultado = await verificarUbicacionCompleta(m, sesion, ubicacion.lat, ubicacion.lng, ubicacion.direccionCruda, { requiereTarifa: true });
+    const destinoDireccion = ubicacion.direccionCruda ?? (await reverseGeocode(ubicacion.lat, ubicacion.lng));
+    const resultado = await verificarUbicacionConDepartamentoElegido(m, sesion, ubicacion.lat, ubicacion.lng, destinoDireccion, departamento, {
+      requiereTarifa: true,
+    });
     if (!resultado.ok) return;
 
-    const destinoDireccion = ubicacion.direccionCruda ?? (await reverseGeocode(ubicacion.lat, ubicacion.lng));
-    await avanzarAConfirmarUbicacion(to, sesion, resultado.departamento, ubicacion.lat, ubicacion.lng, destinoDireccion);
+    if (!resultado.coincide) {
+      await preguntarMismatchDepartamento(to, resultado.departamentoElegido, resultado.departamentoDetectado);
+      await setSesion({
+        ...sesion,
+        paso: 'confirmar_departamento_pin',
+        contexto: { departamento, departamentoDetectado: resultado.departamentoDetectado, destinoLat: ubicacion.lat, destinoLng: ubicacion.lng, destinoDireccion },
+      });
+      return;
+    }
+
+    await avanzarAConfirmarUbicacion(to, sesion, resultado.departamento, ubicacion.lat, ubicacion.lng, destinoDireccion, true);
     return;
   }
 
@@ -168,7 +208,50 @@ async function manejarUbicacion(m: MensajeEntrante, sesion: Sesion): Promise<voi
     return;
   }
 
-  await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso('📍 Para cotizar necesito verificar tu ubicación.'));
+  await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso(`📍 Mandanos el pin de la dirección en *${departamento}*.`));
+}
+
+/** Paso "confirmar_departamento_pin": el pin no coincidía con el departamento elegido — el cliente decide cuál vale. */
+async function manejarMismatchDepartamento(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const { departamento, departamentoDetectado, destinoLat, destinoLng, destinoDireccion } = sesion.contexto as {
+    departamento: string;
+    departamentoDetectado: string;
+    destinoLat: number;
+    destinoLng: number;
+    destinoDireccion: string | null;
+  };
+
+  if (m.seleccionId === 'depto_reenviar') {
+    await setSesion({ ...sesion, paso: 'ubicacion_pin', contexto: { departamento } });
+    await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso(`📍 Dale, mandanos de nuevo el pin de la dirección en *${departamento}*.`));
+    return;
+  }
+  if (m.seleccionId !== 'depto_cambiar') {
+    await manejarRespuestaInvalida(m, 'Elegí una de las opciones de abajo. 👇');
+    return;
+  }
+
+  const tarifa = await tarifaDeZona(departamentoDetectado);
+  if (!tarifa) {
+    await sendText(to, `🙁 No tenemos tarifa activa en *${departamentoDetectado}* todavía. Escribí *asesor* para coordinarlo.`);
+    await clearSesion(to);
+    return;
+  }
+  await avanzarAConfirmarUbicacion(to, sesion, departamentoDetectado, destinoLat, destinoLng, destinoDireccion, true);
+}
+
+/** Paso "ubicacion_texto": calle y número escritos a mano, del departamento ya elegido — se guarda tal cual, sin buscarla en el mapa. */
+async function manejarUbicacionTexto(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const departamento = sesion.contexto.departamento as string;
+
+  if (m.tipo !== 'text' || !m.texto || m.texto.trim().length < 4) {
+    await sendText(to, mensajePedirCalleNumero(departamento));
+    return;
+  }
+
+  await avanzarAConfirmarUbicacion(to, sesion, departamento, null, null, m.texto.trim(), false);
 }
 
 const BOTONES_UBICACION_NUEVO = [
@@ -211,8 +294,11 @@ async function manejarEleccionUbicacionNuevo(m: MensajeEntrante, sesion: Sesion)
   const to = m.from;
 
   if (m.seleccionId === 'nuevo_otra_ubicacion') {
-    await setSesion({ telefono: to, flujo: 'cotizacion', paso: 'ubicacion', contexto: {} });
-    await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso('📍 ¿A dónde va el contenedor nuevo?'));
+    if (!(await pedirDepartamento(to, '📍 ¿A qué *departamento* llevamos el contenedor nuevo?'))) {
+      await clearSesion(to);
+      return;
+    }
+    await setSesion({ telefono: to, flujo: 'cotizacion', paso: 'elegir_departamento', contexto: {} });
     return;
   }
   if (m.seleccionId !== 'nuevo_misma_ubicacion') {
@@ -242,40 +328,64 @@ async function manejarEleccionUbicacionNuevo(m: MensajeEntrante, sesion: Sesion)
     telefono: to,
     flujo: 'cotizacion',
     paso: 'tipo_lugar',
-    contexto: { departamento: zona, destinoLat, destinoLng, destinoDireccion },
+    contexto: { departamento: zona, destinoLat, destinoLng, destinoDireccion, direccionVerificada: true },
   });
 }
 
 export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
 
-  if (sesion.paso === 'ubicacion') {
-    return manejarUbicacion(m, sesion);
+  if (sesion.paso === 'elegir_metodo_ubicacion') {
+    return manejarMetodoUbicacion(m, sesion);
+  }
+  if (sesion.paso === 'ubicacion_pin') {
+    return manejarUbicacionPin(m, sesion);
+  }
+  if (sesion.paso === 'confirmar_departamento_pin') {
+    return manejarMismatchDepartamento(m, sesion);
+  }
+  if (sesion.paso === 'ubicacion_texto') {
+    return manejarUbicacionTexto(m, sesion);
   }
   if (sesion.paso === 'elegir_ubicacion_nuevo') {
     return manejarEleccionUbicacionNuevo(m, sesion);
   }
 
-  // Paso 0: arranque -> directo a pedir la ubicación (nunca se pregunta el
-  // departamento antes, ver comentario al principio del archivo).
+  // Paso 0: arranque -> elegir departamento primero.
   if (!sesion.paso || sesion.paso === 'inicio') {
-    await setSesion({ telefono: to, flujo: 'cotizacion', paso: 'ubicacion', contexto: {} });
-    await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso('📍 Para cotizar necesito verificar tu ubicación.'));
+    if (!(await pedirDepartamento(to, '¡Genial! Elegí el *departamento* de destino:'))) {
+      await clearSesion(to);
+      return;
+    }
+    await setSesion({ telefono: to, flujo: 'cotizacion', paso: 'elegir_departamento', contexto: {} });
+    return;
+  }
+
+  // Paso 1: recibió el departamento -> elegir cómo dar la dirección.
+  if (sesion.paso === 'elegir_departamento') {
+    const departamento = departamentoElegido(m);
+    if (!departamento) {
+      await manejarRespuestaInvalida(m, 'Por favor, elegí una opción de la lista.\n\n_Escribí *menú* para volver al inicio._');
+      return;
+    }
+    await setSesion({ ...sesion, paso: 'elegir_metodo_ubicacion', contexto: { departamento } });
+    await pedirMetodoUbicacion(to, departamento);
     return;
   }
 
   // Paso 3 (capa 4): confirmó (o no) que ahí va el contenedor.
   if (sesion.paso === 'confirmar_ubicacion') {
-    const { departamento, destinoLat, destinoLng, destinoDireccion } = sesion.contexto as {
+    const { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada } = sesion.contexto as {
       departamento: string;
       destinoLat: number | null;
       destinoLng: number | null;
       destinoDireccion: string | null;
+      direccionVerificada: boolean;
     };
 
     if (m.seleccionId === 'ubicacion_no') {
-      await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso('📍 Dale, mandámela de nuevo.'));
-      await setSesion({ ...sesion, paso: 'ubicacion', contexto: {} });
+      await setSesion({ ...sesion, paso: 'elegir_metodo_ubicacion', contexto: { departamento } });
+      await pedirMetodoUbicacion(to, departamento);
       return;
     }
     if (m.seleccionId !== 'ubicacion_es_destino') {
@@ -287,17 +397,18 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
     }
 
     await sendText(to, '🚚 ¿Alguna indicación para el chofer (portón, timbre, entre calles)? Si no hay, escribí "no".');
-    await setSesion({ ...sesion, paso: 'indicacion_chofer', contexto: { departamento, destinoLat, destinoLng, destinoDireccion } });
+    await setSesion({ ...sesion, paso: 'indicacion_chofer', contexto: { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada } });
     return;
   }
 
   // Paso 3b: indicación libre para el chofer, ya con la ubicación confirmada.
   if (sesion.paso === 'indicacion_chofer') {
-    const { departamento, destinoLat, destinoLng, destinoDireccion } = sesion.contexto as {
+    const { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada } = sesion.contexto as {
       departamento: string;
       destinoLat: number | null;
       destinoLng: number | null;
       destinoDireccion: string | null;
+      direccionVerificada: boolean;
     };
     if (m.tipo !== 'text' || !m.texto) {
       await sendText(to, '🚚 Contame si hay alguna indicación para el chofer, o escribí "no".');
@@ -305,7 +416,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
     }
     const indicacion = normalizarIndicacion(m.texto);
     const destinoDireccionFinal = combinarDireccionConIndicacion(destinoDireccion, indicacion);
-    await pedirTipoLugar(to, { ...sesion, contexto: { departamento, destinoLat, destinoLng, destinoDireccion: destinoDireccionFinal } });
+    await pedirTipoLugar(to, { ...sesion, contexto: { departamento, destinoLat, destinoLng, destinoDireccion: destinoDireccionFinal, direccionVerificada } });
     return;
   }
 
@@ -397,11 +508,12 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
 
 /** Crea el pedido y cierra el flujo — sea con la franja elegida por botones o la fija de barrio privado. */
 async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion, opcion: { title: string }): Promise<void> {
-  const { departamento, destinoLat, destinoLng, destinoDireccion, tipoLugar, enViaPublica, fechaEntrega } = sesion.contexto as {
+  const { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada, tipoLugar, enViaPublica, fechaEntrega } = sesion.contexto as {
     departamento: string;
     destinoLat: number | null;
     destinoLng: number | null;
     destinoDireccion: string | null;
+    direccionVerificada: boolean;
     tipoLugar: string | null;
     enViaPublica: boolean | null;
     fechaEntrega: string;
@@ -419,18 +531,32 @@ async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion, o
   const [pedido] = await query<{ numero_pedido: number }>(
     `INSERT INTO pedidos (
        cliente_telefono, cliente_nombre, zona, precio, estado, destino_lat, destino_lng, destino_direccion,
-       horario_preferido, tipo_lugar, en_via_publica, fecha_entrega, fecha_retiro_estimada
-     ) VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7,$8,$9,$10,$11,$12)
+       direccion_verificada, horario_preferido, tipo_lugar, en_via_publica, fecha_entrega, fecha_retiro_estimada
+     ) VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7,$8,$9,$10,$11,$12,$13)
      RETURNING numero_pedido`,
     [
       to, m.nombrePerfil ?? null, departamento, precio, destinoLat, destinoLng, destinoDireccion,
-      opcion.title, tipoLugar ?? null, enViaPublica ?? null, fechaEntrega, fechaRetiroEstimada,
+      direccionVerificada, opcion.title, tipoLugar ?? null, enViaPublica ?? null, fechaEntrega, fechaRetiroEstimada,
     ],
   );
   // Alta/actualización en el padrón de clientes (ver clientes.service.ts) —
   // así la pantalla Clientes del panel refleja a todo el que cotizó, no
   // solo a quien pidió cuenta corriente.
   obtenerOCrearCliente(to, m.nombrePerfil).catch((e) => console.error('Error dando de alta al cliente:', e));
+
+  // Dirección escrita a mano, sin buscarla en el mapa (ver
+  // manejarUbicacionTexto) -> alerta para que un asesor la confirme con el
+  // cliente antes de despachar.
+  if (!direccionVerificada) {
+    const [alerta] = await query(
+      `INSERT INTO alertas (tipo, referencia_id, mensaje)
+       VALUES ('direccion_sin_verificar', $1, $2)
+       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+      [pedido.numero_pedido.toString(), `Pedido #${pedido.numero_pedido}: dirección escrita a mano sin verificar en el mapa — "${destinoDireccion}" (${departamento})`],
+    );
+    if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
+  }
 
   await sendText(
     to,

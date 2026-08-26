@@ -10,7 +10,12 @@ import { reverseGeocode } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
 import {
-  verificarUbicacionCompleta,
+  pedirDepartamento,
+  departamentoElegido,
+  pedirMetodoUbicacion,
+  mensajePedirCalleNumero,
+  verificarUbicacionConDepartamentoElegido,
+  preguntarMismatchDepartamento,
   resolverUbicacionMensaje,
   mensajePedirUbicacionPasoAPaso,
   combinarDireccionConIndicacion,
@@ -31,15 +36,21 @@ import type { Sesion } from '../session.store';
  *
  * Ubicación: si la dirección ya registrada del contenedor sigue sirviendo,
  * se confirma con un sí/no simple (ya fue verificada en su momento). Si es
- * una dirección NUEVA, pasa por la misma verificación completa de 4 capas
- * que "Cotizar" (capas 2/3 vía ubicacionZona.helper.ts + capa 4 propia acá
- * abajo) — la zona se recalcula a partir del GPS nuevo, no se asume la del
- * contenedor viejo (si no, quedaría cobrando la tarifa de una zona distinta
- * a donde en verdad va el recambio).
+ * una dirección NUEVA, se elige departamento primero y después pin
+ * (prioritario, verificado por geometría real contra el departamento
+ * elegido — si no coincide, el cliente decide, ver
+ * ubicacionZona.helper.ts) o calle/número a mano sin buscar en el mapa
+ * (marcados `direccion_verificada = false`, ver alerta
+ * 'direccion_sin_verificar') — mismo criterio que cotizacion.flow.ts. La
+ * zona se recalcula siempre a partir de la dirección nueva, nunca se asume
+ * la del contenedor viejo.
  *
  * Pasos: (elegir_contenedor_recambio) -> confirmar_recambio ->
- * confirmar_ubicacion_recambio [-> ubicacion_recambio -> confirmar_ubicacion_recambio_nueva
- * (capa 4) -> indicacion_recambio] -> horario_recambio -> pago.
+ * confirmar_ubicacion_recambio [-> elegir_departamento_recambio ->
+ * elegir_metodo_ubicacion_recambio -> [ubicacion_pin_recambio [->
+ * confirmar_departamento_pin_recambio] | ubicacion_texto_recambio] ->
+ * confirmar_ubicacion_recambio_nueva (capa 4) -> indicacion_recambio] ->
+ * horario_recambio -> pago.
  */
 export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -53,8 +64,20 @@ export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promis
   if (sesion.paso === 'confirmar_ubicacion_recambio') {
     return manejarConfirmacionUbicacion(m, sesion);
   }
-  if (sesion.paso === 'ubicacion_recambio') {
+  if (sesion.paso === 'elegir_departamento_recambio') {
+    return manejarDepartamento(m, sesion);
+  }
+  if (sesion.paso === 'elegir_metodo_ubicacion_recambio') {
+    return manejarMetodoUbicacion(m, sesion);
+  }
+  if (sesion.paso === 'ubicacion_pin_recambio') {
     return manejarNuevaUbicacion(m, sesion);
+  }
+  if (sesion.paso === 'confirmar_departamento_pin_recambio') {
+    return manejarMismatchDepartamento(m, sesion);
+  }
+  if (sesion.paso === 'ubicacion_texto_recambio') {
+    return manejarUbicacionTexto(m, sesion);
   }
   if (sesion.paso === 'confirmar_ubicacion_recambio_nueva') {
     return manejarConfirmacionUbicacionNueva(m, sesion);
@@ -181,8 +204,39 @@ async function manejarConfirmacionUbicacion(m: MensajeEntrante, sesion: Sesion):
 }
 
 async function pedirUbicacionNueva(to: string, sesion: Sesion): Promise<void> {
-  await setSesion({ ...sesion, paso: 'ubicacion_recambio' });
-  await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso('📍 ¿Cuál es la dirección nueva?'));
+  if (!(await pedirDepartamento(to, '📍 ¿A qué *departamento* es la dirección nueva?'))) {
+    await clearSesion(to);
+    return;
+  }
+  await setSesion({ ...sesion, paso: 'elegir_departamento_recambio' });
+}
+
+async function manejarDepartamento(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const departamento = departamentoElegido(m);
+  if (!departamento) {
+    await manejarRespuestaInvalida(m, 'Por favor, elegí una opción de la lista.\n\n_Escribí *menú* para volver al inicio._');
+    return;
+  }
+  await setSesion({ ...sesion, paso: 'elegir_metodo_ubicacion_recambio', contexto: { ...sesion.contexto, departamento } });
+  await pedirMetodoUbicacion(to, departamento);
+}
+
+async function manejarMetodoUbicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const departamento = sesion.contexto.departamento as string;
+
+  if (m.seleccionId === 'metodo_pin') {
+    await setSesion({ ...sesion, paso: 'ubicacion_pin_recambio' });
+    await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso(`📍 Mandanos el pin de la dirección nueva en *${departamento}*.`));
+    return;
+  }
+  if (m.seleccionId === 'metodo_texto') {
+    await setSesion({ ...sesion, paso: 'ubicacion_texto_recambio' });
+    await sendText(to, mensajePedirCalleNumero(departamento));
+    return;
+  }
+  await manejarRespuestaInvalida(m, 'Elegí una de las opciones de abajo. 👇');
 }
 
 async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -194,24 +248,35 @@ async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void>
   await confirmarYPedirPago(m, { ...sesion, contexto: { ...sesion.contexto, horarioPreferido: opcion.title } });
 }
 
-/** Dirección nueva para el recambio: solo por el botón "Enviar ubicación" (ver mensajePedirUbicacionPasoAPaso). */
+/** Dirección nueva del recambio, pin: se verifica contra el departamento ya elegido por geometría real (ver verificarUbicacionConDepartamentoElegido). */
 async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
+  const departamento = sesion.contexto.departamento as string;
   const ubicacion = await resolverUbicacionMensaje(m);
 
   if (ubicacion.tipo === 'ubicacion') {
     const destinoDireccion = ubicacion.direccionCruda ?? (await reverseGeocode(ubicacion.lat, ubicacion.lng));
 
     const numero = sesion.contexto.numero as string;
-    const resultado = await verificarUbicacionCompleta(m, sesion, ubicacion.lat, ubicacion.lng, destinoDireccion, {
+    const resultado = await verificarUbicacionConDepartamentoElegido(m, sesion, ubicacion.lat, ubicacion.lng, destinoDireccion, departamento, {
       requiereTarifa: true,
       contextoPedidoFueraDeZona: { tipo: 'recambio', contenedorRecambioNumero: numero },
     });
     if (!resultado.ok) return;
 
+    if (!resultado.coincide) {
+      await preguntarMismatchDepartamento(to, resultado.departamentoElegido, resultado.departamentoDetectado);
+      await setSesion({
+        ...sesion,
+        paso: 'confirmar_departamento_pin_recambio',
+        contexto: { ...sesion.contexto, departamento, departamentoDetectado: resultado.departamentoDetectado, destinoLat: ubicacion.lat, destinoLng: ubicacion.lng, destinoDireccion },
+      });
+      return;
+    }
+
     // La zona se recalcula con la ubicación nueva — no se asume la del
     // contenedor viejo, podría ser una dirección en otro departamento con otra tarifa.
-    await avanzarACapaCuatroRecambio(to, sesion, resultado.departamento, ubicacion.lat, ubicacion.lng, destinoDireccion);
+    await avanzarACapaCuatroRecambio(to, sesion, resultado.departamento, ubicacion.lat, ubicacion.lng, destinoDireccion, true);
     return;
   }
 
@@ -220,7 +285,61 @@ async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promis
     return;
   }
 
-  await sendText(to, mensajePedirUbicacionPasoAPaso('📍 Necesito la dirección nueva.'));
+  await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso(`📍 Mandanos el pin de la dirección nueva en *${departamento}*.`));
+}
+
+async function manejarMismatchDepartamento(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const { departamento, departamentoDetectado, destinoLat, destinoLng, destinoDireccion } = sesion.contexto as {
+    departamento: string;
+    departamentoDetectado: string;
+    destinoLat: number;
+    destinoLng: number;
+    destinoDireccion: string | null;
+  };
+
+  if (m.seleccionId === 'depto_reenviar') {
+    await setSesion({ ...sesion, paso: 'ubicacion_pin_recambio', contexto: { ...sesion.contexto, departamento } });
+    await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso(`📍 Dale, mandanos de nuevo el pin de la dirección en *${departamento}*.`));
+    return;
+  }
+  if (m.seleccionId !== 'depto_cambiar') {
+    await manejarRespuestaInvalida(m, 'Elegí una de las opciones de abajo. 👇');
+    return;
+  }
+
+  const [tarifa] = await query<{ precio: string; moneda: string }>(
+    'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+    [departamentoDetectado],
+  );
+  if (!tarifa) {
+    await sendText(to, `🙁 No tenemos tarifa activa en *${departamentoDetectado}* todavía. Escribí *asesor* para coordinarlo.`);
+    await clearSesion(to);
+    return;
+  }
+  await avanzarACapaCuatroRecambio(to, sesion, departamentoDetectado, destinoLat, destinoLng, destinoDireccion, true);
+}
+
+/** Dirección nueva del recambio, escrita a mano: se guarda tal cual, sin buscarla en el mapa. */
+async function manejarUbicacionTexto(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const departamento = sesion.contexto.departamento as string;
+
+  if (m.tipo !== 'text' || !m.texto || m.texto.trim().length < 4) {
+    await sendText(to, mensajePedirCalleNumero(departamento));
+    return;
+  }
+
+  const [tarifa] = await query<{ precio: string; moneda: string }>(
+    'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+    [departamento],
+  );
+  if (!tarifa) {
+    await sendText(to, `🙁 No tenemos tarifa activa en *${departamento}* todavía. Escribí *asesor* para coordinarlo.`);
+    await clearSesion(to);
+    return;
+  }
+  await avanzarACapaCuatroRecambio(to, sesion, departamento, null, null, m.texto.trim(), false);
 }
 
 /** Capa 4 para dirección nueva: misma pregunta puntual que "Cotizar", ver cotizacion.flow.ts. */
@@ -228,11 +347,15 @@ async function avanzarACapaCuatroRecambio(
   to: string,
   sesion: Sesion,
   departamento: string,
-  destinoLat: number,
-  destinoLng: number,
+  destinoLat: number | null,
+  destinoLng: number | null,
   destinoDireccion: string | null,
+  direccionVerificada: boolean,
 ): Promise<void> {
-  const resumenUbicacion = `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`;
+  const resumenUbicacion =
+    destinoLat != null && destinoLng != null
+      ? `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`
+      : (destinoDireccion as string);
 
   await sendButtons(
     to,
@@ -246,7 +369,7 @@ async function avanzarACapaCuatroRecambio(
   await setSesion({
     ...sesion,
     paso: 'confirmar_ubicacion_recambio_nueva',
-    contexto: { ...sesion.contexto, zona: departamento, destinoLat, destinoLng, destinoDireccion },
+    contexto: { ...sesion.contexto, zona: departamento, departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada },
   });
 }
 
@@ -254,7 +377,9 @@ async function manejarConfirmacionUbicacionNueva(m: MensajeEntrante, sesion: Ses
   const to = m.from;
 
   if (m.seleccionId === 'ubicacion_no') {
-    await pedirUbicacionNueva(to, sesion);
+    const departamento = sesion.contexto.departamento as string;
+    await setSesion({ ...sesion, paso: 'elegir_metodo_ubicacion_recambio', contexto: { ...sesion.contexto, departamento } });
+    await pedirMetodoUbicacion(to, departamento);
     return;
   }
   if (m.seleccionId !== 'ubicacion_es_destino') {
@@ -312,13 +437,25 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
   const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
   const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
   const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
+  const direccionVerificada = (sesion.contexto.direccionVerificada as boolean | undefined) ?? true;
   const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
 
-  await query(
-    `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_direccion, destino_lat, destino_lng, horario_preferido, tipo, contenedor_recambio_numero)
-     VALUES ($1,$2,$3,$4,'confirmado',$5,$6,$7,$8,'recambio',$9)`,
-    [to, m.nombrePerfil ?? null, zona, precio, destino, destinoLat, destinoLng, horarioPreferido, numero],
+  const [pedido] = await query<{ numero_pedido: number }>(
+    `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, tipo, contenedor_recambio_numero)
+     VALUES ($1,$2,$3,$4,'confirmado',$5,$6,$7,$8,$9,'recambio',$10) RETURNING numero_pedido`,
+    [to, m.nombrePerfil ?? null, zona, precio, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, numero],
   );
+
+  if (!direccionVerificada) {
+    const [alertaDireccion] = await query(
+      `INSERT INTO alertas (tipo, referencia_id, mensaje)
+       VALUES ('direccion_sin_verificar', $1, $2)
+       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+      [pedido.numero_pedido.toString(), `Recambio de ${to} (pedido #${pedido.numero_pedido}): dirección escrita a mano sin verificar en el mapa — "${destino}" (${zona})`],
+    );
+    if (alertaDireccion) emitAlerta({ ...alertaDireccion, cliente_telefono: to });
+  }
 
   await clearSesion(to);
   await sendText(
@@ -351,22 +488,34 @@ async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: s
   const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
   const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
   const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
+  const direccionVerificada = (sesion.contexto.direccionVerificada as boolean | undefined) ?? true;
   const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
 
   const grupoId = randomUUID();
   const vaciadero = await resolverUbicacion('vaciadero');
   const deposito = await resolverUbicacion('deposito');
 
-  await query(
-    `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
-     VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, $5, $6, $7, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $8, $9, $10)`,
-    [numero, to, zona, destino, destinoLat, destinoLng, horarioPreferido, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+  const [retiro] = await query<{ id: string }>(
+    `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+     VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, $5, $6, $7, $8, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11) RETURNING id`,
+    [numero, to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
   );
   await query(
-    `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, importe, es_cuenta_corriente, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
-     VALUES ('entrega', CURRENT_DATE, $1, $2, $3, $4, $5, $6, $7, TRUE, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $8, $9, $10)`,
-    [to, zona, destino, destinoLat, destinoLng, horarioPreferido, precio, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
+    `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, importe, es_cuenta_corriente, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+     VALUES ('entrega', CURRENT_DATE, $1, $2, $3, $4, $5, $6, $7, $8, TRUE, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
+    [to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, precio, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
   );
+
+  if (!direccionVerificada) {
+    const [alertaDireccion] = await query(
+      `INSERT INTO alertas (tipo, referencia_id, mensaje)
+       VALUES ('direccion_sin_verificar', $1, $2)
+       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+      [retiro.id, `Recambio de ${to} (contenedor ${numero}): dirección escrita a mano sin verificar en el mapa — "${destino}" (${zona})`],
+    );
+    if (alertaDireccion) emitAlerta({ ...alertaDireccion, cliente_telefono: to });
+  }
 
   const [alerta] = await query(
     `INSERT INTO alertas (tipo, referencia_id, mensaje)

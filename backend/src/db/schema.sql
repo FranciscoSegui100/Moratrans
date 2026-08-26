@@ -60,7 +60,8 @@ CREATE TYPE tipo_alerta AS ENUM (
   'recambio_solicitado',
   'retiro_solicitado',
   'entrega_solicitada',
-  'alargue_solicitado'
+  'alargue_solicitado',
+  'direccion_sin_verificar'
 );
 
 -- 'flete' = pago normal (ligado a un pedido). 'alargue_retiro' = paga un
@@ -223,6 +224,11 @@ CREATE TABLE pedidos (
   -- Solo si tipo = 'recambio': el contenedor lleno que ya se sabe que hay que
   -- retirar (viene de contenedoresDelCliente, no se le vuelve a preguntar).
   contenedor_recambio_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
+  -- false cuando la dirección se escribió a mano (calle y número, sin
+  -- buscarla en el mapa) en vez de venir de un pin o link de Maps — señala
+  -- que una persona la tiene que confirmar con el cliente antes de despachar
+  -- (ver migración 0037 y ubicacionZona.helper.ts).
+  direccion_verificada BOOLEAN NOT NULL DEFAULT TRUE,
   creado_en        TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_pedidos_telefono ON pedidos(cliente_telefono);
@@ -415,6 +421,9 @@ CREATE TABLE viajes (
   -- retiro = destino_direccion -> ubicacion_direccion.
   ubicacion_id      UUID REFERENCES ubicaciones(id) ON DELETE SET NULL,
   ubicacion_direccion TEXT,
+  -- Igual que pedidos.direccion_verificada (ver migración 0037): false si
+  -- destino_direccion se escribió a mano sin buscarla en el mapa.
+  direccion_verificada BOOLEAN NOT NULL DEFAULT TRUE,
   estado            estado_viaje NOT NULL DEFAULT 'programado',
   -- Recambio: une la fila 'entrega' (vacío que deja) con la 'retiro' (lleno
   -- que se lleva) de una misma visita. NULL en un viaje normal.
