@@ -11,7 +11,7 @@ import { manejarRespuestaInvalida } from '../estados';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
-type PedidoCandidato = { id: string; zona: string; precio: string; moneda: string | null };
+export type PedidoCandidato = { id: string; zona: string; precio: string; moneda: string | null };
 
 /**
  * Datos de la cuenta a la que el cliente tiene que transferir, para
@@ -39,8 +39,6 @@ export function datosBancarios(): string {
  *    tiene más de uno abierto a la vez, no se puede asumir cuál está pagando
  *    -> se le pregunta antes de registrar nada; si tiene uno solo (el caso
  *    normal), sigue derecho sin pedirle nada extra.
- *  - Tras registrar el comprobante, se pregunta si necesita factura; si dice
- *    que sí, se avisa al panel para que un operador la cargue.
  */
 export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -58,11 +56,6 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   // Respuesta a "¿Para cuál cotización es este pago a cuenta corriente?"
   if (sesion.paso === 'elegir_pedido_cc') {
     return manejarEleccionPedidoCC(m, sesion);
-  }
-
-  // Respuesta a "¿Necesitás factura?"
-  if (sesion.paso === 'preguntar_factura') {
-    return manejarRespuestaFactura(m, sesion);
   }
 
   // Si el usuario escribió "Ya pagué" (o "pago"/"pagar"/etc, ver messageRouter)
@@ -162,7 +155,7 @@ export async function opcionesMetodoPago(telefono: string): Promise<{ id: string
  * cuál cotización es este pago?" cada vez que el cliente paga algo nuevo —
  * por eso se excluyen los que ya tienen un pago 'validado' asociado.
  */
-async function pedidosAbiertos(telefono: string): Promise<PedidoCandidato[]> {
+export async function pedidosAbiertos(telefono: string): Promise<PedidoCandidato[]> {
   return query<PedidoCandidato>(
     `SELECT pe.id, pe.zona, pe.precio, td.moneda
        FROM pedidos pe
@@ -172,6 +165,23 @@ async function pedidosAbiertos(telefono: string): Promise<PedidoCandidato[]> {
         AND NOT EXISTS (SELECT 1 FROM pagos pg WHERE pg.pedido_id = pe.id AND pg.estado = 'validado')
       ORDER BY pe.creado_en DESC LIMIT 10`,
     [telefono],
+  );
+}
+
+/**
+ * Aviso para cuando un cliente (sin cuenta corriente) quiere empezar un
+ * pedido nuevo pero ya tiene uno abierto sin pagar — se le pide que primero
+ * pague ese, en vez de dejar que se acumulen pedidos "cotizado" sin dueño
+ * claro y con la ambigüedad de "¿para cuál es este comprobante?" (ver
+ * pedidosAbiertos arriba). No aplica a cuenta corriente: ahí no hay
+ * comprobante que esperar.
+ */
+export function mensajePedidoPendiente(pedido: PedidoCandidato): string {
+  return (
+    `🙁 Ya tenés un pedido pendiente de pago — *${pedido.zona}*` +
+    `${pedido.precio ? ` (*${pedido.moneda ?? ''} ${Number(pedido.precio).toLocaleString('es-AR')}*)` : ''}.\n\n` +
+    `Mandá el comprobante de ese primero (o escribí *Ya pagué*) antes de pedir uno nuevo.\n\n` +
+    `_Si tenés dudas, escribí *asesor*._`
   );
 }
 
@@ -344,9 +354,9 @@ async function manejarEleccionPedido(m: MensajeEntrante, sesion: Sesion): Promis
 
 /**
  * Registra el pago (o lo agrega como adjunto si ya había uno pendiente para
- * el mismo pedido — sección 23, comprobante duplicado), alerta al panel y
- * sigue el flujo (factura). `pedido` puede venir `undefined` si el cliente
- * no tiene ninguna cotización abierta.
+ * el mismo pedido — sección 23, comprobante duplicado) y alerta al panel.
+ * `pedido` puede venir `undefined` si el cliente no tiene ninguna cotización
+ * abierta.
  */
 async function registrarComprobante(
   to: string,
@@ -461,49 +471,5 @@ async function registrarComprobante(
         '_Si en un rato no tenés novedades, escribí *asesor*._',
   );
 
-  await preguntarFactura(to, pagoId);
-}
-
-/** Pregunta si necesita factura (la carga un operador desde el panel). */
-async function preguntarFactura(to: string, pagoId: string): Promise<void> {
-  await setSesion({ telefono: to, flujo: 'pago', paso: 'preguntar_factura', contexto: { pagoId } });
-  await sendButtons(to, '🧾 ¿Necesitás que te mandemos la factura?', [
-    { id: 'factura_si', title: '🧾 Sí, quiero' },
-    { id: 'factura_no', title: '👍 No, gracias' },
-  ]);
-}
-
-/** Maneja la respuesta a "¿Necesitás factura?" tras registrar el comprobante. */
-async function manejarRespuestaFactura(m: MensajeEntrante, sesion: Sesion): Promise<void> {
-  const to = m.from;
-  const pagoId = sesion.contexto?.pagoId as string | undefined;
-  // Palabras exactas (sin acentos), no substring: "sin factura" contiene "si"
-  // como substring pero no es un "sí" — con match de substring quedaba mal
-  // interpretado como que el cliente SÍ quería factura.
-  const palabras = (m.texto ?? '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .split(/[^a-z]+/)
-    .filter(Boolean);
-  const quiere =
-    m.seleccionId === 'factura_si' ||
-    (m.seleccionId !== 'factura_no' && palabras.includes('si') && !palabras.includes('no'));
-
-  if (quiere && pagoId) {
-    const [alerta] = await query(
-      `INSERT INTO alertas (tipo, referencia_id, mensaje)
-       VALUES ('factura_solicitada', $1, $2)
-       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [pagoId, `${to} pidió factura del pago ${pagoId}`],
-    );
-    if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
-    await clearSesion(to);
-    await sendText(to, '🧾 ¡Perfecto! Ya avisamos al equipo — te la mandamos por acá en cuanto esté lista.');
-    return;
-  }
-
   await clearSesion(to);
-  await sendText(to, '👍 ¡Listo! Cualquier cosa, escribí *menú*.');
 }

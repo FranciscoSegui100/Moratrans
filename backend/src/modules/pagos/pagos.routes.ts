@@ -1,13 +1,13 @@
 import { randomUUID } from 'crypto';
-import express, { Router, Request, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import path from 'path';
 import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol, puedeVerComprobante } from '../../middleware/rbac';
-import { encrypt, decrypt, encryptBuffer, decryptBuffer } from '../../services/crypto.service';
+import { decrypt, decryptBuffer } from '../../services/crypto.service';
 import { enviarTicketPorWhatsApp } from '../../services/pdf.service';
 import { subirArchivo, descargarArchivo } from '../../services/storage.service';
-import { sendText, sendButtons, uploadMedia, sendDocument, motivoErrorWa } from '../whatsapp/graphApi';
+import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { avisarChoferRecambio } from '../viajes/viajes.routes';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
@@ -486,74 +486,3 @@ pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), a
   res.json({ ok: true });
 });
 
-/**
- * POST /api/pagos/:id/factura — el operador carga la factura (cuando el
- * cliente la pidió tras el flujo de "Ya pagué") y se la reenviamos por
- * WhatsApp. El archivo viaja en el body crudo (no es un form-data); el
- * frontend manda el File directamente con su Content-Type real. La extensión
- * guardada sale del Content-Type validado contra una whitelist (pdf/jpg/png),
- * nunca de un nombre de archivo dado por el cliente.
- */
-pagosRouter.post(
-  '/:id/factura',
-  requireRol('admin', 'operador', 'finanzas'),
-  express.raw({ type: () => true, limit: '10mb' }),
-  async (req: Request, res: Response) => {
-    const buffer = req.body as Buffer;
-    if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
-      return res.status(400).json({ error: 'Archivo vacío o inválido' });
-    }
-
-    const [pago] = await query<{ cliente_telefono: string }>(
-      'SELECT cliente_telefono FROM pagos WHERE id = $1',
-      [req.params.id],
-    );
-    if (!pago) return res.status(404).json({ error: 'Pago inexistente' });
-
-    const contentType = req.header('content-type') || 'application/octet-stream';
-    // La extensión sale SOLO del Content-Type (whitelist), nunca del filename que
-    // manda el cliente: así no se puede colar un archivo con extensión ejecutable/HTML.
-    const ext = contentType.includes('pdf')
-      ? '.pdf'
-      : contentType.includes('png')
-        ? '.png'
-        : contentType.includes('jpeg') || contentType.includes('jpg')
-          ? '.jpg'
-          : null;
-    if (!ext) return res.status(400).json({ error: 'Tipo de archivo no permitido (solo PDF, JPG o PNG)' });
-
-    const filename = `${req.params.id}_${Date.now()}${ext}`;
-    const rutaStorage = `facturas/${filename}`;
-    // Cifrado igual que los comprobantes (sección 9): el bucket de terceros
-    // nunca guarda el binario en claro. `buffer` sin cifrar se sigue usando
-    // abajo para reenviarla por WhatsApp.
-    await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
-
-    await query('UPDATE pagos SET factura_url = $2 WHERE id = $1', [
-      req.params.id,
-      encrypt(rutaStorage),
-    ]);
-    await query(
-      `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'factura_solicitada' AND referencia_id = $1`,
-      [req.params.id],
-    );
-    emitAlertaActualizada({ tipo: 'factura_solicitada', referencia_id: req.params.id, estado: 'resuelta' });
-
-    try {
-      const mediaId = await uploadMedia(buffer, contentType, `factura${ext}`);
-      await sendDocument(pago.cliente_telefono, mediaId, `factura${ext}`, '🧾 ¡Acá tenés tu factura!');
-    } catch (e) {
-      const motivo = motivoErrorWa(e);
-      console.error('Error enviando factura por WhatsApp:', motivo);
-      // Además del 502 al operador que la está cargando ahora, queda una
-      // alerta en el panel por si nadie ve esa respuesta (se cerró la
-      // pestaña, no se fijó) — que no se pierda que el cliente se quedó sin factura.
-      notificarEnvioFallido(req.params.id, pago.cliente_telefono, 'envío de factura', motivo).catch((e2) =>
-        console.error('Error registrando alerta de envío fallido:', e2),
-      );
-      return res.status(502).json({ error: 'La factura se guardó pero no se pudo enviar por WhatsApp' });
-    }
-
-    res.json({ ok: true });
-  },
-);

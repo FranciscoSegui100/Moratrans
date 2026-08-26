@@ -205,9 +205,11 @@ export async function enviarTicketPorWhatsApp(d: DatosTicket): Promise<void> {
   const filename = `Comprobante_${nombreCliente}_${zona}_${d.ticketId}.pdf`;
   await subirArchivo(buffer, `tickets/${filename}`, 'application/pdf');
   const mediaId = await uploadMedia(buffer, 'application/pdf', filename);
-  const caption = d.contenedor
-    ? `✅ ¡Pago validado! Tu contenedor asignado es ${d.contenedor}.`
-    : `✅ ¡Pago validado! Tu pedido fue confirmado y registrado exitosamente.`;
+  const caption =
+    (d.contenedor
+      ? `✅ ¡Pago validado! Tu contenedor asignado es ${d.contenedor}.`
+      : `✅ ¡Pago validado! Tu pedido fue confirmado y registrado exitosamente.`) +
+    `\n\n🧾 Si necesitás factura, comunicate con un asesor.`;
 
   await sendDocument(
     d.clienteTelefono,
