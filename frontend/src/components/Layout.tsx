@@ -75,15 +75,16 @@ export function Layout({ children }: { children: ReactNode }) {
   useEffect(() => armarSonidoAlerta(), []);
 
   // Conectar socket globalmente y escuchar alertas para el badge + el toast.
-  // "Conversaciones" muestra la cantidad de clientes que pidieron asesor
-  // (tipo 'solicita_asesor'), separado del badge de "Alertas". Los pagos
-  // pendientes de validar suman a su propio badge en "Validar pagos" además
-  // de quedar listados en "Alertas" (no se les saca de ahí).
+  // "Alertas" cuenta TODO lo que va a la bandeja de /alertas (incluidos los
+  // pedidos de asesor, que ahora también se listan ahí). "Conversaciones"
+  // muestra además, por separado, cuántos de esos son pedidos de asesor. Los
+  // pagos pendientes de validar suman a su propio badge en "Validar pagos"
+  // además de quedar listados en "Alertas" (no se les saca de ahí).
   useEffect(() => {
     const cargarConteo = () => {
       api.get<{ id: string; tipo: string }[]>('/api/alertas?estado=nueva')
         .then((r) => {
-          setAlertCount(r.data.filter((a) => a.tipo !== 'solicita_asesor').length);
+          setAlertCount(r.data.length);
           setConversacionesCount(r.data.filter((a) => a.tipo === 'solicita_asesor').length);
           setPagosCount(r.data.filter((a) => a.tipo === 'pago_pendiente_validacion').length);
         })
@@ -96,8 +97,8 @@ export function Layout({ children }: { children: ReactNode }) {
     // suspendió, cualquier alerta creada durante ese lapso no llegó por
     // socket y quedaría afuera del contador hasta un refresh manual.
     const onNuevaAlerta = (a: AlertaSocket) => {
+      setAlertCount((c) => c + 1);
       if (a.tipo === 'solicita_asesor') setConversacionesCount((c) => c + 1);
-      else setAlertCount((c) => c + 1);
       if (a.tipo === 'pago_pendiente_validacion') setPagosCount((c) => c + 1);
       show('info', tipoLabel[a.tipo] ?? a.tipo, a.cliente_telefono ? `${a.cliente_telefono} · ${a.mensaje}` : a.mensaje);
       playAlertSound();
