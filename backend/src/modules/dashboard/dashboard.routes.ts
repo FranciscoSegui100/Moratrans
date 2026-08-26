@@ -31,3 +31,34 @@ dashboardRouter.get('/contenedores', async (_req: Request, res: Response) => {
   const rows = await query('SELECT estado, count(*)::int AS total FROM contenedores GROUP BY estado');
   res.json(rows);
 });
+
+/**
+ * GET /api/dashboard/comprobantes — histórico de comprobantes de pago ya
+ * enviados por el cliente (cualquier estado: pendiente/validado/rechazado),
+ * más recientes primero. El binario del comprobante en sí se sigue sirviendo
+ * por GET /api/pagos/:id/comprobante (mismo criterio de rol admin/operador/finanzas).
+ */
+dashboardRouter.get('/comprobantes', async (_req: Request, res: Response) => {
+  const rows = await query<{
+    id: string;
+    cliente_telefono: string;
+    monto: string | null;
+    estado: string;
+    tipo: string;
+    creado_en: string;
+    titular_transferencia: string | null;
+    zona: string | null;
+    precio: string | null;
+    moneda: string | null;
+  }>(
+    `SELECT p.id, p.cliente_telefono, p.monto, p.estado, p.tipo, p.creado_en, p.titular_transferencia,
+            pe.zona, pe.precio, td.moneda
+       FROM pagos p
+       LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+       LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
+      WHERE p.url_comprobante IS NOT NULL
+      ORDER BY p.creado_en DESC
+      LIMIT 200`,
+  );
+  res.json(rows);
+});
