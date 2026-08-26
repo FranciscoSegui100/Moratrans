@@ -37,7 +37,7 @@ export function Clientes() {
   const [pestana, setPestana] = useState<Pestana>('cuenta_corriente');
   const [enviando, setEnviando] = useState<string | null>(null);
   const [mostrarAlta, setMostrarAlta] = useState(false);
-  const [altaForm, setAltaForm] = useState({ nombre: '', telefono: '', conCuentaCorriente: false });
+  const [altaForm, setAltaForm] = useState({ nombre: '', telefono: '' });
   const [creando, setCreando] = useState(false);
 
   const { data: todosLosClientes = [] } = useQuery({
@@ -80,11 +80,10 @@ export function Clientes() {
       await api.post('/api/clientes', {
         nombre: altaForm.nombre.trim(),
         telefono: altaForm.telefono.trim(),
-        cuenta_corriente_estado: altaForm.conCuentaCorriente ? 'aprobada' : 'sin_pedir',
       });
       queryClient.invalidateQueries({ queryKey: ['clientes'] });
-      show('success', 'Cliente creado', altaForm.conCuentaCorriente ? 'Con cuenta corriente activa.' : undefined);
-      setAltaForm({ nombre: '', telefono: '', conCuentaCorriente: false });
+      show('success', 'Cliente creado', 'Con cuenta corriente activa.');
+      setAltaForm({ nombre: '', telefono: '' });
       setMostrarAlta(false);
     } catch (err: any) {
       show('error', 'No se pudo crear el cliente', err.response?.data?.error);
@@ -146,14 +145,7 @@ export function Clientes() {
               placeholder="261 5 12-3456"
             />
           </div>
-          <label className="form-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '6px', paddingBottom: '10px' }}>
-            <input
-              type="checkbox"
-              checked={altaForm.conCuentaCorriente}
-              onChange={(e) => setAltaForm({ ...altaForm, conCuentaCorriente: e.target.checked })}
-            />
-            Dar de alta la cuenta corriente ya
-          </label>
+          <small className="text-muted" style={{ paddingBottom: '10px' }}>Entra con cuenta corriente activa.</small>
           <div style={{ display: 'flex', gap: '8px', paddingBottom: '2px' }}>
             <button className="btn btn-success" onClick={crearCliente} disabled={creando}>
               {creando ? 'Creando...' : 'Crear'}
