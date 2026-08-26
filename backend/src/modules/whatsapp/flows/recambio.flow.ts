@@ -257,13 +257,13 @@ async function manejarMetodoUbicacion(m: MensajeEntrante, sesion: Sesion): Promi
     await sendText(to, mensajePedirCalleNumero(departamento));
     return;
   }
-  await manejarRespuestaInvalida(m, 'Elegí una de las opciones de abajo. 👇');
+  await manejarRespuestaInvalida(m, 'Por favor, elegí una de las opciones que te mostramos arriba. 👆');
 }
 
 async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const opcion = OPCIONES_HORARIO.find((o) => o.id === m.seleccionId);
   if (!opcion) {
-    await pedirHorarioPreferido(m.from, 'Elegí una de las opciones de abajo. 👇');
+    await pedirHorarioPreferido(m.from, 'Por favor, elegí una de las siguientes opciones. 👇');
     return;
   }
   await confirmarYPedirPago(m, { ...sesion, contexto: { ...sesion.contexto, horarioPreferido: opcion.title } });
@@ -302,7 +302,7 @@ async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promis
   }
 
   if (ubicacion.tipo === 'link_invalido') {
-    await sendText(to, '🙁 No pude leer ese link de Maps. Probá copiarlo de nuevo desde el botón "Compartir", o usá el botón "Enviar ubicación" de abajo.');
+    await sendText(to, '🙁 No pude leer ese link de Maps. Probá copiarlo de nuevo desde el botón "Compartir", o usá el botón "Enviar ubicación" que te mostramos arriba.');
     return;
   }
 
@@ -325,7 +325,7 @@ async function manejarMismatchDepartamento(m: MensajeEntrante, sesion: Sesion): 
     return;
   }
   if (m.seleccionId !== 'depto_cambiar') {
-    await manejarRespuestaInvalida(m, 'Elegí una de las opciones de abajo. 👇');
+    await manejarRespuestaInvalida(m, 'Por favor, elegí una de las opciones que te mostramos arriba. 👆');
     return;
   }
 

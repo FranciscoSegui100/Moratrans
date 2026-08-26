@@ -210,7 +210,7 @@ async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     return;
   }
 
-  await sendButtons(to, 'Elegí una de las opciones de abajo. 👇', await opcionesMetodoPago(to));
+  await sendButtons(to, 'Por favor, elegí una de las siguientes opciones. 👇', await opcionesMetodoPago(to));
 }
 
 /**
