@@ -629,7 +629,6 @@ async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion): 
       `${datosBancarios()}\n\n` +
       `Y enviános el comprobante por este chat 📎\n` +
       `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +
-      `¡Gracias por elegir a *MoraTrans*! 🚚\n\n` +
       `_Escribí *menú* para volver al inicio en cualquier momento._`,
   );
   await clearSesion(to);

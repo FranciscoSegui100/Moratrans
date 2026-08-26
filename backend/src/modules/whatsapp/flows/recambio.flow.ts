@@ -547,7 +547,6 @@ async function finalizarRecambioPago(m: MensajeEntrante, sesion: Sesion): Promis
       `${datosBancarios()}\n\n` +
       `Y enviános el comprobante por este chat 📎\n` +
       `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +
-      `¡Gracias por confiar en *MoraTrans*! 🚚\n\n` +
       `_Escribí *menú* para volver al inicio en cualquier momento._`,
   );
 }
