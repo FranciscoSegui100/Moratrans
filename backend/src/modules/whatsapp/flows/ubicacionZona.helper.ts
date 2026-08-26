@@ -146,7 +146,7 @@ export async function resolverUbicacionMensaje(m: MensajeEntrante): Promise<Resu
     const link = extraerLinkMaps(m.texto);
     if (link) {
       const coords = await resolverCoordenadasDeLinkMaps(link);
-      if (coords) return { tipo: 'ubicacion', lat: coords.lat, lng: coords.lng, direccionCruda: null };
+      if (coords) return { tipo: 'ubicacion', lat: coords.lat, lng: coords.lng, direccionCruda: coords.direccion };
       return { tipo: 'link_invalido' };
     }
   }
