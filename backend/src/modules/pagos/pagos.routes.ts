@@ -218,7 +218,7 @@ async function validarAlargue(req: Request, res: Response, pagoId: string): Prom
     return;
   }
 
-  const [cont] = await query<{ vence_en: string }>(
+  const [cont] = await query<{ vence_en: Date }>(
     `UPDATE contenedores
         SET vence_en = COALESCE(vence_en, now()) + make_interval(days => $2)
       WHERE numero = $1
@@ -263,7 +263,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
     // más abajo — esto solo evita validar el pago y quedarnos sin poder
     // crear el viaje futuro después por un dato faltante.
     if (contenedorNorm) {
-      const [contPrevio] = await query<{ estado: string; vence_en: string | null }>(
+      const [contPrevio] = await query<{ estado: string; vence_en: Date | null }>(
         'SELECT estado, vence_en FROM contenedores WHERE numero = $1',
         [contenedorNorm],
       );

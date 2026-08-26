@@ -40,7 +40,7 @@ export async function reservarParaEntrega(
   actualizadoPor: string,
   opciones?: { liberadoPorRutaEnOrden?: number; excluirViajeId?: string },
 ): Promise<void> {
-  const { rows: contRows } = await c.query<{ estado: string; vence_en: string | null }>(
+  const { rows: contRows } = await c.query<{ estado: string; vence_en: Date | null }>(
     'SELECT estado, vence_en FROM contenedores WHERE numero = $1 FOR UPDATE',
     [numero],
   );

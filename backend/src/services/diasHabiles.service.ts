@@ -52,9 +52,25 @@ export function formatearFechaLarga(fechaISO: string): string {
  * `new Date(fechaISO).toLocaleDateString('es-AR')`, no pasa por UTC: esa
  * conversión interpreta "2026-08-28" como medianoche UTC y, en horario
  * Argentina (UTC-3), lo muestra retrocedido un día.
+ *
+ * Acepta también un `Date` nativo porque columnas TIMESTAMPTZ (como
+ * `contenedores.vence_en`) el driver de pg las devuelve como objeto Date,
+ * no como string — a diferencia de las columnas DATE, que sí llegan como
+ * string gracias al type-parser custom en config/db.ts.
  */
-export function formatearFechaCorta(fechaISO: string): string {
-  const [y, m, d] = fechaISO.slice(0, 10).split('-');
+export function formatearFechaCorta(fecha: string | Date): string {
+  let y: string, m: string, d: string;
+  if (fecha instanceof Date) {
+    // vence_en se guarda como medianoche Argentina (03:00:00Z, ver
+    // medianocheArgentina abajo) — restar 3hs y leer en UTC recupera esa
+    // fecha sin que la zona horaria del server la corra un día.
+    const ajustada = new Date(fecha.getTime() - 3 * 60 * 60 * 1000);
+    y = String(ajustada.getUTCFullYear());
+    m = String(ajustada.getUTCMonth() + 1).padStart(2, '0');
+    d = String(ajustada.getUTCDate()).padStart(2, '0');
+  } else {
+    [y, m, d] = fecha.slice(0, 10).split('-');
+  }
   return `${d}/${m}/${y}`;
 }
 

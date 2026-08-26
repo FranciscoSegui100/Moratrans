@@ -12,7 +12,7 @@ function argb(hex: string): string {
 
 /** Genera un Excel (buffer) con el estado actual de los contenedores. */
 export async function excelContenedores(): Promise<Buffer> {
-  const rows = await query<{ numero: string; estado: string; vence_en: string | null; actualizado_en: string }>(
+  const rows = await query<{ numero: string; estado: string; vence_en: Date | null; actualizado_en: string }>(
     'SELECT numero, estado, vence_en, actualizado_en FROM contenedores ORDER BY numero',
   );
   const wb = new ExcelJS.Workbook();
