@@ -785,6 +785,19 @@ export function Rutas() {
   async function asignarAChofer(visita: VisitaPendiente, choferId: string) {
     if (!choferId) return;
 
+    // Asignar pisa la fecha del viaje con la de la ruta destino (ver backend,
+    // no se toca a propósito). Si difieren, avisamos antes de mandar el POST:
+    // un retiro/recambio depende de que el contenedor ya esté físicamente en
+    // lo del cliente en su fecha, así que ahí el cartel es una advertencia
+    // fuerte; una entrega pura sale de depósito, así que alcanza con confirmar.
+    if (visita.fecha !== fecha) {
+      const esRetiroOrecambio = !!visita.retiro;
+      const mensaje = esRetiroOrecambio
+        ? `⚠️ Este pedido tiene retiro programado para el ${formatearFecha(visita.fecha)} — el contenedor recién va a estar listo en lo del cliente esa fecha. Si lo asignás a la ruta del ${formatearFecha(fecha)}, el chofer podría salir a buscar algo que todavía no está preparado.\n\n¿Confirmás asignarlo igual?`
+        : `Este pedido es para el ${formatearFecha(visita.fecha)}. ¿Confirmás que querés asignarlo a la ruta del ${formatearFecha(fecha)}?`;
+      if (!confirm(mensaje)) return;
+    }
+
     // Optimista: la saca de la bolsa al toque — antes se quedaba en pantalla
     // hasta que volvían las 3 queries que invalida recargarListas(), y esa
     // espera era la demora que más se notaba al armar una ruta.
