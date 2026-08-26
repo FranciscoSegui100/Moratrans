@@ -241,8 +241,12 @@ export function Clientes() {
                         </button>
                       )}
                       {(c.cuenta_corriente_estado === 'sin_pedir' || c.cuenta_corriente_estado === 'rechazada') && (
-                        <button onClick={() => cambiarCuentaCorriente(c.id, 'aprobada')} className="btn btn-success btn-sm">
-                          <Check strokeWidth={2} /> Dar de alta
+                        <button
+                          onClick={() => cambiarCuentaCorriente(c.id, 'aprobada')}
+                          className="btn btn-success btn-sm"
+                          style={{ fontSize: '0.76rem', whiteSpace: 'nowrap' }}
+                        >
+                          <Check size={13} strokeWidth={2} /> Dar de alta como cuenta corriente
                         </button>
                       )}
                     </RoleGate>
