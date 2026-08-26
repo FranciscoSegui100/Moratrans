@@ -259,27 +259,80 @@ function mensajeAlargueValidado(contenedor: string, venceEn: Date): string {
 }
 
 /**
- * Reenvía el aviso de "alargue validado" a mano — para el caso borde en que
- * ya quedó todo grabado (pago validado + vence_en corrido) pero el WhatsApp
- * nunca le llegó al cliente (ver comentario en validarAlargue). A diferencia
- * de /:id/validar, acá se exige que el pago YA esté validado.
+ * Reenvía el aviso de "pago validado" a mano — para el caso borde en que ya
+ * quedó todo grabado (pago validado, ticket creado o vence_en corrido) pero
+ * el WhatsApp de confirmación nunca le llegó al cliente (por una caída de
+ * WhatsApp, un número erróneo en ese momento, un bug puntual como el de
+ * vence_en/Date que causó esto una vez, etc.). A diferencia de /:id/validar,
+ * acá se exige que el pago YA esté validado — no vuelve a tocar nada de lo
+ * ya grabado, solo reintenta el envío.
  */
-pagosRouter.post('/:id/reenviar-aviso-alargue', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+pagosRouter.post('/:id/reenviar-aviso', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const pagoId = req.params.id;
   const [pago] = await query<{ tipo: string; estado: string; contenedor_numero: string | null; cliente_telefono: string }>(
     'SELECT tipo, estado, contenedor_numero, cliente_telefono FROM pagos WHERE id = $1',
     [pagoId],
   );
   if (!pago) return res.status(404).json({ error: 'Pago inexistente' });
-  if (pago.tipo !== 'alargue_retiro') return res.status(400).json({ error: 'Este pago no es un alargue de retiro' });
-  if (pago.estado !== 'validado') return res.status(409).json({ error: 'Este alargue todavía no está validado' });
-  if (!pago.contenedor_numero) return res.status(409).json({ error: 'Este alargue no tiene un contenedor asociado' });
-
-  const [cont] = await query<{ vence_en: Date | null }>('SELECT vence_en FROM contenedores WHERE numero = $1', [pago.contenedor_numero]);
-  if (!cont?.vence_en) return res.status(409).json({ error: 'El contenedor no tiene fecha de vencimiento cargada' });
+  if (pago.estado !== 'validado') return res.status(409).json({ error: 'Este pago todavía no está validado' });
 
   try {
-    await sendText(pago.cliente_telefono, mensajeAlargueValidado(pago.contenedor_numero, cont.vence_en));
+    if (pago.tipo === 'alargue_retiro') {
+      if (!pago.contenedor_numero) return res.status(409).json({ error: 'Este alargue no tiene un contenedor asociado' });
+      const [cont] = await query<{ vence_en: Date | null }>('SELECT vence_en FROM contenedores WHERE numero = $1', [pago.contenedor_numero]);
+      if (!cont?.vence_en) return res.status(409).json({ error: 'El contenedor no tiene fecha de vencimiento cargada' });
+      await sendText(pago.cliente_telefono, mensajeAlargueValidado(pago.contenedor_numero, cont.vence_en));
+    } else {
+      const [ticket] = await query<{ ticket_id: string; contenedor_numero: string | null }>(
+        'SELECT id AS ticket_id, contenedor_numero FROM tickets WHERE pago_id = $1',
+        [pagoId],
+      );
+      if (!ticket) return res.status(409).json({ error: 'Este pago todavía no tiene un ticket asociado' });
+
+      const [info] = await query<{
+        cliente_telefono: string;
+        cliente_nombre: string | null;
+        zona: string;
+        precio: string;
+        moneda: string | null;
+        destino_direccion: string | null;
+        horario_preferido: string | null;
+        es_cuenta_corriente: boolean;
+        fecha_entrega: string | null;
+        numero_pedido: number | null;
+        fecha_retiro_estimada: string | null;
+        titular_transferencia: string | null;
+      }>(
+        `SELECT p.cliente_telefono, COALESCE(c.nombre, pe.cliente_nombre) AS cliente_nombre, pe.zona, pe.precio, td.moneda,
+                pe.destino_direccion, pe.horario_preferido, p.es_cuenta_corriente,
+                pe.fecha_entrega, pe.numero_pedido, pe.fecha_retiro_estimada, p.titular_transferencia
+           FROM pagos p
+           LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+           LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
+           LEFT JOIN clientes c ON c.telefono = p.cliente_telefono
+          WHERE p.id = $1`,
+        [pagoId],
+      );
+      if (!info) return res.status(409).json({ error: 'No se encontraron los datos del pedido' });
+
+      await enviarTicketPorWhatsApp({
+        ticketId: ticket.ticket_id,
+        numeroPedido: info.numero_pedido,
+        contenedor: ticket.contenedor_numero,
+        zona: info.zona ?? '—',
+        destinoDireccion: info.destino_direccion,
+        fechaEntrega: info.fecha_entrega ? formatearFechaLarga(info.fecha_entrega) : null,
+        fechaRetiroEstimada: info.fecha_retiro_estimada ? formatearFechaLarga(info.fecha_retiro_estimada) : null,
+        horarioPreferido: info.horario_preferido,
+        precio: info.precio,
+        moneda: info.moneda ?? undefined,
+        clienteNombre: info.cliente_nombre,
+        clienteTelefono: info.cliente_telefono,
+        medioPago: info.es_cuenta_corriente ? 'cuenta_corriente' : 'transferencia',
+        titularTransferencia: info.titular_transferencia,
+        fecha: new Date(),
+      });
+    }
   } catch (e) {
     return res.status(502).json({ error: `No se pudo enviar el WhatsApp: ${motivoErrorWa(e)}` });
   }

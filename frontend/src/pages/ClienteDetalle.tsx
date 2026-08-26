@@ -111,14 +111,14 @@ export function ClienteDetalle() {
   const [reenviando, setReenviando] = useState<string | null>(null);
 
   /**
-   * Para el caso borde en que un alargue de retiro quedó validado (pago +
-   * vence_en ya corridos) pero el WhatsApp de confirmación nunca le llegó al
-   * cliente — reintenta solo el envío, sin tocar nada ya grabado.
+   * Para el caso borde en que un pago (o alargue) quedó validado pero el
+   * WhatsApp de confirmación nunca le llegó al cliente — reintenta solo el
+   * envío, sin tocar nada ya grabado.
    */
-  async function reenviarAvisoAlargue(pagoId: string) {
+  async function reenviarAviso(pagoId: string) {
     setReenviando(pagoId);
     try {
-      await api.post(`/api/pagos/${pagoId}/reenviar-aviso-alargue`);
+      await api.post(`/api/pagos/${pagoId}/reenviar-aviso`);
       show('success', 'Aviso reenviado por WhatsApp');
     } catch (err: any) {
       show('error', 'No se pudo reenviar', err.response?.data?.error);
@@ -329,11 +329,11 @@ export function ClienteDetalle() {
                     {c.monto && ` · $${Number(c.monto).toLocaleString('es-AR')}`}
                     {' · '}<span className={`badge ${c.estado}`}>{c.estado}</span>
                   </span>
-                  {c.tipo === 'alargue_retiro' && c.estado === 'validado' && (
+                  {c.estado === 'validado' && (
                     <RoleGate roles={['admin', 'operador', 'finanzas']}>
                       <button
                         className="btn btn-ghost btn-sm"
-                        onClick={() => reenviarAvisoAlargue(c.id)}
+                        onClick={() => reenviarAviso(c.id)}
                         disabled={reenviando === c.id}
                         title="Si el cliente dice que todavía no le llegó la confirmación por WhatsApp"
                       >
