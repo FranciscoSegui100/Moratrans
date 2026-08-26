@@ -39,8 +39,7 @@ export function datosBancarios(): string {
  *    tiene más de uno abierto a la vez, no se puede asumir cuál está pagando
  *    -> se le pregunta antes de registrar nada; si tiene uno solo (el caso
  *    normal), sigue derecho sin pedirle nada extra.
- *  - Tras registrar el comprobante, se pregunta a nombre de quién es la
- *    transferencia (para poder conciliarla) y si necesita factura; si dice
+ *  - Tras registrar el comprobante, se pregunta si necesita factura; si dice
  *    que sí, se avisa al panel para que un operador la cargue.
  */
 export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -59,11 +58,6 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   // Respuesta a "¿Para cuál cotización es este pago a cuenta corriente?"
   if (sesion.paso === 'elegir_pedido_cc') {
     return manejarEleccionPedidoCC(m, sesion);
-  }
-
-  // Respuesta a "¿A nombre de quién es la transferencia?"
-  if (sesion.paso === 'esperando_titular') {
-    return manejarTitular(m, sesion);
   }
 
   // Respuesta a "¿Necesitás factura?"
@@ -351,8 +345,8 @@ async function manejarEleccionPedido(m: MensajeEntrante, sesion: Sesion): Promis
 /**
  * Registra el pago (o lo agrega como adjunto si ya había uno pendiente para
  * el mismo pedido — sección 23, comprobante duplicado), alerta al panel y
- * sigue el flujo (a nombre de quién / factura). `pedido` puede venir
- * `undefined` si el cliente no tiene ninguna cotización abierta.
+ * sigue el flujo (factura). `pedido` puede venir `undefined` si el cliente
+ * no tiene ninguna cotización abierta.
  */
 async function registrarComprobante(
   to: string,
@@ -467,30 +461,6 @@ async function registrarComprobante(
         '_Si en un rato no tenés novedades, escribí *asesor*._',
   );
 
-  if (esAdjunto || esReenviado) {
-    await preguntarFactura(to, pagoId);
-  } else {
-    await setSesion({ telefono: to, flujo: 'pago', paso: 'esperando_titular', contexto: { pagoId } });
-    await sendText(to, '🙋 ¿A nombre de quién es la transferencia?');
-  }
-}
-
-/** Maneja la respuesta a "¿A nombre de quién es la transferencia?". */
-async function manejarTitular(m: MensajeEntrante, sesion: Sesion): Promise<void> {
-  const to = m.from;
-  const pagoId = sesion.contexto?.pagoId as string | undefined;
-  if (!pagoId) {
-    await clearSesion(to);
-    return;
-  }
-
-  const titular = (m.texto ?? '').trim();
-  if (m.tipo !== 'text' || titular.length < 2) {
-    await sendText(to, '🙋 Decime el nombre (persona o empresa) a nombre de quién hiciste la transferencia.');
-    return;
-  }
-
-  await query('UPDATE pagos SET titular_transferencia = $1 WHERE id = $2', [titular, pagoId]);
   await preguntarFactura(to, pagoId);
 }
 
