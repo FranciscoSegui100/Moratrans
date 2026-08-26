@@ -16,15 +16,20 @@ export function extraerLinkMaps(texto: string): string | null {
  */
 export async function resolverCoordenadasDeLinkMaps(url: string): Promise<{ lat: number; lng: number } | null> {
   try {
-    const urlFinal = await resolverUrlFinal(url);
-    return extraerCoordenadasDeUrl(urlFinal);
+    const { urlFinal, html } = await resolverUrlFinal(url);
+    // Google dejó de mandar `@lat,lng` en la URL final de estos links cortos
+    // (ahora redirige a `?q=<dirección en texto>&ftid=...`, sin coordenadas
+    // visibles) — pero las coordenadas del lugar siguen viajando adentro del
+    // HTML de esa página (mapa estático de vista previa / estado interno de
+    // la app), así que si la URL no las tiene, se buscan ahí.
+    return extraerCoordenadasDeUrl(urlFinal) ?? extraerCoordenadasDeHtml(html);
   } catch (err) {
     console.error('Error resolviendo link de Maps:', (err as Error).message);
     return null;
   }
 }
 
-async function resolverUrlFinal(url: string): Promise<string> {
+async function resolverUrlFinal(url: string): Promise<{ urlFinal: string; html: string }> {
   const res = await axios.get(url, {
     maxRedirects: 5,
     timeout: 5000,
@@ -33,7 +38,7 @@ async function resolverUrlFinal(url: string): Promise<string> {
   });
   // axios (vía follow-redirects) deja la URL final resuelta acá después de seguir los 30x.
   const responseUrl = (res.request as { res?: { responseUrl?: string } })?.res?.responseUrl;
-  return responseUrl || url;
+  return { urlFinal: responseUrl || url, html: typeof res.data === 'string' ? res.data : '' };
 }
 
 /**
@@ -54,6 +59,24 @@ function extraerCoordenadasDeUrl(url: string): { lat: number; lng: number } | nu
 
   const llMatch = url.match(/[?&]ll=(-?\d+\.\d+),(-?\d+\.\d+)/);
   if (llMatch) return { lat: Number(llMatch[1]), lng: Number(llMatch[2]) };
+
+  return null;
+}
+
+/**
+ * Fallback cuando la URL final no trae coordenadas (formato actual de los
+ * links cortos de Google Maps, ver comentario en resolverCoordenadasDeLinkMaps):
+ * se buscan en el HTML de la página misma, en dos lugares donde Google las
+ * sigue incrustando: el `center=lat,lng` del mapa estático de vista previa
+ * (meta og:image), y el patrón `!1d<radio>!2d<lng>!3d<lat>` de un link
+ * interno de la página.
+ */
+function extraerCoordenadasDeHtml(html: string): { lat: number; lng: number } | null {
+  const centerMatch = html.match(/center=(-?\d+\.\d+)%2C(-?\d+\.\d+)/) || html.match(/center=(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if (centerMatch) return { lat: Number(centerMatch[1]), lng: Number(centerMatch[2]) };
+
+  const dataMatch = html.match(/%211d[\d.]+%212d(-?\d+\.\d+)%213d(-?\d+\.\d+)/) || html.match(/!1d[\d.]+!2d(-?\d+\.\d+)!3d(-?\d+\.\d+)/);
+  if (dataMatch) return { lat: Number(dataMatch[2]), lng: Number(dataMatch[1]) };
 
   return null;
 }
