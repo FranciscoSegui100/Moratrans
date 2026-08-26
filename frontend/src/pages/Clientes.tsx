@@ -177,6 +177,16 @@ export function Clientes() {
                           </button>
                         </div>
                       )}
+                      {c.cuenta_corriente_estado === 'aprobada' && (
+                        <button onClick={() => cambiarCuentaCorriente(c.id, 'rechazada')} className="btn btn-danger btn-sm">
+                          <X strokeWidth={2} /> Dar de baja
+                        </button>
+                      )}
+                      {(c.cuenta_corriente_estado === 'sin_pedir' || c.cuenta_corriente_estado === 'rechazada') && (
+                        <button onClick={() => cambiarCuentaCorriente(c.id, 'aprobada')} className="btn btn-success btn-sm">
+                          <Check strokeWidth={2} /> Dar de alta
+                        </button>
+                      )}
                     </RoleGate>
                   </td>
                   <td>

@@ -810,6 +810,13 @@ export function Rutas() {
       );
     }
 
+    // Idem para "Ruteados" y los contadores de paradas de cada chofer (tarjetas
+    // de arriba y statsPorRuta): salían de viajesDelDia, que sólo se actualizaba
+    // con el refetch de recargarListas() — ahí es donde más se sentían los
+    // "segundos" antes de ver el pedido del lado del chofer.
+    const previoViajesDelDia = queryClient.getQueryData<ViajePendiente[]>(['viajes', 'del-dia', fecha]);
+    let rollbackViajesDelDia: (() => void) | null = null;
+
     try {
       let ruta = rutas.find((r) => r.chofer_id === choferId);
       if (!ruta) {
@@ -817,6 +824,24 @@ export function Rutas() {
         ruta = res.data;
         agregarRutaOptimista(ruta);
       }
+
+      // Sólo tiene sentido si el pedido es del día que se está viendo: si la
+      // fecha difiere (caso del confirm() de arriba), no va a aparecer en
+      // viajesDelDia de todos modos hasta que se refetchee con la fecha real.
+      if (previoViajesDelDia && visita.fecha === fecha) {
+        const idsAAsignar = new Set([visita.entrega?.id, visita.retiro?.id, visita.id].filter(Boolean) as string[]);
+        // Orden provisorio (único, no colisiona con los reales): el backend
+        // asigna el definitivo y el refetch de recargarListas() lo corrige.
+        const ordenProvisorio = -Date.now();
+        queryClient.setQueryData<ViajePendiente[]>(
+          ['viajes', 'del-dia', fecha],
+          previoViajesDelDia.map((v) =>
+            idsAAsignar.has(v.id) ? { ...v, ruta_id: ruta!.id, orden: ordenProvisorio } : v,
+          ),
+        );
+        rollbackViajesDelDia = () => queryClient.setQueryData(['viajes', 'del-dia', fecha], previoViajesDelDia);
+      }
+
       const viajeId = visita.entrega?.id ?? visita.retiro?.id ?? visita.id;
       await api.post(`/api/rutas/${ruta.id}/paradas`, { viaje_id: viajeId });
       const nombreChofer = choferes.find((c) => c.id === choferId)?.nombre ?? 'chofer';
@@ -833,6 +858,7 @@ export function Rutas() {
       });
     } catch (err: any) {
       if (previoCola) queryClient.setQueryData(['rutas', 'bolsa'], previoCola);
+      rollbackViajesDelDia?.();
       show('error', 'No se pudo asignar el pedido', err.response?.data?.error || 'Error desconocido');
     }
   }
