@@ -2,6 +2,16 @@ import axios from 'axios';
 
 const REGEX_LINK_MAPS = /https?:\/\/(?:www\.)?(?:google\.[a-z.]+\/maps|maps\.google\.[a-z.]+|maps\.app\.goo\.gl|goo\.gl\/maps)\S*/i;
 
+// Gran Mendoza: los 6 departamentos que cubre la empresa (ver seed.sql).
+const VIEWBOX_MENDOZA = { minLon: -69.3, minLat: -33.3, maxLon: -68.4, maxLat: -32.4 };
+
+export interface CoordenadasLinkMaps {
+  lat: number;
+  lng: number;
+  /** Dirección encontrada al geocodificar (null si vino directo de coordenadas en la URL, sin pasar por búsqueda de texto). */
+  direccion: string | null;
+}
+
 /** Busca un link de Google Maps dentro de un texto libre (puede venir con otras palabras alrededor, ej. copiado desde el botón "Compartir" de la app). */
 export function extraerLinkMaps(texto: string): string | null {
   const match = texto.match(REGEX_LINK_MAPS);
@@ -9,27 +19,37 @@ export function extraerLinkMaps(texto: string): string | null {
 }
 
 /**
- * Coordenadas embebidas en una URL de Google Maps. Los links "cortos"
- * (maps.app.goo.gl, goo.gl/maps — lo que genera el botón "Compartir" de la
- * app) no traen coordenadas visibles en el texto del link; hay que seguir la
- * redirección HTTP hasta la URL larga real, que sí las tiene.
+ * Coordenadas de un link de Google Maps. Dos caminos:
+ *  1. Si la URL final trae `@lat,lng` o `!3d<lat>!4d<lng>` (links largos,
+ *     copiados de la barra de direcciones), se usan directo.
+ *  2. Si no (formato actual de los links cortos del botón "Compartir":
+ *     redirigen a `?q=<dirección en texto>&ftid=...`, sin coordenadas
+ *     visibles — y las coordenadas que sí aparecen en el HTML de esa
+ *     página son un relleno genérico fijo, NO el lugar real, confirmado
+ *     probando dos direcciones distintas y viendo el mismo valor las dos
+ *     veces), se geocodifica el texto de la dirección con Nominatim,
+ *     acotado al Gran Mendoza.
+ * La dirección encontrada se devuelve junto con las coordenadas para que el
+ * flujo se la muestre al cliente en la confirmación ("¿es este el
+ * destino?") — geocodificar texto puede fallar con calles repetidas en más
+ * de un departamento, así que esa confirmación es la red de seguridad.
  */
-export async function resolverCoordenadasDeLinkMaps(url: string): Promise<{ lat: number; lng: number } | null> {
+export async function resolverCoordenadasDeLinkMaps(url: string): Promise<CoordenadasLinkMaps | null> {
   try {
-    const { urlFinal, html } = await resolverUrlFinal(url);
-    // Google dejó de mandar `@lat,lng` en la URL final de estos links cortos
-    // (ahora redirige a `?q=<dirección en texto>&ftid=...`, sin coordenadas
-    // visibles) — pero las coordenadas del lugar siguen viajando adentro del
-    // HTML de esa página (mapa estático de vista previa / estado interno de
-    // la app), así que si la URL no las tiene, se buscan ahí.
-    return extraerCoordenadasDeUrl(urlFinal) ?? extraerCoordenadasDeHtml(html);
+    const urlFinal = await resolverUrlFinal(url);
+    const coordsDeUrl = extraerCoordenadasDeUrl(urlFinal);
+    if (coordsDeUrl) return { ...coordsDeUrl, direccion: null };
+
+    const direccion = extraerDireccionDeUrl(urlFinal);
+    if (!direccion) return null;
+    return await geocodificarDireccion(direccion);
   } catch (err) {
     console.error('Error resolviendo link de Maps:', (err as Error).message);
     return null;
   }
 }
 
-async function resolverUrlFinal(url: string): Promise<{ urlFinal: string; html: string }> {
+async function resolverUrlFinal(url: string): Promise<string> {
   const res = await axios.get(url, {
     maxRedirects: 5,
     timeout: 5000,
@@ -38,7 +58,7 @@ async function resolverUrlFinal(url: string): Promise<{ urlFinal: string; html: 
   });
   // axios (vía follow-redirects) deja la URL final resuelta acá después de seguir los 30x.
   const responseUrl = (res.request as { res?: { responseUrl?: string } })?.res?.responseUrl;
-  return { urlFinal: responseUrl || url, html: typeof res.data === 'string' ? res.data : '' };
+  return responseUrl || url;
 }
 
 /**
@@ -63,20 +83,82 @@ function extraerCoordenadasDeUrl(url: string): { lat: number; lng: number } | nu
   return null;
 }
 
+/** El `q=` de la URL final trae la dirección en texto cuando no trae coordenadas (ver resolverCoordenadasDeLinkMaps). */
+function extraerDireccionDeUrl(url: string): string | null {
+  const qMatch = url.match(/[?&]q=([^&]+)/);
+  if (!qMatch) return null;
+  const direccion = decodeURIComponent(qMatch[1].replace(/\+/g, ' ')).trim();
+  return /^-?\d+\.\d+,-?\d+\.\d+$/.test(direccion) ? null : direccion || null;
+}
+
+/** Colapsa palabras repetidas seguidas (ej. "M5500HFN M5500HFN" -> "M5500HFN"), que Nominatim no tolera bien. */
+function colapsarPalabrasRepetidas(texto: string): string {
+  return texto.replace(/\b(\S+)(\s+\1\b)+/gi, '$1');
+}
+
 /**
- * Fallback cuando la URL final no trae coordenadas (formato actual de los
- * links cortos de Google Maps, ver comentario en resolverCoordenadasDeLinkMaps):
- * se buscan en el HTML de la página misma, en dos lugares donde Google las
- * sigue incrustando: el `center=lat,lng` del mapa estático de vista previa
- * (meta og:image), y el patrón `!1d<radio>!2d<lng>!3d<lat>` de un link
- * interno de la página.
+ * Geocodifica el texto de dirección que trae el link. Google suele
+ * anteponer el nombre del comercio/lugar antes de la calle real (ej.
+ * "Clark 246 Store, J. y M. Clark 246, ..."), lo que confunde la búsqueda
+ * de texto completo de Nominatim — si la búsqueda completa no encuentra
+ * nada, se reintenta sacando el primer segmento (separado por coma).
+ *
+ * Nominatim (OpenStreetMap) no tiene cargada la altura exacta de todas las
+ * calles — cuando no la tiene, el resultado cae al centro de la calle sin
+ * avisar. Si pasa eso, se conserva igual la calle+altura tal como la mandó
+ * Google (que sí la tiene, aunque el mapa gratuito no pueda ubicarla con
+ * precisión) y se lo marca explícitamente, para que quede claro en la
+ * confirmación "¿es este el destino?" que conviene revisar bien el pin.
  */
-function extraerCoordenadasDeHtml(html: string): { lat: number; lng: number } | null {
-  const centerMatch = html.match(/center=(-?\d+\.\d+)%2C(-?\d+\.\d+)/) || html.match(/center=(-?\d+\.\d+),(-?\d+\.\d+)/);
-  if (centerMatch) return { lat: Number(centerMatch[1]), lng: Number(centerMatch[2]) };
+async function geocodificarDireccion(direccionCruda: string): Promise<CoordenadasLinkMaps | null> {
+  const segmentos = direccionCruda
+    .split(',')
+    .map((s) => colapsarPalabrasRepetidas(s.trim()))
+    .filter(Boolean);
+  // Dedup: si dos segmentos son iguales (case-insensitive), se deja uno solo.
+  const segmentosUnicos = segmentos.filter((s, i) => segmentos.findIndex((s2) => s2.toLowerCase() === s.toLowerCase()) === i);
 
-  const dataMatch = html.match(/%211d[\d.]+%212d(-?\d+\.\d+)%213d(-?\d+\.\d+)/) || html.match(/!1d[\d.]+!2d(-?\d+\.\d+)!3d(-?\d+\.\d+)/);
-  if (dataMatch) return { lat: Number(dataMatch[2]), lng: Number(dataMatch[1]) };
+  const intentos = [segmentosUnicos.join(', ')];
+  if (segmentosUnicos.length > 2) intentos.push(segmentosUnicos.slice(1).join(', '));
 
+  for (const intento of intentos) {
+    const resultado = await buscarEnNominatim(intento);
+    if (!resultado) continue;
+    if (!resultado.tieneNumero) {
+      const calleConNumero = segmentosUnicos.find((s) => /\d/.test(s)) ?? intento;
+      resultado.direccion = `${calleConNumero} (altura aproximada — revisá bien el pin abajo)`;
+    }
+    return resultado;
+  }
   return null;
+}
+
+async function buscarEnNominatim(direccion: string): Promise<(CoordenadasLinkMaps & { tieneNumero: boolean }) | null> {
+  const { data } = await axios.get('https://nominatim.openstreetmap.org/search', {
+    params: {
+      format: 'jsonv2',
+      q: direccion,
+      addressdetails: 1,
+      limit: 1,
+      countrycodes: 'ar',
+      viewbox: `${VIEWBOX_MENDOZA.minLon},${VIEWBOX_MENDOZA.maxLat},${VIEWBOX_MENDOZA.maxLon},${VIEWBOX_MENDOZA.minLat}`,
+      bounded: 1,
+      'accept-language': 'es',
+    },
+    headers: { 'User-Agent': 'MoraTrans-Logistica' },
+    timeout: 5000,
+  });
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const r = data[0];
+  const a = r.address as Record<string, string> | undefined;
+  const tieneNumero = !!a?.house_number;
+  const calle = a ? [a.road, a.house_number].filter(Boolean).join(' ') : '';
+  const localidad = a ? a.suburb || a.city_district || a.city || a.town || a.village || a.county : '';
+  const partes = [calle, localidad].filter(Boolean);
+  return {
+    lat: Number(r.lat),
+    lng: Number(r.lon),
+    direccion: partes.length > 0 ? partes.join(', ') : (r.display_name as string),
+    tieneNumero,
+  };
 }
