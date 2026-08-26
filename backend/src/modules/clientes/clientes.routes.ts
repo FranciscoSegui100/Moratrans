@@ -40,8 +40,7 @@ clientesRouter.get('/export.xlsx', async (req: Request, res: Response) => {
 /**
  * POST /api/clientes/:telefono/enviar-excel — genera el Excel de este
  * cliente (mismo formato que el botón de descarga) y se lo manda por
- * WhatsApp como documento, igual que se hace hoy con las facturas
- * (ver POST /api/pagos/:id/factura).
+ * WhatsApp como documento.
  */
 clientesRouter.post(
   '/:telefono/enviar-excel',

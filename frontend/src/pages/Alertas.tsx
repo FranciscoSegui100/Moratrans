@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, X, RotateCcw, CircleCheck, FileCheck } from 'lucide-react';
+import { Check, X, RotateCcw, CircleCheck } from 'lucide-react';
 import { useAlertas } from '../hooks/useAlertas';
 import { RoleGate } from '../components/RoleGate';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
@@ -8,10 +8,9 @@ import { tipoLabel } from '../lib/alertLabels';
 import { formatearFechaHora } from '../lib/fechas';
 
 export function Alertas() {
-  const { alertas, resolver, validarPago, rechazarPago, confirmarRetiro, enviarFactura } = useAlertas();
+  const { alertas, resolver, validarPago, rechazarPago, confirmarRetiro } = useAlertas();
   const { show } = useToast();
   const [procesando, setProcesando] = useState<string | null>(null);
-  const [facturaFile, setFacturaFile] = useState<Record<string, File | undefined>>({});
 
   // La logística (chofer, contenedor) se arma un día antes desde la
   // pestaña Viajes — acá solo se confirma el pago, y de ahí se manda directo.
@@ -71,21 +70,6 @@ export function Alertas() {
     }
   }
 
-  async function onEnviarFactura(pagoId: string) {
-    const archivo = facturaFile[pagoId];
-    if (!archivo) return;
-    setProcesando(pagoId);
-    try {
-      await enviarFactura(pagoId, archivo);
-      show('success', 'Factura enviada', 'Se mandó por WhatsApp al cliente');
-      setFacturaFile((prev) => ({ ...prev, [pagoId]: undefined }));
-    } catch (e: any) {
-      show('error', 'No se pudo enviar la factura', e.response?.data?.error || 'Error desconocido');
-    } finally {
-      setProcesando(null);
-    }
-  }
-
   return (
     <div>
       <div className="page-header">
@@ -112,11 +96,10 @@ export function Alertas() {
           {alertas.map((a) => {
             const esPago = a.tipo === 'pago_pendiente_validacion' || a.tipo === 'cuenta_corriente_solicitada';
             const esRetiro = a.tipo === 'confirmar_retiro';
-            const esFactura = a.tipo === 'factura_solicitada';
             return (
               <div
                 key={a.id}
-                className={`alerta-card alerta-${a.tipo} ${esPago || esFactura ? 'alerta-card-pago' : ''}`}
+                className={`alerta-card alerta-${a.tipo} ${esPago ? 'alerta-card-pago' : ''}`}
               >
                 <div className="alerta-card-top">
                   <div>
@@ -124,7 +107,7 @@ export function Alertas() {
                     <div className="alerta-msg">{a.mensaje}</div>
                     <div className="alerta-time">{formatearFechaHora(a.creado_en)}</div>
                   </div>
-                  {!esPago && !esRetiro && !esFactura && (
+                  {!esPago && !esRetiro && (
                     <button onClick={() => resolver(a.id)} className="btn btn-ghost btn-sm">
                       <Check strokeWidth={2} /> Resolver
                     </button>
@@ -141,27 +124,6 @@ export function Alertas() {
                     </RoleGate>
                   )}
                 </div>
-
-                {esFactura && (
-                  <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                    <div className="alerta-pago-extra">
-                      <input
-                        type="file"
-                        accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
-                        onChange={(e) =>
-                          setFacturaFile((prev) => ({ ...prev, [a.referencia_id]: e.target.files?.[0] }))
-                        }
-                      />
-                      <button
-                        onClick={() => onEnviarFactura(a.referencia_id)}
-                        className="btn btn-success btn-sm"
-                        disabled={procesando === a.referencia_id || !facturaFile[a.referencia_id]}
-                      >
-                        {procesando === a.referencia_id ? '...' : <><FileCheck strokeWidth={1.75} /> Enviar factura</>}
-                      </button>
-                    </div>
-                  </RoleGate>
-                )}
 
                 {esPago && (
                   <div className="alerta-pago-extra">

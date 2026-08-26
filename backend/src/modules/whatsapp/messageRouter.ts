@@ -4,7 +4,7 @@ import { getSesion, clearSesion, setSesion } from './session.store';
 import { botEstaActivo } from '../../services/botConfig.service';
 import { MENSAJE_BOT_DESACTIVADO } from '../../config/bot.config';
 import { handleCotizacion, handlePedirNuevoContenedor } from './flows/cotizacion.flow';
-import { handlePago } from './flows/pago.flow';
+import { handlePago, pedidosAbiertos, mensajePedidoPendiente } from './flows/pago.flow';
 import { handleChofer } from './flows/chofer.flow';
 import { handleAsesor } from './flows/asesor.flow';
 import { handleRecambio } from './flows/recambio.flow';
@@ -209,7 +209,13 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
  * "Cotizar" / "Pedir un contenedor" son la misma entrada (ver diagrama
  * aprobado) — el camino exacto depende de quién es el cliente:
  *  - Cuenta corriente aprobada: no paga antes, usa el circuito directo de
- *    "Pedir entrega" (sin comprobante, se confirma solo).
+ *    "Pedir entrega" (sin comprobante, se confirma solo) — no aplica el
+ *    bloqueo de "pagá el anterior primero" de abajo, ahí no hay comprobante
+ *    que esperar.
+ *  - Resto: si ya tiene un pedido cotizado/confirmado sin pagar, se le pide
+ *    que pague ese primero (ver mensajePedidoPendiente en pago.flow.ts) —
+ *    evita que se acumulen pedidos sin dueño claro cuando después manda un
+ *    comprobante.
  *  - Ocasional que YA tiene un contenedor: ofrece reusar la última ubicación
  *    verificada en vez de arrancar de cero (handlePedirNuevoContenedor).
  *  - Resto (cliente nuevo o sin contenedor todavía): flujo completo de
@@ -223,6 +229,14 @@ async function iniciarPedirContenedor(m: MensajeEntrante, sesion: Sesion): Promi
   if (cliente?.cuenta_corriente_estado === 'aprobada') {
     return handlePedirEntrega(m, { ...sesion, flujo: 'pedir_entrega', paso: null });
   }
+
+  const [pendiente] = await pedidosAbiertos(m.from);
+  if (pendiente) {
+    await clearSesion(m.from);
+    await sendText(m.from, mensajePedidoPendiente(pendiente));
+    return;
+  }
+
   if ((await contenedoresDelCliente(m.from)).length > 0) {
     return handlePedirNuevoContenedor(m, { ...sesion, flujo: 'cotizacion', paso: null });
   }

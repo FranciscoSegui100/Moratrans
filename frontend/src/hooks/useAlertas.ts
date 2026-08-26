@@ -108,14 +108,5 @@ export function useAlertas() {
     quitarAlerta('confirmar_retiro', numeroContenedor);
   }
 
-  /** Sube la factura pedida por el cliente y se la reenvía por WhatsApp. */
-  async function enviarFactura(pagoId: string, archivo: File) {
-    await api.post(`/api/pagos/${pagoId}/factura`, archivo, {
-      headers: { 'Content-Type': archivo.type || 'application/octet-stream' },
-      params: { filename: archivo.name },
-    });
-    quitarAlerta('factura_solicitada', pagoId);
-  }
-
-  return { alertas, resolver, validarPago, rechazarPago, confirmarRetiro, enviarFactura };
+  return { alertas, resolver, validarPago, rechazarPago, confirmarRetiro };
 }

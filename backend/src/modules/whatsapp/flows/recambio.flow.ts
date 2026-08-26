@@ -6,7 +6,7 @@ import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
-import { datosBancarios, tieneCuentaCorrienteAprobada } from './pago.flow';
+import { datosBancarios, tieneCuentaCorrienteAprobada, pedidosAbiertos, mensajePedidoPendiente } from './pago.flow';
 import { reverseGeocode } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
@@ -96,6 +96,18 @@ export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promis
   }
   if (sesion.paso === 'pedir_nombre_recambio') {
     return manejarNombreRecambio(m, sesion);
+  }
+
+  // Igual que Cotizar: si no es cuenta corriente (ahí no hay comprobante que
+  // esperar) y ya tiene un pedido sin pagar, se le pide que pague ese
+  // primero antes de arrancar un recambio nuevo.
+  if (!(await tieneCuentaCorrienteAprobada(to))) {
+    const [pendiente] = await pedidosAbiertos(to);
+    if (pendiente) {
+      await clearSesion(to);
+      await sendText(to, mensajePedidoPendiente(pendiente));
+      return;
+    }
   }
 
   const conts = await contenedoresDelCliente(to);
