@@ -3,14 +3,16 @@ import PDFDocument from 'pdfkit';
 import { subirArchivo } from './storage.service';
 import { uploadMedia, sendDocument } from '../modules/whatsapp/graphApi';
 
-// Colores de marca (del logo: círculo azul marino con ruta roja).
-const AZUL = '#152B54';
-const AZUL_CLARO = '#EEF1F8';
-const ROJO = '#E12A26';
-const GRIS_TEXTO = '#374151';
-const GRIS_MUTED = '#6B7280';
+// Colores de marca (del logo: círculo azul marino con ruta roja) — también
+// los reusa reportes.service.ts para que el Excel de cuenta corriente
+// comparta la misma identidad visual que este ticket.
+export const AZUL = '#152B54';
+export const AZUL_CLARO = '#EEF1F8';
+export const ROJO = '#E12A26';
+export const GRIS_TEXTO = '#374151';
+export const GRIS_MUTED = '#6B7280';
 
-const LOGO_PATH = path.join(__dirname, '..', 'assets', 'logo.jpg');
+export const LOGO_PATH = path.join(__dirname, '..', 'assets', 'logo.jpg');
 const MARGEN = 50;
 
 export interface DatosTicket {

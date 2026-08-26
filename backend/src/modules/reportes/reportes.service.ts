@@ -3,6 +3,12 @@ import PDFDocument from 'pdfkit';
 import { query } from '../../config/db';
 import { uploadMedia, sendDocument } from '../whatsapp/graphApi';
 import { formatearFechaCorta } from '../../services/diasHabiles.service';
+import { AZUL, AZUL_CLARO, ROJO, GRIS_MUTED, LOGO_PATH } from '../../services/pdf.service';
+
+/** Hex de marca (ej. '#152B54') al ARGB de 8 dígitos que espera ExcelJS. */
+function argb(hex: string): string {
+  return `FF${hex.replace('#', '')}`;
+}
 
 /** Genera un Excel (buffer) con el estado actual de los contenedores. */
 export async function excelContenedores(): Promise<Buffer> {
@@ -63,8 +69,17 @@ export async function excelClientes(mes?: string, telefono?: string): Promise<Bu
     [mes ?? null, telefono ?? null],
   );
 
+  // Nombre del cliente para el título, solo cuando se exporta uno puntual
+  // (la exportación general de "todos los clientes" no tiene uno solo que mostrar).
+  let clienteNombre: string | null = null;
+  if (telefono) {
+    const [cliente] = await query<{ nombre: string }>('SELECT nombre FROM clientes WHERE telefono = $1', [telefono]);
+    clienteNombre = cliente?.nombre ?? null;
+  }
+
   const wb = new ExcelJS.Workbook();
   const meses = [...new Set(rows.map((r) => r.mes))].sort();
+  // OJO: mismas columnas que la planilla histórica — no agregar/sacar/renombrar.
   const columnas = [
     { header: 'FECHA', key: 'fecha', width: 12 },
     { header: 'CHA/EQU', key: 'cha_equ', width: 12 },
@@ -77,14 +92,81 @@ export async function excelClientes(mes?: string, telefono?: string): Promise<Bu
     { header: 'CHOFER', key: 'chofer_nombre', width: 16 },
     { header: 'Nº PLAN.', key: 'numero_plan', width: 10 },
   ];
+  const ULTIMA_COL = columnas.length; // 10 -> columna J
+
   for (const m of meses.length ? meses : [mes ?? 'sin_datos']) {
     const ws = wb.addWorksheet(m);
-    ws.columns = columnas;
-    ws.getRow(1).font = { bold: true };
-    rows
-      .filter((r) => r.mes === m)
-      .forEach((r) => ws.addRow({ ...r, cha_equ: 'Contenedor', cantidad: 1 }));
+    // Solo anchos acá: los headers de texto los ponemos a mano más abajo,
+    // como parte del bloque de marca (ver dibujarEncabezado en pdf.service.ts).
+    ws.columns = columnas.map((c) => ({ key: c.key, width: c.width }));
+
+    // --- Encabezado con marca: logo + MORATRANS a la izquierda, título a la derecha ---
+    ws.getRow(1).height = 46;
+    try {
+      const imageId = wb.addImage({ filename: LOGO_PATH, extension: 'jpeg' });
+      ws.addImage(imageId, { tl: { col: 0.15, row: 0.1 }, ext: { width: 40, height: 40 } });
+    } catch {
+      // Sin logo disponible, el resto de la planilla sigue igual.
+    }
+    ws.mergeCells(1, 2, 1, 6);
+    const celdaTitulo = ws.getCell(1, 2);
+    celdaTitulo.value = 'MORATRANS';
+    celdaTitulo.font = { bold: true, size: 16, color: { argb: argb(AZUL) } };
+    celdaTitulo.alignment = { vertical: 'middle' };
+
+    ws.mergeCells(1, 7, 1, ULTIMA_COL);
+    const celdaSubtitulo = ws.getCell(1, 7);
+    celdaSubtitulo.value = clienteNombre ? `CUENTA CORRIENTE — ${clienteNombre.toUpperCase()}` : 'CUENTA CORRIENTE';
+    celdaSubtitulo.font = { bold: true, size: 12, color: { argb: argb(ROJO) } };
+    celdaSubtitulo.alignment = { vertical: 'middle', horizontal: 'right' };
+
+    // Barra de acento azul/rojo (misma proporción 70/30 que el pie del ticket).
+    const colCorte = Math.round(ULTIMA_COL * 0.7);
+    ws.getRow(2).height = 5;
+    for (let col = 1; col <= ULTIMA_COL; col++) {
+      ws.getCell(2, col).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: argb(col <= colCorte ? AZUL : ROJO) },
+      };
+    }
+
+    ws.mergeCells(3, 1, 3, ULTIMA_COL);
+    const celdaMes = ws.getCell(3, 1);
+    celdaMes.value = `Mes: ${m}  ·  Generado: ${new Date().toLocaleString('es-AR')}`;
+    celdaMes.font = { italic: true, size: 9, color: { argb: argb(GRIS_MUTED) } };
+
+    // --- Fila de encabezado de la tabla ---
+    const filaHeader = ws.getRow(5);
+    columnas.forEach((c, i) => {
+      const celda = filaHeader.getCell(i + 1);
+      celda.value = c.header;
+      celda.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      celda.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(AZUL) } };
+      celda.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+    filaHeader.height = 20;
+    ws.views = [{ state: 'frozen', ySplit: 5 }];
+
+    // --- Filas de datos, con bandeado suave para que se lean mejor ---
+    const filasDelMes = rows.filter((r) => r.mes === m);
+    filasDelMes.forEach((r, i) => {
+      const fila = ws.addRow({ ...r, cha_equ: 'Contenedor', cantidad: 1 });
+      if (i % 2 === 1) {
+        fila.eachCell((celda) => {
+          celda.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(AZUL_CLARO) } };
+        });
+      }
+    });
     ws.getColumn('importe').numFmt = '"$"#,##0.00';
+
+    // --- Pie ---
+    const filaPie = ws.lastRow ? ws.lastRow.number + 2 : 7;
+    ws.mergeCells(filaPie, 1, filaPie, ULTIMA_COL);
+    const celdaPie = ws.getCell(filaPie, 1);
+    celdaPie.value = '¡Gracias por confiar en MoraTrans!';
+    celdaPie.font = { size: 9, color: { argb: argb(GRIS_MUTED) } };
+    celdaPie.alignment = { horizontal: 'center' };
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
