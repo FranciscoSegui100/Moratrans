@@ -14,7 +14,6 @@ import {
   ShieldCheck,
   LogOut,
   MessageCircle,
-  Volume2,
   Receipt,
 } from 'lucide-react';
 import { useAuth, tieneRol, Rol } from '../context/AuthContext';
@@ -184,10 +183,6 @@ export function Layout({ children }: { children: ReactNode }) {
             <div className="sidebar-user-email">{user?.email}</div>
             <div className="sidebar-user-role">{user?.rol}</div>
           </div>
-          <button onClick={playAlertSound} className="btn-sidebar-action">
-            <Volume2 strokeWidth={1.75} />
-            Probar sonido
-          </button>
           <button onClick={logout} className="btn-logout">
             <LogOut strokeWidth={1.75} />
             Cerrar sesión

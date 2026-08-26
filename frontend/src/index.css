@@ -209,29 +209,6 @@ body {
   margin-top: 2px;
 }
 
-.btn-sidebar-action {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  font-size: 0.7rem;
-  font-weight: 500;
-  padding: 5px 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all var(--transition);
-  width: 100%;
-  margin-bottom: 6px;
-}
-.btn-sidebar-action:hover {
-  background: var(--border);
-  color: var(--text-secondary);
-}
-.btn-sidebar-action svg { width: 12px; height: 12px; }
-
 .btn-logout {
   display: flex;
   align-items: center;
