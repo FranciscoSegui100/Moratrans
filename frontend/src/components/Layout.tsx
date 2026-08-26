@@ -20,7 +20,7 @@ import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
 import { useToast } from './Toast';
 import { tipoLabel } from '../lib/alertLabels';
-import { playAlertSound } from '../lib/notificationSound';
+import { armarSonidoAlerta, playAlertSound } from '../lib/notificationSound';
 
 interface AlertaSocket { tipo: string; mensaje: string; cliente_telefono?: string | null }
 
@@ -67,6 +67,11 @@ export function Layout({ children }: { children: ReactNode }) {
       socket.off('connect_error', onDisconnect);
     };
   }, []);
+
+  // Arma el audio de las alertas con el primer click/tecla del operador en
+  // el panel, para que ya esté desbloqueado cuando llegue la primera alerta
+  // (los navegadores no dejan sonar audio que no arrancó por un gesto real).
+  useEffect(() => armarSonidoAlerta(), []);
 
   // Conectar socket globalmente y escuchar alertas para el badge + el toast.
   // "Conversaciones" muestra la cantidad de clientes que pidieron asesor

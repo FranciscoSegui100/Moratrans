@@ -1,16 +1,40 @@
 let audioCtx: AudioContext | null = null;
 
+function getContext(): AudioContext {
+  if (!audioCtx) {
+    const AudioContextClass = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    audioCtx = new AudioContextClass();
+  }
+  return audioCtx;
+}
+
+function intentarDesbloquear() {
+  const ctx = getContext();
+  if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+}
+
+// Los navegadores no dejan sonar audio hasta que hubo un gesto real del
+// usuario (click, tecla, touch) en la página: si el panel queda abierto de
+// fondo y llega una alerta antes de que alguien toque algo, el AudioContext
+// queda "suspended" para siempre y playAlertSound() no suena. Enganchamos
+// estos listeners apenas se monta el panel para que el primer click/tecla
+// -sea cual sea- ya deje el audio listo antes de que haga falta.
+export function armarSonidoAlerta() {
+  document.addEventListener('pointerdown', intentarDesbloquear);
+  document.addEventListener('keydown', intentarDesbloquear);
+  return () => {
+    document.removeEventListener('pointerdown', intentarDesbloquear);
+    document.removeEventListener('keydown', intentarDesbloquear);
+  };
+}
+
 // Genera un "ping" de dos tonos con Web Audio API en vez de reproducir un
 // archivo: no depende de un asset externo y no necesita descarga previa.
 export function playAlertSound() {
   try {
-    if (!audioCtx) {
-      const AudioContextClass = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      audioCtx = new AudioContextClass();
-    }
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const ctx = getContext();
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
 
-    const ctx = audioCtx;
     const now = ctx.currentTime;
 
     const playTone = (freq: number, start: number, duration: number) => {
@@ -30,6 +54,6 @@ export function playAlertSound() {
     playTone(880, 0, 0.15);
     playTone(1175, 0.12, 0.2);
   } catch {
-    // Si el navegador bloquea el audio (sin interacción previa) no rompemos el flujo de la alerta.
+    // Si el navegador bloquea el audio no rompemos el flujo de la alerta.
   }
 }
