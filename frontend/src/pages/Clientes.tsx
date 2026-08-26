@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Check, X, Download, Pencil, ArrowRight, Send } from 'lucide-react';
+import { Check, X, Download, Pencil, ArrowRight, Send, Plus } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -43,6 +43,9 @@ export function Clientes() {
   const [planForm, setPlanForm] = useState('');
   const [pestana, setPestana] = useState<Pestana>('cuenta_corriente');
   const [enviando, setEnviando] = useState<string | null>(null);
+  const [mostrarAlta, setMostrarAlta] = useState(false);
+  const [altaForm, setAltaForm] = useState({ nombre: '', telefono: '', conCuentaCorriente: false });
+  const [creando, setCreando] = useState(false);
 
   const { data: todosLosClientes = [] } = useQuery({
     queryKey: ['clientes'],
@@ -74,6 +77,29 @@ export function Clientes() {
     }
   }
 
+  async function crearCliente() {
+    if (!altaForm.nombre.trim() || !altaForm.telefono.trim()) {
+      show('error', 'Completá nombre y teléfono');
+      return;
+    }
+    setCreando(true);
+    try {
+      await api.post('/api/clientes', {
+        nombre: altaForm.nombre.trim(),
+        telefono: altaForm.telefono.trim(),
+        cuenta_corriente_estado: altaForm.conCuentaCorriente ? 'aprobada' : 'sin_pedir',
+      });
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      show('success', 'Cliente creado', altaForm.conCuentaCorriente ? 'Con cuenta corriente activa.' : undefined);
+      setAltaForm({ nombre: '', telefono: '', conCuentaCorriente: false });
+      setMostrarAlta(false);
+    } catch (err: any) {
+      show('error', 'No se pudo crear el cliente', err.response?.data?.error);
+    } finally {
+      setCreando(false);
+    }
+  }
+
   async function guardarPlan(id: string) {
     try {
       await api.patch(`/api/clientes/${id}`, { numero_plan: planForm ? Number(planForm) : null });
@@ -92,7 +118,7 @@ export function Clientes() {
         <p>Padrón de clientes y cuenta corriente — entrá a uno para ver sus viajes por mes</p>
       </div>
 
-      <div className="form-card" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <div className="form-card" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <button
           className="btn btn-primary"
           onClick={() => descargarArchivo('/api/clientes/export.xlsx', 'clientes.xlsx')}
@@ -100,7 +126,49 @@ export function Clientes() {
           <Download strokeWidth={1.75} /> Exportar todo a Excel
         </button>
         <small className="text-muted">Sale seccionado en una hoja por mes, con todos los clientes.</small>
+        <RoleGate roles={['admin', 'operador', 'finanzas']}>
+          <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => setMostrarAlta((v) => !v)}>
+            <Plus strokeWidth={1.75} /> Nuevo cliente
+          </button>
+        </RoleGate>
       </div>
+
+      {mostrarAlta && (
+        <div className="form-card" style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap' }}>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label className="form-label">Nombre</label>
+            <input
+              className="form-input"
+              value={altaForm.nombre}
+              onChange={(e) => setAltaForm({ ...altaForm, nombre: e.target.value })}
+              placeholder="Nombre y apellido"
+            />
+          </div>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label className="form-label">Teléfono</label>
+            <input
+              className="form-input"
+              value={altaForm.telefono}
+              onChange={(e) => setAltaForm({ ...altaForm, telefono: e.target.value })}
+              placeholder="261 5 12-3456"
+            />
+          </div>
+          <label className="form-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '6px', paddingBottom: '10px' }}>
+            <input
+              type="checkbox"
+              checked={altaForm.conCuentaCorriente}
+              onChange={(e) => setAltaForm({ ...altaForm, conCuentaCorriente: e.target.checked })}
+            />
+            Dar de alta la cuenta corriente ya
+          </label>
+          <div style={{ display: 'flex', gap: '8px', paddingBottom: '2px' }}>
+            <button className="btn btn-success" onClick={crearCliente} disabled={creando}>
+              {creando ? 'Creando...' : 'Crear'}
+            </button>
+            <button className="btn btn-ghost" onClick={() => setMostrarAlta(false)}>Cancelar</button>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
         <button
