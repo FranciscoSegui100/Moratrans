@@ -27,11 +27,11 @@ export const PORCENTAJE_ALARGUE = 0.5;
 export const DIAS_A_OFRECER_RETIRO_ANTICIPADO = 3;
 
 /** Tipos de lugar que se le preguntan al cliente tras confirmar la ubicación (caso borde "datos que el GPS no da"). */
-export const TIPOS_LUGAR: { id: string; title: string }[] = [
-  { id: 'lugar_casa', title: '🏠 Casa' },
-  { id: 'lugar_obra', title: '🏗️ Obra' },
-  { id: 'lugar_comercio', title: '🏪 Comercio' },
-  { id: 'lugar_consorcio', title: '🏢 Consorcio' },
+export const TIPOS_LUGAR: { id: string; title: string; description: string }[] = [
+  { id: 'lugar_casa', title: '🏠 Casa', description: 'Vivienda particular' },
+  { id: 'lugar_obra', title: '🏗️ Obra', description: 'Obra en construcción' },
+  { id: 'lugar_comercio', title: '🏪 Comercio', description: 'Local comercial' },
+  { id: 'lugar_consorcio', title: '🏢 Consorcio', description: 'Edificio / consorcio' },
 ];
 
 /**

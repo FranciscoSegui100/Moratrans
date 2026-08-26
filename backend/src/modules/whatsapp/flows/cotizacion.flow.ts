@@ -108,7 +108,13 @@ async function avanzarAConfirmarUbicacion(
 
 /** Paso "tipo de lugar" — primer dato que el GPS no da (caso borde). */
 async function pedirTipoLugar(to: string, sesion: Sesion): Promise<void> {
-  await sendList(to, '🏗️ Tipo de lugar', '¿Qué tipo de lugar es la dirección de entrega?', 'Ver opciones', TIPOS_LUGAR);
+  await sendList(
+    to,
+    '🏗️ Tipo de lugar',
+    '¿Qué tipo de lugar es la dirección de entrega? Nos ayuda a coordinar mejor el acceso del camión.',
+    'Ver opciones',
+    TIPOS_LUGAR,
+  );
   await setSesion({ ...sesion, paso: 'tipo_lugar' });
 }
 
@@ -120,10 +126,14 @@ async function pedirTipoLugar(to: string, sesion: Sesion): Promise<void> {
  * bot.config.ts) — no aplica a comercio ni consorcio.
  */
 async function pedirBarrioPrivado(to: string, sesion: Sesion): Promise<void> {
-  await sendButtons(to, '🏡 ¿Es en un barrio privado?', [
-    { id: 'barrio_privado_si', title: '✅ Sí' },
-    { id: 'barrio_privado_no', title: '↩️ No' },
-  ]);
+  await sendButtons(
+    to,
+    '🏡 ¿La entrega es dentro de un barrio privado? Suelen tener horario de acceso restringido, así lo coordinamos bien.',
+    [
+      { id: 'barrio_privado_si', title: '✅ Sí' },
+      { id: 'barrio_privado_no', title: '↩️ No' },
+    ],
+  );
   await setSesion({ ...sesion, paso: 'barrio_privado' });
 }
 
@@ -386,7 +396,11 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       return;
     }
 
-    await sendText(to, '🚚 ¿Alguna indicación para el chofer (portón, timbre, entre calles)? Si no hay, escribí "no".');
+    await sendText(
+      to,
+      '🚚 ¿Alguna indicación para el chofer que le facilite llegar (portón, timbre, entre calles, un punto de referencia)?\n\n' +
+        'Si no hay ninguna, escribí *no*.',
+    );
     await setSesion({ ...sesion, paso: 'indicacion_chofer', contexto: { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada } });
     return;
   }
@@ -401,7 +415,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       direccionVerificada: boolean;
     };
     if (m.tipo !== 'text' || !m.texto) {
-      await sendText(to, '🚚 Contame si hay alguna indicación para el chofer, o escribí "no".');
+      await sendText(to, '🚚 Contame si hay alguna indicación para el chofer, o escribí *no*.');
       return;
     }
     const indicacion = normalizarIndicacion(m.texto);
@@ -565,7 +579,7 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
   await finalizarPedido(to, m, sesion);
 }
 
-const MENSAJE_PEDIR_NOMBRE = '🙋 Antes de confirmar, decime tu *nombre y apellido* para tenerlo registrado.';
+const MENSAJE_PEDIR_NOMBRE = '🙋 Antes de confirmar tu pedido, decime tu *nombre y apellido* para dejarlo registrado en tu cuenta.';
 
 async function manejarNombrePedido(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -615,6 +629,7 @@ async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion): 
       `${datosBancarios()}\n\n` +
       `Y enviános el comprobante por este chat 📎\n` +
       `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +
+      `¡Gracias por elegir a *MoraTrans*! 🚚\n\n` +
       `_Escribí *menú* para volver al inicio en cualquier momento._`,
   );
   await clearSesion(to);
