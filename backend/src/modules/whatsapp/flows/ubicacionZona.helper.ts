@@ -158,10 +158,7 @@ export async function pedirMetodoUbicacion(to: string, departamento: string): Pr
 
 /** Al elegir "escribir dirección": se guarda tal cual la escribe el cliente, sin buscarla en el mapa. */
 export function mensajePedirCalleNumero(departamento: string): string {
-  return (
-    `✍️ *ESCRIBÍ CALLE Y NÚMERO DEL DEPARTAMENTO ${departamento.toUpperCase()}*\n\n` +
-    `_Ojo: esta dirección no se busca en el mapa — te la vamos a repetir para que la confirmes._`
-  );
+  return `✍️ *ESCRIBÍ CALLE Y NÚMERO DEL DEPARTAMENTO ${departamento.toUpperCase()}*`;
 }
 
 export type ResultadoUbicacionConDepartamento =

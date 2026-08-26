@@ -50,7 +50,8 @@ import type { Sesion } from '../session.store';
  * elegir_metodo_ubicacion_recambio -> [ubicacion_pin_recambio [->
  * confirmar_departamento_pin_recambio] | ubicacion_texto_recambio] ->
  * confirmar_ubicacion_recambio_nueva (capa 4) -> indicacion_recambio] ->
- * horario_recambio -> pago.
+ * horario_recambio -> [confirmar_resumen_recambio, si no es cuenta
+ * corriente] -> pago.
  */
 export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -87,6 +88,9 @@ export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promis
   }
   if (sesion.paso === 'horario_recambio') {
     return manejarHorario(m, sesion);
+  }
+  if (sesion.paso === 'confirmar_resumen_recambio') {
+    return manejarConfirmacionResumenRecambio(m, sesion);
   }
 
   const conts = await contenedoresDelCliente(to);
@@ -360,9 +364,9 @@ async function avanzarACapaCuatroRecambio(
   await sendButtons(
     to,
     `📍 Dirección: ${resumenUbicacion}\nZona: *${departamento}*\n\n` +
-      `¿Este es el lugar donde va el contenedor, o es desde donde me estás escribiendo?`,
+      `¿Confirmás que esta es la dirección exacta donde debe entregarse el contenedor?`,
     [
-      { id: 'ubicacion_es_destino', title: '📍 Es el destino' },
+      { id: 'ubicacion_es_destino', title: '✅ Sí, es correcta' },
       { id: 'ubicacion_no', title: '↩️ Mandar otra' },
     ],
   );
@@ -385,7 +389,7 @@ async function manejarConfirmacionUbicacionNueva(m: MensajeEntrante, sesion: Ses
   if (m.seleccionId !== 'ubicacion_es_destino') {
     await manejarRespuestaInvalida(
       m,
-      'Elegí "📍 Es el destino" o "↩️ Mandar otra".\n\n_Escribí *menú* para volver al inicio._',
+      'Elegí "✅ Sí, es correcta" o "↩️ Mandar otra".\n\n_Escribí *menú* para volver al inicio._',
     );
     return;
   }
@@ -433,12 +437,57 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
     return registrarRecambioCC(m, sesion, precio, moneda);
   }
 
+  await mostrarResumenYConfirmarRecambio(to, sesion, precio, moneda);
+}
+
+/** Resumen completo antes de pagar (mismo criterio que cotizacion.flow.ts): recién si confirma se crea el pedido y se le pasan los datos para transferir. */
+async function mostrarResumenYConfirmarRecambio(to: string, sesion: Sesion, precio: string, moneda: string): Promise<void> {
   const numero = sesion.contexto.numero as string;
+  const zona = sesion.contexto.zona as string;
+  const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
+  const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
+  const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
+  const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
+  const resumenDireccion = destino != null && destinoLat == null && destinoLng == null ? `*${destino}*` : destino;
+
+  await sendButtons(
+    to,
+    `🔄 *Resumen del recambio*\n\n` +
+      `Contenedor: *${numero}*\n` +
+      (resumenDireccion ? `Dirección: ${resumenDireccion}\n` : '') +
+      `Zona: *${zona}*\n` +
+      `Precio del flete: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
+      (horarioPreferido ? `Franja horaria: ${horarioPreferido}\n` : '') +
+      `\n¿Confirmás el recambio?`,
+    [
+      { id: 'resumen_recambio_si', title: '✅ Sí, confirmar' },
+      { id: 'resumen_recambio_no', title: '↩️ Cancelar' },
+    ],
+  );
+  await setSesion({ ...sesion, paso: 'confirmar_resumen_recambio', contexto: { ...sesion.contexto, precio, moneda } });
+}
+
+async function manejarConfirmacionResumenRecambio(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  if (m.seleccionId === 'resumen_recambio_no') {
+    await clearSesion(to);
+    await sendText(to, '👍 Sin problema, no quedó nada guardado. Escribí *menú* para ver otras opciones.');
+    return;
+  }
+  if (m.seleccionId !== 'resumen_recambio_si') {
+    await manejarRespuestaInvalida(m, 'Elegí "✅ Sí, confirmar" o "↩️ Cancelar".\n\n_Escribí *menú* para volver al inicio._');
+    return;
+  }
+
+  const numero = sesion.contexto.numero as string;
+  const zona = sesion.contexto.zona as string;
   const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
   const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
   const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
   const direccionVerificada = (sesion.contexto.direccionVerificada as boolean | undefined) ?? true;
   const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
+  const precio = sesion.contexto.precio as string;
+  const moneda = sesion.contexto.moneda as string;
 
   await query(
     `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, tipo, contenedor_recambio_numero)
@@ -449,11 +498,8 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
   await clearSesion(to);
   await sendText(
     to,
-    `🔄 *Recambio — contenedor ${numero}*\n` +
-      `Precio del flete: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
-      (destino ? `Dirección: ${destino}\n` : '') +
-      (horarioPreferido ? `Franja horaria: ${horarioPreferido}\n` : '') +
-      `\nPara coordinar el recambio, hacé el pago con estos datos:\n\n` +
+    `✅ *Recambio confirmado — contenedor ${numero}*\n\n` +
+      `Para reservarlo, hacé el pago con estos datos:\n\n` +
       `${datosBancarios()}\n\n` +
       `Y enviános el comprobante por este chat 📎\n` +
       `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +

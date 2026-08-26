@@ -30,7 +30,7 @@ import type { Sesion } from '../session.store';
  *   [ubicacion_pin [-> confirmar_departamento_pin, si el pin no coincide
  *   con el departamento elegido] | ubicacion_texto] -> confirmar_ubicacion
  *   (capa 4) -> indicacion_chofer -> tipo_lugar -> [barrio_privado] ->
- *   emplazamiento -> dia_entrega -> horario -> [crea el pedido]
+ *   dia_entrega -> horario -> confirmar_resumen -> [crea el pedido]
  *
  * Se vuelve a preguntar el departamento primero (a diferencia de una
  * versión anterior de este flujo que lo sacó): el cliente elige a mano, y
@@ -91,9 +91,9 @@ async function avanzarAConfirmarUbicacion(
   await sendButtons(
     to,
     `📍 Dirección: ${resumenUbicacion}\nZona: *${departamento}*${lineaPrecio}\n\n` +
-      `¿Este es el lugar donde va el contenedor, o es desde donde me estás escribiendo?`,
+      `¿Confirmás que esta es la dirección exacta donde debe entregarse el contenedor?`,
     [
-      { id: 'ubicacion_es_destino', title: '📍 Es el destino' },
+      { id: 'ubicacion_es_destino', title: '✅ Sí, es correcta' },
       { id: 'ubicacion_no', title: '↩️ Mandar otra' },
     ],
   );
@@ -125,22 +125,12 @@ async function pedirBarrioPrivado(to: string, sesion: Sesion): Promise<void> {
   await setSesion({ ...sesion, paso: 'barrio_privado' });
 }
 
-/** Paso "¿va dentro del terreno o sobre la vía pública?" — segundo dato que el GPS no da. */
-async function pedirEmplazamiento(to: string, sesion: Sesion): Promise<void> {
-  // Títulos de botón cortos a propósito: WhatsApp rechaza el mensaje ENTERO
-  // si un título de botón supera los 20 caracteres — "🏡 Adentro del
-  // terreno" quedaba en 21 y tiraba abajo este mensaje sin ningún error
-  // visible para el cliente (el bot se quedaba mudo justo acá).
-  await sendButtons(to, '🚧 ¿El contenedor va a quedar adentro del terreno, o sobre la vía pública (vereda/calle)?', [
-    { id: 'emplazamiento_terreno', title: '🏡 En el terreno' },
-    { id: 'emplazamiento_via_publica', title: '🚧 Vía pública' },
-  ]);
-  await setSesion({ ...sesion, paso: 'emplazamiento' });
-}
+/** Próximos días hábiles que se le ofrecen para elegir la entrega (sin domingos). */
+const DIAS_A_OFRECER_ENTREGA = 3;
 
 /** Paso "elegir día de entrega" — próximos días hábiles, sin domingos. */
 async function pedirDiaEntrega(to: string, sesion: Sesion): Promise<void> {
-  const dias = proximosDiasHabiles();
+  const dias = proximosDiasHabiles(DIAS_A_OFRECER_ENTREGA);
   await sendList(
     to,
     '📅 Día de entrega',
@@ -389,7 +379,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
     if (m.seleccionId !== 'ubicacion_es_destino') {
       await manejarRespuestaInvalida(
         m,
-        'Elegí "📍 Es el destino" o "↩️ Mandar otra".\n\n_Escribí *menú* para volver al inicio._',
+        'Elegí "✅ Sí, es correcta" o "↩️ Mandar otra".\n\n_Escribí *menú* para volver al inicio._',
       );
       return;
     }
@@ -430,40 +420,21 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
       await pedirBarrioPrivado(to, nuevaSesion);
       return;
     }
-    await pedirEmplazamiento(to, nuevaSesion);
+    await pedirDiaEntrega(to, nuevaSesion);
     return;
   }
 
   // Paso 4b: solo para "Casa" — ¿es en un barrio privado? (acceso restringido, ver HORARIO_BARRIO_PRIVADO)
   if (sesion.paso === 'barrio_privado') {
     if (m.seleccionId === 'barrio_privado_si') {
-      await pedirEmplazamiento(to, { ...sesion, contexto: { ...sesion.contexto, enBarrioPrivado: true } });
+      await pedirDiaEntrega(to, { ...sesion, contexto: { ...sesion.contexto, enBarrioPrivado: true } });
       return;
     }
     if (m.seleccionId === 'barrio_privado_no') {
-      await pedirEmplazamiento(to, { ...sesion, contexto: { ...sesion.contexto, enBarrioPrivado: false } });
+      await pedirDiaEntrega(to, { ...sesion, contexto: { ...sesion.contexto, enBarrioPrivado: false } });
       return;
     }
     await manejarRespuestaInvalida(m, 'Elegí "✅ Sí" o "↩️ No".');
-    return;
-  }
-
-  // Paso 5: ¿va adentro del terreno o sobre la vía pública?
-  if (sesion.paso === 'emplazamiento') {
-    if (m.seleccionId === 'emplazamiento_via_publica') {
-      await sendText(
-        to,
-        '⚠️ Ojo: si el contenedor va sobre la vereda o la calle, hace falta el *permiso municipal de ocupación de vía pública*. ' +
-          'Lo tenés que gestionar vos — nosotros seguimos con la coordinación igual.',
-      );
-      await pedirDiaEntrega(to, { ...sesion, contexto: { ...sesion.contexto, enViaPublica: true } });
-      return;
-    }
-    if (m.seleccionId === 'emplazamiento_terreno') {
-      await pedirDiaEntrega(to, { ...sesion, contexto: { ...sesion.contexto, enViaPublica: false } });
-      return;
-    }
-    await manejarRespuestaInvalida(m, 'Elegí "🏡 En el terreno" o "🚧 Vía pública".');
     return;
   }
 
@@ -483,7 +454,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
         to,
         `🏡 Como es en un barrio privado, coordinamos la entrega dentro del horario de acceso: *${HORARIO_BARRIO_PRIVADO.title}*.`,
       );
-      await finalizarPedido(to, m, nuevaSesion, HORARIO_BARRIO_PRIVADO);
+      await mostrarResumenYConfirmar(to, nuevaSesion, HORARIO_BARRIO_PRIVADO);
       return;
     }
 
@@ -492,28 +463,39 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
     return;
   }
 
-  // Paso 7: eligió la franja horaria -> recién ahí se crea el pedido y se cierra.
+  // Paso 7: eligió la franja horaria -> muestra el resumen completo antes de crear el pedido.
   if (sesion.paso === 'horario') {
     const opcion = OPCIONES_HORARIO.find((o) => o.id === m.seleccionId);
     if (!opcion) {
       await pedirHorarioPreferido(to, 'Elegí una de las opciones de abajo. 👇');
       return;
     }
-    await finalizarPedido(to, m, sesion, opcion);
+    await mostrarResumenYConfirmar(to, sesion, opcion);
     return;
+  }
+
+  // Paso 8 (resumen final): confirmó (o no) todo el pedido -> recién ahí se crea y se muestra el pago.
+  if (sesion.paso === 'confirmar_resumen') {
+    return manejarConfirmacionResumen(m, sesion);
   }
 }
 
-/** Crea el pedido y cierra el flujo — sea con la franja elegida por botones o la fija de barrio privado. */
-async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion, opcion: { title: string }): Promise<void> {
-  const { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada, tipoLugar, enViaPublica, fechaEntrega } = sesion.contexto as {
+/**
+ * Muestra el resumen completo del pedido (dirección resaltada en negrita,
+ * zona, precio, fecha y franja) y pide confirmación explícita antes de
+ * crear nada — recién si confirma se registra el pedido y se le pasan los
+ * datos para transferir (ver finalizarPedido). El precio se congela acá
+ * (mismo criterio que antes): si más tarde la tarifa cambia, este pedido ya
+ * cerrado no se ve afectado.
+ */
+async function mostrarResumenYConfirmar(to: string, sesion: Sesion, opcion: { title: string }): Promise<void> {
+  const { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada, tipoLugar, fechaEntrega } = sesion.contexto as {
     departamento: string;
     destinoLat: number | null;
     destinoLng: number | null;
     destinoDireccion: string | null;
     direccionVerificada: boolean;
     tipoLugar: string | null;
-    enViaPublica: boolean | null;
     fechaEntrega: string;
   };
 
@@ -525,16 +507,72 @@ async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion, o
   }
   const { precio, moneda } = tarifa;
   const fechaRetiroEstimada = sumarDias(fechaEntrega, DIAS_ALQUILER_ANTES_RETIRO);
+  const resumenUbicacion =
+    destinoLat != null && destinoLng != null
+      ? `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`
+      : `*${destinoDireccion}*`;
+
+  await sendButtons(
+    to,
+    `📦 *Resumen de tu pedido*\n\n` +
+      `📍 Dirección: ${resumenUbicacion}\n` +
+      `Zona: *${departamento}*\n` +
+      `Precio: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
+      `Fecha de entrega: ${formatearFechaLarga(fechaEntrega)}\n` +
+      `Franja horaria: ${opcion.title}\n` +
+      `Fecha estimada de retiro: ${formatearFechaLarga(fechaRetiroEstimada)}\n\n` +
+      `¿Confirmás el pedido?`,
+    [
+      { id: 'resumen_pedido_si', title: '✅ Sí, confirmar' },
+      { id: 'resumen_pedido_no', title: '↩️ Cancelar' },
+    ],
+  );
+  await setSesion({
+    ...sesion,
+    paso: 'confirmar_resumen',
+    contexto: { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada, tipoLugar, fechaEntrega, horarioTitle: opcion.title, precio, moneda, fechaRetiroEstimada },
+  });
+}
+
+async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  if (m.seleccionId === 'resumen_pedido_no') {
+    await clearSesion(to);
+    await sendText(to, '👍 Sin problema, no quedó nada guardado. Escribí *Cotizar* cuando quieras volver a intentarlo, o *menú* para ver otras opciones.');
+    return;
+  }
+  if (m.seleccionId !== 'resumen_pedido_si') {
+    await manejarRespuestaInvalida(m, 'Elegí "✅ Sí, confirmar" o "↩️ Cancelar".\n\n_Escribí *menú* para volver al inicio._');
+    return;
+  }
+  await finalizarPedido(to, m, sesion);
+}
+
+/** Crea el pedido en la base y le pasa los datos para transferir — recién acá, con el resumen ya confirmado. */
+async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada, tipoLugar, fechaEntrega, horarioTitle, precio, moneda, fechaRetiroEstimada } = sesion.contexto as {
+    departamento: string;
+    destinoLat: number | null;
+    destinoLng: number | null;
+    destinoDireccion: string | null;
+    direccionVerificada: boolean;
+    tipoLugar: string | null;
+    fechaEntrega: string;
+    horarioTitle: string;
+    precio: string;
+    moneda: string;
+    fechaRetiroEstimada: string;
+  };
 
   const [pedido] = await query<{ numero_pedido: number }>(
     `INSERT INTO pedidos (
        cliente_telefono, cliente_nombre, zona, precio, estado, destino_lat, destino_lng, destino_direccion,
-       direccion_verificada, horario_preferido, tipo_lugar, en_via_publica, fecha_entrega, fecha_retiro_estimada
-     ) VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       direccion_verificada, horario_preferido, tipo_lugar, fecha_entrega, fecha_retiro_estimada
+     ) VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7,$8,$9,$10,$11,$12)
      RETURNING numero_pedido`,
     [
       to, m.nombrePerfil ?? null, departamento, precio, destinoLat, destinoLng, destinoDireccion,
-      direccionVerificada, opcion.title, tipoLugar ?? null, enViaPublica ?? null, fechaEntrega, fechaRetiroEstimada,
+      direccionVerificada, horarioTitle, tipoLugar ?? null, fechaEntrega, fechaRetiroEstimada,
     ],
   );
   // Alta/actualización en el padrón de clientes (ver clientes.service.ts) —
@@ -544,12 +582,7 @@ async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion, o
 
   await sendText(
     to,
-    `📦 *Pedido #${pedido.numero_pedido} — ${departamento}*\n` +
-      `Dirección: ${destinoDireccion ?? `ubicación compartida (${destinoLat}, ${destinoLng})`}\n` +
-      `Fecha de entrega: ${formatearFechaLarga(fechaEntrega)}\n` +
-      `Franja horaria: ${opcion.title}\n` +
-      `Importe: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
-      `Fecha estimada de retiro: ${formatearFechaLarga(fechaRetiroEstimada)}\n\n` +
+    `✅ *Pedido #${pedido.numero_pedido} confirmado*\n\n` +
       `Para reservarlo, hacé el pago con estos datos:\n\n` +
       `${datosBancarios()}\n\n` +
       `Y enviános el comprobante por este chat 📎\n` +
