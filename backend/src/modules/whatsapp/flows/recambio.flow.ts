@@ -5,6 +5,7 @@ import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
+import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
 import { datosBancarios, tieneCuentaCorrienteAprobada } from './pago.flow';
 import { reverseGeocode } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
@@ -50,8 +51,9 @@ import type { Sesion } from '../session.store';
  * elegir_metodo_ubicacion_recambio -> [ubicacion_pin_recambio [->
  * confirmar_departamento_pin_recambio] | ubicacion_texto_recambio] ->
  * confirmar_ubicacion_recambio_nueva (capa 4) -> indicacion_recambio] ->
- * horario_recambio -> [confirmar_resumen_recambio, si no es cuenta
- * corriente] -> pago.
+ * horario_recambio -> [confirmar_resumen_recambio -> [pedir_nombre_recambio,
+ * si es la primera vez que este teléfono confirma un pedido], si no es
+ * cuenta corriente] -> pago.
  */
 export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -91,6 +93,9 @@ export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promis
   }
   if (sesion.paso === 'confirmar_resumen_recambio') {
     return manejarConfirmacionResumenRecambio(m, sesion);
+  }
+  if (sesion.paso === 'pedir_nombre_recambio') {
+    return manejarNombreRecambio(m, sesion);
   }
 
   const conts = await contenedoresDelCliente(to);
@@ -479,6 +484,29 @@ async function manejarConfirmacionResumenRecambio(m: MensajeEntrante, sesion: Se
     return;
   }
 
+  if (await necesitaNombre(to)) {
+    await sendText(to, MENSAJE_PEDIR_NOMBRE);
+    await setSesion({ ...sesion, paso: 'pedir_nombre_recambio' });
+    return;
+  }
+  await finalizarRecambioPago(m, sesion);
+}
+
+const MENSAJE_PEDIR_NOMBRE = '🙋 Antes de confirmar, decime tu *nombre y apellido* para tenerlo registrado.';
+
+async function manejarNombreRecambio(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const nombre = (m.texto ?? '').trim();
+  if (m.tipo !== 'text' || nombre.length < 2) {
+    await sendText(to, MENSAJE_PEDIR_NOMBRE);
+    return;
+  }
+  await obtenerOCrearCliente(to, nombre);
+  await finalizarRecambioPago(m, sesion);
+}
+
+async function finalizarRecambioPago(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
   const numero = sesion.contexto.numero as string;
   const zona = sesion.contexto.zona as string;
   const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;

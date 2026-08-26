@@ -3,6 +3,7 @@ import { sendText, sendButtons, sendList, sendLocationRequest } from '../graphAp
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
+import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
 import { reverseGeocode } from '../../../services/geocoding.service';
 import { proximosDiasHabiles, formatearFechaLarga } from '../../../services/diasHabiles.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
@@ -382,6 +383,14 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
     fechaEntrega: string;
     titular: string;
   };
+
+  // Este flujo ya pregunta "¿a nombre de quién?" (titular) más arriba — si
+  // todavía no tenemos un nombre real guardado para este teléfono (nombre
+  // de perfil de WhatsApp vacío), se aprovecha ese dato en vez de volver a
+  // preguntar (ver necesitaNombre en clientes.service.ts).
+  if (await necesitaNombre(to)) {
+    await obtenerOCrearCliente(to, titular);
+  }
 
   // Depósito de donde sale el contenedor (si hay uno solo activo cargado; si
   // hay varios, se completa después desde el panel — mismo criterio que el

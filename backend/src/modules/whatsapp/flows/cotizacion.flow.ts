@@ -2,7 +2,7 @@ import { query } from '../../../config/db';
 import { sendText, sendList, sendButtons, sendLocationRequest } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
 import { datosBancarios } from './pago.flow';
-import { obtenerOCrearCliente } from '../../../services/clientes.service';
+import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
 import { reverseGeocode } from '../../../services/geocoding.service';
 import {
   pedirDepartamento,
@@ -30,7 +30,9 @@ import type { Sesion } from '../session.store';
  *   [ubicacion_pin [-> confirmar_departamento_pin, si el pin no coincide
  *   con el departamento elegido] | ubicacion_texto] -> confirmar_ubicacion
  *   (capa 4) -> indicacion_chofer -> tipo_lugar -> [barrio_privado] ->
- *   dia_entrega -> horario -> confirmar_resumen -> [crea el pedido]
+ *   dia_entrega -> horario -> confirmar_resumen -> [pedir_nombre_pedido,
+ *   si es la primera vez que este teléfono confirma un pedido] -> [crea el
+ *   pedido]
  *
  * Se vuelve a preguntar el departamento primero (a diferencia de una
  * versión anterior de este flujo que lo sacó): el cliente elige a mano, y
@@ -478,6 +480,11 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
   if (sesion.paso === 'confirmar_resumen') {
     return manejarConfirmacionResumen(m, sesion);
   }
+
+  // Paso 8b: solo si es la primera vez que este teléfono confirma un pedido.
+  if (sesion.paso === 'pedir_nombre_pedido') {
+    return manejarNombrePedido(m, sesion);
+  }
 }
 
 /**
@@ -545,6 +552,29 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
     await manejarRespuestaInvalida(m, 'Elegí "✅ Sí, confirmar" o "↩️ Cancelar".\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
+
+  // El nombre de perfil de WhatsApp no siempre está puesto — recién acá, al
+  // confirmar de verdad un pedido (no en cualquier mensaje), se le pregunta
+  // nombre y apellido si todavía no lo tenemos guardado. Así no se da de
+  // alta un cliente por cada teléfono que solo miró el menú.
+  if (await necesitaNombre(to)) {
+    await sendText(to, MENSAJE_PEDIR_NOMBRE);
+    await setSesion({ ...sesion, paso: 'pedir_nombre_pedido' });
+    return;
+  }
+  await finalizarPedido(to, m, sesion);
+}
+
+const MENSAJE_PEDIR_NOMBRE = '🙋 Antes de confirmar, decime tu *nombre y apellido* para tenerlo registrado.';
+
+async function manejarNombrePedido(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  const nombre = (m.texto ?? '').trim();
+  if (m.tipo !== 'text' || nombre.length < 2) {
+    await sendText(to, MENSAJE_PEDIR_NOMBRE);
+    return;
+  }
+  await obtenerOCrearCliente(to, nombre);
   await finalizarPedido(to, m, sesion);
 }
 
@@ -575,10 +605,8 @@ async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion): 
       direccionVerificada, horarioTitle, tipoLugar ?? null, fechaEntrega, fechaRetiroEstimada,
     ],
   );
-  // Alta/actualización en el padrón de clientes (ver clientes.service.ts) —
-  // así la pantalla Clientes del panel refleja a todo el que cotizó, no
-  // solo a quien pidió cuenta corriente.
-  obtenerOCrearCliente(to, m.nombrePerfil).catch((e) => console.error('Error dando de alta al cliente:', e));
+  // El cliente ya quedó dado de alta en `clientes` antes de llegar acá (ver
+  // necesitaNombre/manejarNombrePedido más arriba) — no hace falta repetirlo.
 
   await sendText(
     to,
