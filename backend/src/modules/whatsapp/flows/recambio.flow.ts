@@ -411,14 +411,18 @@ async function manejarConfirmacionUbicacionNueva(m: MensajeEntrante, sesion: Ses
     return;
   }
 
-  await sendText(to, '🚚 ¿Alguna indicación para el chofer (portón, timbre, entre calles)? Si no hay, escribí "no".');
+  await sendText(
+    to,
+    '🚚 ¿Alguna indicación para el chofer que le facilite llegar (portón, timbre, entre calles, un punto de referencia)?\n\n' +
+      'Si no hay ninguna, escribí *no*.',
+  );
   await setSesion({ ...sesion, paso: 'indicacion_recambio' });
 }
 
 async function manejarIndicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
   if (m.tipo !== 'text' || !m.texto) {
-    await sendText(to, '🚚 Contame si hay alguna indicación para el chofer, o escribí "no".');
+    await sendText(to, '🚚 Contame si hay alguna indicación para el chofer, o escribí *no*.');
     return;
   }
   const indicacion = normalizarIndicacion(m.texto);
@@ -504,7 +508,7 @@ async function manejarConfirmacionResumenRecambio(m: MensajeEntrante, sesion: Se
   await finalizarRecambioPago(m, sesion);
 }
 
-const MENSAJE_PEDIR_NOMBRE = '🙋 Antes de confirmar, decime tu *nombre y apellido* para tenerlo registrado.';
+const MENSAJE_PEDIR_NOMBRE = '🙋 Antes de confirmar tu pedido, decime tu *nombre y apellido* para dejarlo registrado en tu cuenta.';
 
 async function manejarNombreRecambio(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -543,6 +547,7 @@ async function finalizarRecambioPago(m: MensajeEntrante, sesion: Sesion): Promis
       `${datosBancarios()}\n\n` +
       `Y enviános el comprobante por este chat 📎\n` +
       `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +
+      `¡Gracias por confiar en *MoraTrans*! 🚚\n\n` +
       `_Escribí *menú* para volver al inicio en cualquier momento._`,
   );
 }
@@ -596,6 +601,7 @@ async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: s
     to,
     `✅ ¡Recambio confirmado! Costo: *${moneda} ${Number(precio).toLocaleString('es-AR')}* — se agregó a tu cuenta corriente.\n\n` +
       'En breve te asignamos chofer para coordinarlo.\n\n' +
+      '¡Gracias por confiar en *MoraTrans*! 🚚\n\n' +
       '_Si en un rato no tenés novedades, escribí *asesor*._',
   );
 }

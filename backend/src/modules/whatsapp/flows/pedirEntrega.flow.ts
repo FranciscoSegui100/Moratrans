@@ -242,7 +242,7 @@ async function pedirConfirmacion(
 
   await sendButtons(
     to,
-    `📍 Confirmá la dirección de entrega:\n\n${resumen}\nZona: *${departamento}*${lineaPrecio}\n\n¿Es correcta?`,
+    `📍 Confirmá la dirección de entrega:\n\n${resumen}\nZona: *${departamento}*${lineaPrecio}\n\n¿Confirmás que esta es la dirección exacta donde debe entregarse el contenedor?`,
     [
       { id: 'entrega_cliente_si', title: '✅ Sí, es correcta' },
       { id: 'entrega_cliente_no', title: '↩️ Volver a enviar' },
@@ -269,14 +269,18 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
 
-  await sendText(to, '🚚 ¿Alguna indicación para el chofer (portón, timbre, entre calles)? Si no hay, escribí "no".');
+  await sendText(
+    to,
+    '🚚 ¿Alguna indicación para el chofer que le facilite llegar (portón, timbre, entre calles, un punto de referencia)?\n\n' +
+      'Si no hay ninguna, escribí *no*.',
+  );
   await setSesion({ ...sesion, paso: 'indicacion_entrega_cliente' });
 }
 
 async function manejarIndicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
   if (m.tipo !== 'text' || !m.texto) {
-    await sendText(to, '🚚 Contame si hay alguna indicación para el chofer, o escribí "no".');
+    await sendText(to, '🚚 Contame si hay alguna indicación para el chofer, o escribí *no*.');
     return;
   }
   const indicacion = normalizarIndicacion(m.texto);
@@ -395,6 +399,7 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
   await sendText(
     to,
     '✅ ¡Listo! Registramos tu pedido de entrega. En breve te asignamos contenedor y chofer.\n\n' +
+      '¡Gracias por confiar en *MoraTrans*! 🚚\n\n' +
       '_Para ver el detalle y el total pendiente de tu cuenta, escribí *Resumen de cuenta* en el menú. ' +
       'Si en un rato no tenés novedades, escribí *asesor*._',
   );
