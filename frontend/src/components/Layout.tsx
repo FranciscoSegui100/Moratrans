@@ -15,6 +15,7 @@ import {
   LogOut,
   MessageCircle,
   Volume2,
+  Receipt,
 } from 'lucide-react';
 import { useAuth, tieneRol, Rol } from '../context/AuthContext';
 import { api } from '../api/client';
@@ -28,6 +29,7 @@ interface AlertaSocket { tipo: string; mensaje: string; cliente_telefono?: strin
 const nav: { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] }[] = [
   { to: '/', label: 'Dashboard', icon: LayoutGrid },
   { to: '/pagos', label: 'Validar pagos', icon: CreditCard },
+  { to: '/comprobantes', label: 'Comprobantes', icon: Receipt },
   { to: '/viajes', label: 'Viajes', icon: Truck },
   { to: '/rutas', label: 'Rutas', icon: Route, roles: ['admin', 'operador'] },
   { to: '/alertas', label: 'Alertas', icon: Bell },

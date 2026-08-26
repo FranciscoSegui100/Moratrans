@@ -9,6 +9,7 @@ import { ForgotPassword } from './pages/ForgotPassword';
 import { SetPassword } from './pages/SetPassword';
 import { Dashboard } from './pages/Dashboard';
 import { Pagos } from './pages/Pagos';
+import { Comprobantes } from './pages/Comprobantes';
 import { Alertas } from './pages/Alertas';
 import { Conversaciones } from './pages/Conversaciones';
 import { Choferes } from './pages/Choferes';
@@ -52,6 +53,7 @@ export default function App() {
                       <Routes>
                         <Route path="/"             element={<Dashboard />} />
                         <Route path="/pagos"         element={<Pagos />} />
+                        <Route path="/comprobantes"  element={<Comprobantes />} />
                         <Route path="/viajes"        element={<Viajes />} />
                         <Route path="/rutas"         element={<Rutas />} />
                         <Route path="/alertas"       element={<Alertas />} />
