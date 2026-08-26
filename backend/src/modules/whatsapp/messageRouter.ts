@@ -13,6 +13,7 @@ import { handlePedirEntrega } from './flows/pedirEntrega.flow';
 import { handleDetalleMovimientos } from './flows/movimientos.flow';
 import { handleAlargarRetiro } from './flows/alargarRetiro.flow';
 import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
+import { obtenerOCrearCliente } from '../../services/clientes.service';
 import { esAsesorDirecto, manejarAsesorDirecto } from './estados';
 import type { Sesion } from './session.store';
 
@@ -99,6 +100,8 @@ function pideAsesor(m: MensajeEntrante): boolean {
  * Enrutador principal. Decide el flujo según:
  *  1. Si el teléfono pertenece a un chofer -> flujo chofer (exento del punto 1.b).
  *  1.b. Bot desactivado a mano desde el panel -> mensaje fijo, corta acá.
+ *  1.c. Cliente que nunca escribió antes -> se le pide nombre y apellido una
+ *       sola vez, antes de cualquier otra cosa (ver pedirNombreNuevoCliente).
  *  2. Comandos globales (menú / asesor) -> funcionan en cualquier momento,
  *     incluso en medio de otro flujo.
  *  3. Un comprobante (imagen/documento) -> siempre al flujo de pago.
@@ -123,6 +126,21 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   // choferes (ya se filtraron arriba).
   if (!(await botEstaActivo())) {
     return sendText(m.from, MENSAJE_BOT_DESACTIVADO);
+  }
+
+  // 1.c) Onboarding: ya está esperando la respuesta con el nombre.
+  if (sesion.flujo === 'onboarding' && sesion.paso === 'pedir_nombre') {
+    return manejarNombreNuevoCliente(m);
+  }
+
+  // 1.d) El nombre de WhatsApp (nombrePerfil) no siempre está puesto, y
+  // "Sin nombre" en el panel no sirve — así que a cualquier teléfono que
+  // todavía no tiene fila en `clientes` (nunca cotizó ni pidió nada) se le
+  // pregunta una sola vez, antes de mostrarle nada más, para que quede bien
+  // guardado desde el primer contacto.
+  const [clienteExistente] = await query('SELECT 1 FROM clientes WHERE telefono = $1', [m.from]);
+  if (!clienteExistente) {
+    return pedirNombreNuevoCliente(m.from);
   }
 
   // 2) Comandos globales: funcionan siempre, sin importar en qué flujo esté.
@@ -203,6 +221,25 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
 
   // 6) Fallback
   return enviarMenuPrincipal(m.from);
+}
+
+/** Primer contacto de un teléfono nuevo (ver 1.d en enrutar): se le pide el nombre antes de mostrarle nada más. */
+async function pedirNombreNuevoCliente(to: string): Promise<void> {
+  await setSesion({ telefono: to, flujo: 'onboarding', paso: 'pedir_nombre', contexto: {} });
+  await sendText(to, '👋 ¡Bienvenido a *MoraTrans*! Antes de arrancar, decime tu *nombre y apellido* para tenerlo registrado.');
+}
+
+/** Respuesta al pedido de nombre: la guarda en `clientes` y recién ahí muestra el menú. */
+async function manejarNombreNuevoCliente(m: MensajeEntrante): Promise<void> {
+  const to = m.from;
+  const nombre = (m.texto ?? '').trim();
+  if (m.tipo !== 'text' || nombre.length < 2) {
+    await sendText(to, '👋 Decime tu *nombre y apellido*, así te tenemos registrado.');
+    return;
+  }
+  await obtenerOCrearCliente(to, nombre);
+  await clearSesion(to);
+  return enviarMenuPrincipal(to);
 }
 
 /**
