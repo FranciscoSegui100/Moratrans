@@ -4,6 +4,7 @@ import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { excelClientes, enviarExcelClientePorWhatsApp } from '../reportes/reportes.service';
 import { motivoErrorWa } from '../whatsapp/graphApi';
+import { normalizarTelefonoAR } from '../../services/telefono.service';
 
 export const clientesRouter = Router();
 clientesRouter.use(requireAuth);
@@ -95,6 +96,43 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
     [req.params.telefono, mes],
   );
   res.json(rows);
+});
+
+const createSchema = z.object({
+  nombre: z.string().trim().min(1, 'Falta el nombre'),
+  telefono: z.string().trim().min(6, 'Falta el teléfono'),
+  // Permite dar de alta la cuenta corriente en el mismo paso, sin que el
+  // cliente tenga que pedirla por WhatsApp primero (ver cuenta_corriente_estado
+  // en pago.flow.ts: sólo 'aprobada' lo habilita a pagar así).
+  cuenta_corriente_estado: z.enum(['sin_pedir', 'aprobada']).optional().default('sin_pedir'),
+});
+
+/**
+ * POST /api/clientes — alta manual de un cliente que todavía no cotizó por
+ * WhatsApp (hoy la tabla sólo se llena sola cuando cotizan, ver GET /
+ * vacío). Pensado para poder darle cuenta corriente de entrada a un cliente
+ * conocido de antes del sistema, sin esperar a que escriba al bot.
+ */
+clientesRouter.post('/', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+  const parsed = createSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Datos inválidos' });
+  const telefono = normalizarTelefonoAR(parsed.data.telefono);
+  try {
+    const [row] = await query(
+      `INSERT INTO clientes (nombre, telefono, cuenta_corriente_estado)
+       VALUES ($1, $2, $3)
+       RETURNING id, nombre, telefono, cuenta_corriente_estado, numero_plan`,
+      [parsed.data.nombre, telefono, parsed.data.cuenta_corriente_estado],
+    );
+    res.status(201).json(row);
+  } catch (e: any) {
+    if (e.code === '23505') { // Unique violation (telefono)
+      res.status(409).json({ error: 'Ya existe un cliente con ese teléfono' });
+    } else {
+      console.error('Error al crear cliente:', e);
+      res.status(500).json({ error: 'Error interno del servidor.' });
+    }
+  }
 });
 
 const patchSchema = z.object({
