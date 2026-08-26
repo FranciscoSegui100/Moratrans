@@ -30,7 +30,7 @@ export function Comprobantes() {
       <div className="page-header">
         <div>
           <h2>Comprobantes</h2>
-          <p>Histórico de comprobantes de pago enviados por los clientes</p>
+          <p style={{ fontSize: '1rem' }}>Histórico de comprobantes de pago enviados por los clientes</p>
         </div>
       </div>
 
