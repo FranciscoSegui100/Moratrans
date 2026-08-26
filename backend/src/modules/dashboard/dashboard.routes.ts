@@ -42,6 +42,7 @@ dashboardRouter.get('/comprobantes', async (_req: Request, res: Response) => {
   const rows = await query<{
     id: string;
     cliente_telefono: string;
+    cliente_nombre: string | null;
     monto: string | null;
     estado: string;
     tipo: string;
@@ -51,11 +52,13 @@ dashboardRouter.get('/comprobantes', async (_req: Request, res: Response) => {
     precio: string | null;
     moneda: string | null;
   }>(
-    `SELECT p.id, p.cliente_telefono, p.monto, p.estado, p.tipo, p.creado_en, p.titular_transferencia,
+    `SELECT p.id, p.cliente_telefono, COALESCE(c.nombre, pe.cliente_nombre) AS cliente_nombre,
+            p.monto, p.estado, p.tipo, p.creado_en, p.titular_transferencia,
             pe.zona, pe.precio, td.moneda
        FROM pagos p
        LEFT JOIN pedidos pe ON pe.id = p.pedido_id
        LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
+       LEFT JOIN clientes c ON c.telefono = p.cliente_telefono
       WHERE p.url_comprobante IS NOT NULL
       ORDER BY p.creado_en DESC
       LIMIT 200`,
