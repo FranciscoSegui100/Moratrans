@@ -18,13 +18,6 @@ interface Cliente {
   ultimo_viaje: string | null;
 }
 
-const ETIQUETA_CC: Record<Cliente['cuenta_corriente_estado'], { texto: string; clase: string }> = {
-  sin_pedir: { texto: 'Sin pedir', clase: 'retirado' },
-  pendiente: { texto: 'Pendiente', clase: 'pendiente' },
-  aprobada: { texto: 'Aprobada', clase: 'disponible' },
-  rechazada: { texto: 'Rechazada', clase: 'rechazado' },
-};
-
 type Pestana = 'cuenta_corriente' | 'ocasionales';
 
 // Cuenta corriente: la tiene aprobada o la está pidiendo (ver pago.flow.ts).
@@ -192,7 +185,6 @@ export function Clientes() {
               <th>Cliente</th>
               <th>Teléfono</th>
               <th>Nº plan</th>
-              <th>Cuenta corriente</th>
               <th>Viajes</th>
               <th>Último viaje</th>
               <th>Acciones</th>
@@ -201,7 +193,6 @@ export function Clientes() {
           </thead>
           <tbody>
             {clientes.map((c) => {
-              const cc = ETIQUETA_CC[c.cuenta_corriente_estado];
               return (
                 <tr key={c.id}>
                   <td className="strong">{c.nombre}</td>
@@ -230,7 +221,6 @@ export function Clientes() {
                       c.numero_plan ?? <span className="text-muted">—</span>
                     )}
                   </td>
-                  <td><span className={`badge ${cc.clase}`}>{cc.texto}</span></td>
                   <td>{c.cantidad_viajes}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>{c.ultimo_viaje ? formatearFecha(c.ultimo_viaje) : <span className="text-muted">—</span>}</td>
                   <td>
@@ -262,16 +252,18 @@ export function Clientes() {
                       <Link to={`/clientes/${encodeURIComponent(c.telefono)}`} className="btn btn-ghost btn-sm">
                         Ingresar <ArrowRight size={13} strokeWidth={1.75} />
                       </Link>
-                      <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          title="Enviar su Excel de movimientos por WhatsApp"
-                          onClick={() => enviarPorWhatsApp(c.telefono)}
-                          disabled={enviando === c.telefono}
-                        >
-                          <Send size={13} strokeWidth={1.75} /> {enviando === c.telefono ? '...' : 'Enviar'}
-                        </button>
-                      </RoleGate>
+                      {pestana === 'cuenta_corriente' && (
+                        <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            title="Enviar su Excel de movimientos por WhatsApp"
+                            onClick={() => enviarPorWhatsApp(c.telefono)}
+                            disabled={enviando === c.telefono}
+                          >
+                            <Send size={13} strokeWidth={1.75} /> {enviando === c.telefono ? '...' : 'Enviar'}
+                          </button>
+                        </RoleGate>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -279,7 +271,7 @@ export function Clientes() {
             })}
             {clientes.length === 0 && (
               <tr>
-                <td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   {todosLosClientes.length === 0
                     ? 'Todavía no hay clientes registrados (aparecen solos cuando cotizan por WhatsApp).'
                     : pestana === 'cuenta_corriente'
