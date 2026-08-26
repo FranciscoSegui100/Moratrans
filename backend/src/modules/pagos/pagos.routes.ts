@@ -230,13 +230,61 @@ async function validarAlargue(req: Request, res: Response, pagoId: string): Prom
   emitAlertaActualizada({ tipo: 'alargue_solicitado', referencia_id: pagoId, estado: 'resuelta' });
   emitRecursoActualizado('contenedores');
 
-  sendText(
-    pago.cliente_telefono,
-    `✅ ¡Listo! Extendimos *${DIAS_ALARGUE} días* el retiro de tu contenedor *${pago.contenedor_numero}* — ahora vence el ${formatearFechaCorta(cont.vence_en)}.`,
-  ).catch((e) => console.error('Error avisando alargue validado:', motivoErrorWa(e)));
+  // Todo lo de arriba (pago validado + vence_en actualizado) ya quedó
+  // grabado — un fallo acá abajo NO debe tirar la respuesta HTTP como error,
+  // porque el operador lo interpretaría como "no se validó" y reintentaría
+  // contra un pago que ya no está 'pendiente'. Se avisa por alerta en vez
+  // de dejar que explote (bug real: formatearFechaCorta no soportaba el
+  // Date que devuelve vence_en TIMESTAMPTZ, y el error tiraba la respuesta
+  // entera dejando al cliente sin el aviso de WhatsApp pese a que ya estaba
+  // todo validado en la base).
+  try {
+    await sendText(
+      pago.cliente_telefono,
+      mensajeAlargueValidado(pago.contenedor_numero, cont.vence_en),
+    );
+  } catch (e) {
+    const motivo = motivoErrorWa(e);
+    console.error('Error avisando alargue validado:', motivo);
+    await notificarEnvioFallido(pagoId, pago.cliente_telefono, 'aviso de alargue de retiro validado', motivo).catch((e2) =>
+      console.error('Error registrando alerta de envío fallido:', e2),
+    );
+  }
 
   res.json({ ok: true, tipo: 'alargue_retiro', contenedor: pago.contenedor_numero, vence_en: cont.vence_en });
 }
+
+function mensajeAlargueValidado(contenedor: string, venceEn: Date): string {
+  return `✅ ¡Listo! Extendimos *${DIAS_ALARGUE} días* el retiro de tu contenedor *${contenedor}* — ahora vence el ${formatearFechaCorta(venceEn)}.`;
+}
+
+/**
+ * Reenvía el aviso de "alargue validado" a mano — para el caso borde en que
+ * ya quedó todo grabado (pago validado + vence_en corrido) pero el WhatsApp
+ * nunca le llegó al cliente (ver comentario en validarAlargue). A diferencia
+ * de /:id/validar, acá se exige que el pago YA esté validado.
+ */
+pagosRouter.post('/:id/reenviar-aviso-alargue', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+  const pagoId = req.params.id;
+  const [pago] = await query<{ tipo: string; estado: string; contenedor_numero: string | null; cliente_telefono: string }>(
+    'SELECT tipo, estado, contenedor_numero, cliente_telefono FROM pagos WHERE id = $1',
+    [pagoId],
+  );
+  if (!pago) return res.status(404).json({ error: 'Pago inexistente' });
+  if (pago.tipo !== 'alargue_retiro') return res.status(400).json({ error: 'Este pago no es un alargue de retiro' });
+  if (pago.estado !== 'validado') return res.status(409).json({ error: 'Este alargue todavía no está validado' });
+  if (!pago.contenedor_numero) return res.status(409).json({ error: 'Este alargue no tiene un contenedor asociado' });
+
+  const [cont] = await query<{ vence_en: Date | null }>('SELECT vence_en FROM contenedores WHERE numero = $1', [pago.contenedor_numero]);
+  if (!cont?.vence_en) return res.status(409).json({ error: 'El contenedor no tiene fecha de vencimiento cargada' });
+
+  try {
+    await sendText(pago.cliente_telefono, mensajeAlargueValidado(pago.contenedor_numero, cont.vence_en));
+  } catch (e) {
+    return res.status(502).json({ error: `No se pudo enviar el WhatsApp: ${motivoErrorWa(e)}` });
+  }
+  res.json({ ok: true });
+});
 
 pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const pagoId = req.params.id;
