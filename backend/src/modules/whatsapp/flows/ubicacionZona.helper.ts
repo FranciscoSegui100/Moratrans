@@ -141,9 +141,13 @@ export function departamentoElegido(m: MensajeEntrante): string | null {
   return m.seleccionId?.startsWith('depto:') ? m.seleccionId.replace('depto:', '') : null;
 }
 
+// Título corto a propósito: WhatsApp rechaza el mensaje ENTERO si un botón
+// supera los 20 caracteres — "✍️ Escribir dirección" quedaba en 22 y se
+// mandaba truncado ("Escribir direcció", sin la "n") sin ningún error
+// visible para el cliente.
 const BOTONES_METODO_UBICACION = [
   { id: 'metodo_pin', title: '📍 Enviar ubicación' },
-  { id: 'metodo_texto', title: '✍️ Escribir dirección' },
+  { id: 'metodo_texto', title: '✍️ Escribir calle' },
 ];
 
 /** Segundo paso: cómo dar la dirección de ese departamento — pin (prioritario, más preciso) o escribirla a mano (ver mensajePedirCalleNumero). */
@@ -158,7 +162,7 @@ export async function pedirMetodoUbicacion(to: string, departamento: string): Pr
 
 /** Al elegir "escribir dirección": se guarda tal cual la escribe el cliente, sin buscarla en el mapa. */
 export function mensajePedirCalleNumero(departamento: string): string {
-  return `✍️ *ESCRIBÍ CALLE Y NÚMERO DEL DEPARTAMENTO ${departamento.toUpperCase()}*`;
+  return `✍️ Escribí la calle y el número de la dirección en *${departamento}*.`;
 }
 
 export type ResultadoUbicacionConDepartamento =
