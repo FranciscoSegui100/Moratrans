@@ -763,9 +763,18 @@ export function Rutas() {
     queryClient.invalidateQueries({ queryKey: ['viajes', 'del-dia', fecha] });
   };
 
+  /** Agrega/confirma una ruta en la caché de la lista del día sin esperar el refetch de recargarListas(). */
+  function agregarRutaOptimista(r: Ruta) {
+    queryClient.setQueryData<Ruta[]>(['rutas', fecha], (prev = []) =>
+      prev.some((x) => x.id === r.id) ? prev : [...prev, r]);
+  }
+
   async function armarRuta(choferId: string) {
     try {
       const { data } = await api.post<Ruta>('/api/rutas', { fecha, chofer_id: choferId });
+      // Optimista: la pestaña del chofer aparece al toque, sin esperar el
+      // refetch — recargarListas() la reconfirma igual con el dato real.
+      agregarRutaOptimista(data);
       recargarListas();
       setRutaSeleccionada(data.id);
     } catch (err: any) {
@@ -775,11 +784,25 @@ export function Rutas() {
 
   async function asignarAChofer(visita: VisitaPendiente, choferId: string) {
     if (!choferId) return;
+
+    // Optimista: la saca de la bolsa al toque — antes se quedaba en pantalla
+    // hasta que volvían las 3 queries que invalida recargarListas(), y esa
+    // espera era la demora que más se notaba al armar una ruta.
+    const previoCola = queryClient.getQueryData<ViajePendiente[]>(['rutas', 'bolsa']);
+    if (previoCola) {
+      const idsAQuitar = new Set([visita.entrega?.id, visita.retiro?.id, visita.id].filter(Boolean) as string[]);
+      queryClient.setQueryData<ViajePendiente[]>(
+        ['rutas', 'bolsa'],
+        previoCola.filter((v) => !idsAQuitar.has(v.id)),
+      );
+    }
+
     try {
       let ruta = rutas.find((r) => r.chofer_id === choferId);
       if (!ruta) {
         const res = await api.post<Ruta>('/api/rutas', { fecha, chofer_id: choferId });
         ruta = res.data;
+        agregarRutaOptimista(ruta);
       }
       const viajeId = visita.entrega?.id ?? visita.retiro?.id ?? visita.id;
       await api.post(`/api/rutas/${ruta.id}/paradas`, { viaje_id: viajeId });
@@ -787,7 +810,16 @@ export function Rutas() {
       show('success', 'Pedido asignado', `Asignado a la ruta de ${nombreChofer}.`);
       setRutaSeleccionada(ruta.id);
       recargarListas();
+      // Precalienta el detalle del chofer destino (mismo criterio que
+      // moverParadaA): sin esto, la demora "del otro lado" es la primera
+      // carga en frío de esa pestaña recién al hacer clic en ella.
+      const rutaId = ruta.id;
+      queryClient.prefetchQuery({
+        queryKey: ['rutas', rutaId],
+        queryFn: () => api.get<RutaData>(`/api/rutas/${rutaId}`).then((r) => r.data),
+      });
     } catch (err: any) {
+      if (previoCola) queryClient.setQueryData(['rutas', 'bolsa'], previoCola);
       show('error', 'No se pudo asignar el pedido', err.response?.data?.error || 'Error desconocido');
     }
   }
