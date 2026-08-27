@@ -231,7 +231,7 @@ async function registrarAlargueCC(to: string, sesion: Sesion): Promise<void> {
   const costo = sesion.contexto.costo as number;
   const moneda = (sesion.contexto.moneda as string | null) ?? 'ARS';
 
-  const [cont] = await query<{ vence_en: string | null }>(
+  const [cont] = await query<{ vence_en: Date | null }>(
     `UPDATE contenedores
         SET vence_en = COALESCE(vence_en, now()) + make_interval(days => $2)
       WHERE numero = $1

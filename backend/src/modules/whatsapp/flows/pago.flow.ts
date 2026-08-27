@@ -75,6 +75,18 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   }
 
   try {
+    // 0) Sin ningún pedido abierto no hay nada que pagar — antes esto
+    // igual registraba un pago 'pendiente' con pedido_id NULL, que le
+    // llegaba al operador sin zona ni precio ni contexto para revisar.
+    const pedidosPrevios = await pedidosAbiertos(to);
+    if (pedidosPrevios.length === 0) {
+      await sendText(
+        to,
+        '🙁 Todavía no tenés ningún pedido para pagar.\n\nEscribí *Cotizar* para pedir un contenedor y después mandame el comprobante.',
+      );
+      return;
+    }
+
     // 1) Descargar el media desde la Graph API y guardarlo en Supabase Storage
     // (no en disco: el filesystem de Railway es efímero y se pierde en cada redeploy).
     // El contenido se cifra ANTES de subirlo (sección 9): el bucket de un
@@ -91,8 +103,18 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     // 2) ¿A qué pedido corresponde? Si el cliente tiene más de una cotización
     // abierta a la vez, no lo podemos asumir por orden cronológico solo —
     // se lo preguntamos y recién ahí seguimos (el comprobante ya está subido,
-    // solo falta decidir a qué pedido atarlo).
+    // solo falta decidir a qué pedido atarlo). Se vuelve a pedir acá (en vez
+    // de reusar pedidosPrevios) por si algo cambió entre el chequeo de
+    // arriba y la subida del archivo.
     const pedidos = await pedidosAbiertos(to);
+
+    if (pedidos.length === 0) {
+      await sendText(
+        to,
+        '🙁 Todavía no tenés ningún pedido para pagar.\n\nEscribí *Cotizar* para pedir un contenedor y después mandame el comprobante.',
+      );
+      return;
+    }
 
     if (pedidos.length > 1) {
       await setSesion({
@@ -210,7 +232,7 @@ async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     return;
   }
 
-  await sendButtons(to, 'Elegí una de las opciones de abajo. 👇', await opcionesMetodoPago(to));
+  await sendButtons(to, 'Por favor, elegí una de las siguientes opciones. 👇', await opcionesMetodoPago(to));
 }
 
 /**

@@ -270,23 +270,25 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
   // (varios contenedores a lo largo del tiempo), se le ofrece todo lo que
   // puede necesitar sin tener que escribir texto libre para encontrarlo.
   const saludo = cliente?.nombre && cliente.nombre !== 'Sin nombre' ? `👋 ¡Hola, ${cliente.nombre.split(' ')[0]}!` : '👋 ¡Hola!';
+  const beneficios = '📦 Alquiler por 7 días\n🚛 Retiro y entrega incluida\n📍 Servicio confiable y puntual';
 
   if (esCuentaCorriente) {
     await sendList(
       to,
       saludo,
       'Soy el asistente virtual de *MoraTrans* 🚚 — más de 30 años de experiencia en transporte y logística de contenedores.\n\n' +
+        `${beneficios}\n\n` +
         'Tenés *cuenta corriente activa* — ¿en qué te ayudo hoy?\n\n' +
         '_Escribí *menú* cuando quieras volver acá, y *asesor* si preferís hablar con una persona._',
       'Ver opciones',
       [
-        { id: 'opt_cotizar', title: '📦 Pedir contenedor', description: 'Se confirma solo, se suma a tu cuenta corriente' },
+        { id: 'opt_cotizar', title: '📦 Pedir contenedor', description: 'El pedido se confirma solo y se suma a tu cuenta corriente' },
         ...(tieneContenedor
-          ? [{ id: 'opt_gestionar', title: '🛠️ Gestionar', description: 'Retiro anticipado, recambio o extensión' }]
+          ? [{ id: 'opt_gestionar', title: '🛠️ Gestionar contenedor', description: 'Retiro anticipado, cambio de contenedor o extensión del plazo' }]
           : []),
-        { id: 'opt_detalle_movimientos', title: '📊 Resumen de cuenta', description: 'Detalle de tus entregas/retiros por Excel' },
-        { id: 'opt_pagar', title: '💸 Enviar comprobante', description: 'Si querés transferir algo a cuenta ahora' },
-        { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
+        { id: 'opt_detalle_movimientos', title: '📊 Resumen de cuenta', description: 'Descargá el detalle de tus entregas y retiros en Excel' },
+        { id: 'opt_pagar', title: '💸 Enviar comprobante', description: 'Si querés transferir algo a tu cuenta corriente ahora' },
+        { id: 'opt_asesor', title: '🙋 Hablar con asesor', description: 'Te comunicamos con una persona del equipo de MoraTrans' },
       ],
     );
     await setSesion({ telefono: to, flujo: 'menu', paso: null, contexto: {} });
@@ -294,18 +296,19 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
   }
 
   const opciones = [
-    { id: 'opt_cotizar', title: '🧮 Cotizar', description: 'Pedir un contenedor — el precio depende de la zona' },
+    { id: 'opt_cotizar', title: '🧮 Cotizar contenedor', description: 'Pedido nuevo — el precio varía según la zona de entrega' },
     ...(tieneContenedor
-      ? [{ id: 'opt_gestionar', title: '🛠️ Gestionar', description: 'Retiro anticipado, recambio o extensión' }]
+      ? [{ id: 'opt_gestionar', title: '🛠️ Gestionar contenedor', description: 'Retiro anticipado, cambio de contenedor o extensión del plazo' }]
       : []),
-    { id: 'opt_pagar', title: '💸 Enviar comprobante', description: 'Mandar el comprobante de un pago' },
-    { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
+    { id: 'opt_pagar', title: '💸 Enviar comprobante', description: 'Mandá la foto o PDF de tu transferencia para que la validemos' },
+    { id: 'opt_asesor', title: '🙋 Hablar con asesor', description: 'Te comunicamos con una persona del equipo de MoraTrans' },
   ];
 
   await sendList(
     to,
     saludo,
     'Soy el asistente virtual de *MoraTrans* 🚚 — más de 30 años de experiencia en transporte y logística de contenedores.\n\n' +
+      `${beneficios}\n\n` +
       '¿En qué te puedo ayudar hoy?\n\n' +
       '_Escribí *menú* cuando quieras volver acá, y *asesor* si preferís hablar con una persona._',
     'Ver opciones',

@@ -211,7 +211,8 @@ export async function enviarTicketPorWhatsApp(d: DatosTicket): Promise<void> {
     (d.contenedor
       ? `✅ ¡Pago validado! Tu contenedor asignado es ${d.contenedor}.`
       : `✅ ¡Pago validado! Tu pedido fue confirmado y registrado exitosamente.`) +
-    `\n\n🧾 Si necesitás factura, comunicate con un asesor.`;
+    `\n\n🧾 Si necesitás factura, comunicate con un asesor.` +
+    `\n\n¡Gracias por confiar en *MoraTrans*! 🚚`;
 
   await sendDocument(
     d.clienteTelefono,

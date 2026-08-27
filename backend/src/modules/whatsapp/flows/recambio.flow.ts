@@ -257,13 +257,13 @@ async function manejarMetodoUbicacion(m: MensajeEntrante, sesion: Sesion): Promi
     await sendText(to, mensajePedirCalleNumero(departamento));
     return;
   }
-  await manejarRespuestaInvalida(m, 'Elegí una de las opciones de abajo. 👇');
+  await manejarRespuestaInvalida(m, 'Por favor, elegí una de las opciones que te mostramos arriba. 👆');
 }
 
 async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const opcion = OPCIONES_HORARIO.find((o) => o.id === m.seleccionId);
   if (!opcion) {
-    await pedirHorarioPreferido(m.from, 'Elegí una de las opciones de abajo. 👇');
+    await pedirHorarioPreferido(m.from, 'Por favor, elegí una de las siguientes opciones. 👇');
     return;
   }
   await confirmarYPedirPago(m, { ...sesion, contexto: { ...sesion.contexto, horarioPreferido: opcion.title } });
@@ -302,7 +302,7 @@ async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promis
   }
 
   if (ubicacion.tipo === 'link_invalido') {
-    await sendText(to, '🙁 No pude leer ese link de Maps. Probá copiarlo de nuevo desde el botón "Compartir", o usá el botón "Enviar ubicación" de abajo.');
+    await sendText(to, '🙁 No pude leer ese link de Maps. Probá copiarlo de nuevo desde el botón "Compartir", o usá el botón "Enviar ubicación" que te mostramos arriba.');
     return;
   }
 
@@ -325,7 +325,7 @@ async function manejarMismatchDepartamento(m: MensajeEntrante, sesion: Sesion): 
     return;
   }
   if (m.seleccionId !== 'depto_cambiar') {
-    await manejarRespuestaInvalida(m, 'Elegí una de las opciones de abajo. 👇');
+    await manejarRespuestaInvalida(m, 'Por favor, elegí una de las opciones que te mostramos arriba. 👆');
     return;
   }
 
@@ -411,14 +411,18 @@ async function manejarConfirmacionUbicacionNueva(m: MensajeEntrante, sesion: Ses
     return;
   }
 
-  await sendText(to, '🚚 ¿Alguna indicación para el chofer (portón, timbre, entre calles)? Si no hay, escribí "no".');
+  await sendText(
+    to,
+    '🚚 ¿Alguna indicación para el chofer que le facilite llegar (portón, timbre, entre calles, un punto de referencia)?\n\n' +
+      'Si no hay ninguna, escribí *no*.',
+  );
   await setSesion({ ...sesion, paso: 'indicacion_recambio' });
 }
 
 async function manejarIndicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
   if (m.tipo !== 'text' || !m.texto) {
-    await sendText(to, '🚚 Contame si hay alguna indicación para el chofer, o escribí "no".');
+    await sendText(to, '🚚 Contame si hay alguna indicación para el chofer, o escribí *no*.');
     return;
   }
   const indicacion = normalizarIndicacion(m.texto);
@@ -504,7 +508,7 @@ async function manejarConfirmacionResumenRecambio(m: MensajeEntrante, sesion: Se
   await finalizarRecambioPago(m, sesion);
 }
 
-const MENSAJE_PEDIR_NOMBRE = '🙋 Antes de confirmar, decime tu *nombre y apellido* para tenerlo registrado.';
+const MENSAJE_PEDIR_NOMBRE = '🙋 Antes de confirmar tu pedido, decime tu *nombre y apellido* para dejarlo registrado en tu cuenta.';
 
 async function manejarNombreRecambio(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -596,6 +600,7 @@ async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: s
     to,
     `✅ ¡Recambio confirmado! Costo: *${moneda} ${Number(precio).toLocaleString('es-AR')}* — se agregó a tu cuenta corriente.\n\n` +
       'En breve te asignamos chofer para coordinarlo.\n\n' +
+      '¡Gracias por confiar en *MoraTrans*! 🚚\n\n' +
       '_Si en un rato no tenés novedades, escribí *asesor*._',
   );
 }

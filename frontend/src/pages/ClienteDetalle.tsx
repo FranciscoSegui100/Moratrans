@@ -78,6 +78,24 @@ export function ClienteDetalle() {
   const [editandoRemito, setEditandoRemito] = useState<string | null>(null);
   const [remitoForm, setRemitoForm] = useState('');
   const [viajeComprobantes, setViajeComprobantes] = useState<ViajeCliente | null>(null);
+  const [reenviando, setReenviando] = useState<string | null>(null);
+
+  /**
+   * Para el caso borde en que un pago (o alargue) quedó validado pero el
+   * WhatsApp de confirmación nunca le llegó al cliente — reintenta solo el
+   * envío, sin tocar nada ya grabado.
+   */
+  async function reenviarAviso(pagoId: string) {
+    setReenviando(pagoId);
+    try {
+      await api.post(`/api/pagos/${pagoId}/reenviar-aviso`);
+      show('success', 'Aviso reenviado por WhatsApp');
+    } catch (err: any) {
+      show('error', 'No se pudo reenviar', err.response?.data?.error);
+    } finally {
+      setReenviando(null);
+    }
+  }
 
   async function guardarRemito(viajeId: string) {
     try {
@@ -271,10 +289,24 @@ export function ClienteDetalle() {
             )}
             {(viajeComprobantes.comprobantes ?? []).map((c) => (
               <div key={c.id} style={{ marginBottom: 18 }}>
-                <div className="section-title" style={{ marginBottom: 6 }}>
-                  {c.tipo === 'alargue_retiro' ? '⏳ Extensión de retiro' : '🧾 Pago inicial'}
-                  {c.monto && ` · $${Number(c.monto).toLocaleString('es-AR')}`}
-                  {' · '}<span className={`badge ${c.estado}`}>{c.estado}</span>
+                <div className="section-title" style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>
+                    {c.tipo === 'alargue_retiro' ? '⏳ Extensión de retiro' : '🧾 Pago inicial'}
+                    {c.monto && ` · $${Number(c.monto).toLocaleString('es-AR')}`}
+                    {' · '}<span className={`badge ${c.estado}`}>{c.estado}</span>
+                  </span>
+                  {c.estado === 'validado' && (
+                    <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => reenviarAviso(c.id)}
+                        disabled={reenviando === c.id}
+                        title="Si el cliente dice que todavía no le llegó la confirmación por WhatsApp"
+                      >
+                        <Send size={12} strokeWidth={1.75} /> Reenviar aviso
+                      </button>
+                    </RoleGate>
+                  )}
                 </div>
                 {c.titular && <p className="text-muted" style={{ margin: '0 0 6px' }}>Titular: {c.titular}</p>}
                 {c.tiene_comprobante ? (
