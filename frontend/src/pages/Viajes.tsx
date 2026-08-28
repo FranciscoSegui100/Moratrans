@@ -52,8 +52,6 @@ interface Tarifa { departamento: string; activo: boolean; }
 interface Chofer { id: string; nombre: string; activo: boolean; }
 interface Ubicacion { id: string; tipo: 'deposito' | 'vaciadero'; nombre: string; direccion: string; activo: boolean; }
 
-const estados = ['programado', 'en_curso', 'completado', 'cancelado'];
-
 // Mismas franjas que OPCIONES_HORARIO en horarioPreferido.flow.ts — el bot
 // guarda exactamente estos textos en viajes.horario_preferido, así que un
 // viaje armado a mano tiene que usar los mismos para que la columna
@@ -149,15 +147,6 @@ export function Viajes() {
     }
   }
 
-  async function cambiarEstado(id: string, estado: string) {
-    try {
-      await api.patch(`/api/viajes/${id}`, { estado });
-      cargar();
-    } catch {
-      show('error', 'No se pudo cambiar el estado');
-    }
-  }
-
   /** Completa la fila 'entrega' de un recambio (se crea sin contenedor, ver recambio.flow.ts). */
   async function asignarContenedor(id: string) {
     if (!asignarForm.contenedor_numero) return;
@@ -201,16 +190,6 @@ export function Viajes() {
     }
   }
 
-  async function borrar(id: string) {
-    if (!confirm('¿Seguro que deseas eliminar este viaje?')) return;
-    try {
-      await api.delete(`/api/viajes/${id}`);
-      cargar();
-      show('info', 'Viaje eliminado');
-    } catch (err: any) {
-      show('error', 'No se puede eliminar', err.response?.data?.error);
-    }
-  }
 
   const viajesActivos = viajes.filter((v) => v.estado === 'programado' || v.estado === 'en_curso');
   const viajesHistorial = viajes.filter((v) => v.estado === 'completado' || v.estado === 'cancelado');
@@ -381,8 +360,6 @@ export function Viajes() {
               <th>Nº remito</th>
               <th>Importe</th>
               <th>Comprobantes</th>
-              <th>Estado</th>
-              <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -536,35 +513,11 @@ export function Viajes() {
                     );
                   })()}
                 </td>
-                <td>
-                  <RoleGate roles={['admin', 'operador']}>
-                    <select
-                      className="form-select"
-                      style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                      value={v.estado}
-                      onChange={(e) => cambiarEstado(v.id, e.target.value)}
-                    >
-                      {estados.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </RoleGate>
-                  <RoleGate roles={['finanzas', 'lectura']}>
-                    <span className={`badge ${v.estado}`}>{v.estado}</span>
-                  </RoleGate>
-                </td>
-                <td>
-                  <RoleGate roles={['admin']}>
-                    {v.estado === 'completado' && (
-                      <button onClick={() => borrar(v.id)} className="btn btn-danger btn-sm">
-                        Eliminar
-                      </button>
-                    )}
-                  </RoleGate>
-                </td>
               </tr>
             ))}
             {viajesAMostrar.length === 0 && (
               <tr>
-                <td colSpan={15} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={13} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   {pestana === 'activos' ? 'No hay viajes activos o programados' : 'No hay viajes en el historial'}
                 </td>
               </tr>
