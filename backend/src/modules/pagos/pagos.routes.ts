@@ -723,3 +723,21 @@ pagosRouter.patch('/:id/monto', requireRol('admin', 'operador', 'finanzas'), asy
   res.json({ ok: true, monto: parsed.data.monto });
 });
 
+/**
+ * DELETE /api/pagos/:id — borra un abono de cuenta corriente cargado por
+ * error (manual o desde WhatsApp). Restringido a 'abono_cc' validado — a
+ * propósito NO se puede borrar nada más: los cargos (pedidos/viajes/alargues
+ * marcados es_cuenta_corriente) reflejan entregas/retiros reales que ya hizo
+ * el bot y no se tocan desde acá.
+ */
+pagosRouter.delete('/:id', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+  const [pago] = await query<{ id: string }>(
+    `DELETE FROM pagos WHERE id = $1 AND tipo = 'abono_cc' AND estado = 'validado' RETURNING id`,
+    [req.params.id],
+  );
+  if (!pago) return res.status(409).json({ error: 'Abono inexistente o no se puede eliminar' });
+
+  emitRecursoActualizado('pagos');
+  res.json({ ok: true });
+});
+

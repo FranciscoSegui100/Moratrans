@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Download, Send, Pencil, X, Wallet, Receipt, CircleDollarSign, Plus } from 'lucide-react';
+import { ArrowLeft, Download, Send, Pencil, X, Wallet, Receipt, CircleDollarSign, Plus, Trash2 } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -144,6 +144,18 @@ export function ClienteDetalle() {
       show('success', 'Monto corregido');
     } catch (err: any) {
       show('error', 'No se pudo guardar', err.response?.data?.error);
+    }
+  }
+
+  /** Borra un abono cargado por error (ver DELETE /api/pagos/:id) — solo pagos, nunca cobros. */
+  async function eliminarAbono(abonoId: string, monto: number) {
+    if (!confirm(`¿Eliminar este pago de $${monto.toLocaleString('es-AR')}? Se vuelve a sumar al saldo pendiente.`)) return;
+    try {
+      await api.delete(`/api/pagos/${abonoId}`);
+      queryClient.invalidateQueries({ queryKey: ['clientes', telefono, 'cuenta-corriente'] });
+      show('success', 'Pago eliminado');
+    } catch (err: any) {
+      show('error', 'No se pudo eliminar', err.response?.data?.error);
     }
   }
 
@@ -334,6 +346,13 @@ export function ClienteDetalle() {
                                     title="Corregir el monto de este pago"
                                   >
                                     <Pencil size={11} strokeWidth={1.75} />
+                                  </button>
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    onClick={() => eliminarAbono(m.id!, m.monto)}
+                                    title="Eliminar este pago"
+                                  >
+                                    <Trash2 size={11} strokeWidth={1.75} />
                                   </button>
                                 </RoleGate>
                               )}
