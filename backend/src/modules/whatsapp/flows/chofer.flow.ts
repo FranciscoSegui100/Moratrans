@@ -117,9 +117,6 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recvacio:') && sesion.paso === 'elegir_vacio_recambio') {
     return aplicarVacioRecambio(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('recvacio:', ''), sesion);
   }
-  if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('claim:')) {
-    return reclamarTrabajo(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('claim:', ''));
-  }
 
   // Soporte para respuestas por texto libre o si el cliente no usa botones interactivos
   const txt = (m.texto ?? '').toLowerCase().trim();
@@ -175,69 +172,6 @@ export async function menuChofer(to: string, nombre?: string): Promise<void> {
   if (!chofer) return; // no debería pasar (ya se validó identidad antes de llegar acá)
   await ofrecerVaciadosPendientes(to, chofer.id);
   await ofrecerRecambioPendiente(to, chofer.id);
-  await ofrecerTrabajosSinAsignar(to);
-}
-
-/**
- * Retiros y recambios que todavía no tienen chofer asignado — CUALQUIER
- * chofer los puede tomar por WhatsApp, no hace falta que un operador se lo
- * asigne primero desde el panel (así, un recambio recién pedido por un
- * cliente ya se puede empezar a trabajar apenas alguien lo toma).
- */
-async function ofrecerTrabajosSinAsignar(to: string): Promise<void> {
-  const pendientes = await query<{ id: string; contenedor_numero: string; grupo_id: string | null; destino_direccion: string | null }>(
-    `SELECT id, contenedor_numero, grupo_id, destino_direccion
-       FROM viajes
-      WHERE tipo = 'retiro' AND chofer_id IS NULL AND estado IN ('programado', 'en_curso')
-        AND contenedor_numero IS NOT NULL
-      ORDER BY creado_en LIMIT 10`,
-  );
-  if (pendientes.length === 0) return;
-  await sendList(
-    to,
-    '📋 Sin asignar',
-    'Hay retiros/recambios sin chofer — ¿tomás alguno?',
-    'Ver trabajos',
-    pendientes.map((p) => ({
-      id: `claim:${p.id}`,
-      title: p.contenedor_numero,
-      description: p.grupo_id
-        ? `🔄 Es un recambio${p.destino_direccion ? ` — ${p.destino_direccion}` : ''}`
-        : p.destino_direccion ?? undefined,
-    })),
-  );
-}
-
-/**
- * El chofer toma un trabajo sin asignar: se convierte en el chofer de esa
- * fila (y de su pareja, si es un recambio) — mismo efecto que si un
- * operador lo hubiera asignado desde el panel, incluido el aviso normal.
- */
-async function reclamarTrabajo(to: string, choferId: string, choferNombre: string, viajeId: string): Promise<void> {
-  const [choferRow] = await query<{ patente: string | null }>('SELECT patente FROM choferes WHERE id = $1', [choferId]);
-  // Guard WHERE chofer_id IS NULL: si otro chofer lo tomó justo antes, no se lo pisamos.
-  const [viaje] = await query<{ id: string; grupo_id: string | null; contenedor_numero: string }>(
-    `UPDATE viajes SET chofer_id = $2, patente = $3
-      WHERE id = $1 AND chofer_id IS NULL AND estado IN ('programado', 'en_curso')
-      RETURNING id, grupo_id, contenedor_numero`,
-    [viajeId, choferId, choferRow?.patente ?? null],
-  );
-  if (!viaje) {
-    await sendText(to, '🙁 Ese trabajo ya no está disponible — puede que otro chofer ya lo haya tomado.');
-    return menuChofer(to, choferNombre);
-  }
-  if (viaje.grupo_id) {
-    // Recambio: la pata "entrega" (el vacío) queda con el mismo chofer.
-    await query(
-      `UPDATE viajes SET chofer_id = $2, patente = $3
-        WHERE grupo_id = $1 AND tipo = 'entrega' AND chofer_id IS NULL`,
-      [viaje.grupo_id, choferId, choferRow?.patente ?? null],
-    );
-  }
-  emitRecursoActualizado('contenedores');
-  emitRecursoActualizado('viajes');
-  await sendText(to, `✅ ¡Listo! Te asignamos el contenedor *${viaje.contenedor_numero}*. 💪`);
-  return menuChofer(to, choferNombre);
 }
 
 /** Contenedores propios ya retirados del cliente, esperando que confirme que los vació. */
