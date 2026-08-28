@@ -54,6 +54,12 @@ interface Ubicacion { id: string; tipo: 'deposito' | 'vaciadero'; nombre: string
 
 const estados = ['programado', 'en_curso', 'completado', 'cancelado'];
 
+// Mismas franjas que OPCIONES_HORARIO en horarioPreferido.flow.ts — el bot
+// guarda exactamente estos textos en viajes.horario_preferido, así que un
+// viaje armado a mano tiene que usar los mismos para que la columna
+// "Horario sugerido" se vea consistente.
+const OPCIONES_HORARIO_SUGERIDO = ['🌅 Mañana (8-12hs)', '🕐 Tarde (12-15hs)'];
+
 const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
   disponible: 'Disponible',
   alquilado: 'Alquilado',
@@ -63,7 +69,7 @@ const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
 };
 
 const formInicial = {
-  tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', contenedor_numero_entrega: '',
+  tipo: 'entrega', fecha: '', horario_preferido: '', zona: '', contenedor_numero: '', contenedor_numero_entrega: '',
   destino_direccion: '', importe: '', ubicacion_id: '',
 };
 
@@ -131,6 +137,7 @@ export function Viajes() {
         destino_direccion: form.destino_direccion || undefined,
         importe: form.importe || undefined,
         ubicacion_id: form.ubicacion_id || undefined,
+        horario_preferido: form.horario_preferido || undefined,
       });
       setForm(formInicial);
       cargar();
@@ -256,6 +263,17 @@ export function Viajes() {
               />
             </div>
             <div className="form-group">
+              <label className="form-label">Horario sugerido</label>
+              <select
+                className="form-select"
+                value={form.horario_preferido}
+                onChange={(e) => setForm({ ...form, horario_preferido: e.target.value })}
+              >
+                <option value="">— Sin preferencia —</option>
+                {OPCIONES_HORARIO_SUGERIDO.map((h) => <option key={h} value={h}>{h}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
               <label className="form-label">Zona</label>
               <select
                 className="form-select"
@@ -373,7 +391,8 @@ export function Viajes() {
                 <td className="strong" style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {v.horario_preferido ? (
-                    <span title="Horario solicitado por el cliente">🕐 {v.horario_preferido}</span>
+                    // El texto ya trae su propio emoji (🌅/🕐), no anteponer otro.
+                    <span title="Franja horaria preferida (la pidió el cliente por WhatsApp o la cargó el operador)">{v.horario_preferido}</span>
                   ) : (
                     <span className="text-muted">—</span>
                   )}
