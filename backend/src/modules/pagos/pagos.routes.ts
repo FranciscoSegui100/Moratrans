@@ -6,7 +6,7 @@ import { query } from '../../config/db';
 import { requireAuth, requireRol, puedeVerComprobante } from '../../middleware/rbac';
 import { decrypt, decryptBuffer } from '../../services/crypto.service';
 import { enviarTicketPorWhatsApp } from '../../services/pdf.service';
-import { subirArchivo, descargarArchivo } from '../../services/storage.service';
+import { descargarArchivo } from '../../services/storage.service';
 import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { avisarChoferRecambio } from '../viajes/viajes.routes';

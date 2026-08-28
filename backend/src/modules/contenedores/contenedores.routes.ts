@@ -13,7 +13,7 @@ contenedoresRouter.use(requireAuth);
  * poder resolverlo bien acá) — sin este JOIN se mostraba el uuid crudo en el
  * panel y parecía un valor cifrado/ilegible.
  */
-contenedoresRouter.get('/', async (req: Request, res: Response) => {
+contenedoresRouter.get('/', async (_req: Request, res: Response) => {
   const rows = await query(
     `SELECT c.numero, c.estado, c.cliente_id, c.vence_en, c.actualizado_en, c.creado_en,
             -- Vista "por contrato" (Disponible/Alquilado/Para retirar/Yendo a

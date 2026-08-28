@@ -9,7 +9,6 @@ import {
   ROJO,
   GRIS_MUTED,
   LOGO_PATH,
-  MARGEN,
   dibujarEncabezado,
   dibujarTituloSeccion,
   dibujarFila,

@@ -159,7 +159,7 @@ async function manejarUbicacionPin(m: MensajeEntrante, sesion: Sesion): Promise<
       return;
     }
 
-    await pedirConfirmacion(to, sesion, ubicacion.lat, ubicacion.lng, destinoDireccion, resultado.departamento, resultado.tarifa, true);
+    await pedirConfirmacion(to, ubicacion.lat, ubicacion.lng, destinoDireccion, resultado.departamento, resultado.tarifa, true);
     return;
   }
 
@@ -200,7 +200,7 @@ async function manejarMismatchDepartamento(m: MensajeEntrante, sesion: Sesion): 
     await clearSesion(to);
     return;
   }
-  await pedirConfirmacion(to, sesion, destinoLat, destinoLng, destinoDireccion, departamentoDetectado, tarifa, true);
+  await pedirConfirmacion(to, destinoLat, destinoLng, destinoDireccion, departamentoDetectado, tarifa, true);
 }
 
 async function manejarUbicacionTexto(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -221,12 +221,11 @@ async function manejarUbicacionTexto(m: MensajeEntrante, sesion: Sesion): Promis
     await clearSesion(to);
     return;
   }
-  await pedirConfirmacion(to, sesion, null, null, m.texto.trim(), departamento, tarifa, false);
+  await pedirConfirmacion(to, null, null, m.texto.trim(), departamento, tarifa, false);
 }
 
 async function pedirConfirmacion(
   to: string,
-  sesion: Sesion,
   destinoLat: number | null,
   destinoLng: number | null,
   destinoDireccion: string | null,

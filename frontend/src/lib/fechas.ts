@@ -38,23 +38,3 @@ export function formatearFechaHora(fecha?: string | Date | null): string {
     minute: '2-digit',
   });
 }
-
-export function formatearFechaCorta(fecha?: string | Date | null): string {
-  if (!fecha) return '—';
-
-  if (typeof fecha === 'string') {
-    const match = fecha.slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (match) {
-      const [, , mes, dia] = match;
-      return `${dia}/${mes}`;
-    }
-  }
-
-  const d = typeof fecha === 'string' ? new Date(fecha) : fecha;
-  if (isNaN(d.getTime())) return String(fecha);
-
-  return d.toLocaleDateString('es-AR', {
-    day: '2-digit',
-    month: '2-digit',
-  });
-}

@@ -1,4 +1,4 @@
-import { useEffect, useState, createContext, useContext, ReactNode } from 'react';
+import { useState, createContext, useContext, ReactNode } from 'react';
 import { CheckCircle2, XCircle, Info } from 'lucide-react';
 
 interface Toast {
