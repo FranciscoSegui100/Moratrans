@@ -9,6 +9,7 @@ import { simularDisponibilidad, ParadaSimulada, CapacidadCamion, CAPACIDAD_CAMIO
 import { avisarChoferViaje, avisarChoferRecambio } from '../viajes/viajes.routes';
 import { motivoErrorWa } from '../whatsapp/graphApi';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
+import { emitRecursoActualizado } from '../../config/socket';
 
 export const rutasRouter = Router();
 rutasRouter.use(requireAuth);
@@ -351,6 +352,7 @@ rutasRouter.post('/:id/paradas', requireRol('admin', 'operador'), async (req: Re
 
       return { orden: nuevoOrden };
     });
+    emitRecursoActualizado('viajes');
     res.status(201).json(resultado);
   } catch (error: any) {
     if (error.status) res.status(error.status).json({ error: error.message });
@@ -460,6 +462,8 @@ rutasRouter.delete('/:id/paradas/:tipo/:paradaId', requireRol('admin', 'operador
         }
       }
     });
+    emitRecursoActualizado('viajes');
+    emitRecursoActualizado('contenedores');
     res.json({ ok: true });
   } catch (error: any) {
     if (error.status) res.status(error.status).json({ error: error.message });
@@ -556,6 +560,8 @@ rutasRouter.post('/:id/paradas/:tipo/:paradaId/mover', requireRol('admin', 'oper
       const { advertencias } = await calcularDisponibilidadRuta(rutaDestinoId, ejecutar);
       return { orden: nuevoOrden, advertencias };
     });
+    emitRecursoActualizado('viajes');
+    emitRecursoActualizado('contenedores');
     res.status(200).json(resultado);
   } catch (error: any) {
     if (error.status) res.status(error.status).json({ error: error.message });
@@ -667,6 +673,7 @@ rutasRouter.patch('/:id/orden', requireRol('admin', 'operador'), async (req: Req
       const { advertencias } = await calcularDisponibilidadRuta(rutaId, async (sql, params) => (await c.query(sql, params)).rows);
       return { version: versionRows[0].version, advertencias };
     });
+    emitRecursoActualizado('viajes');
     res.json({ ok: true, ...resultado });
   } catch (error: any) {
     if (error.status) res.status(error.status).json({ error: error.message });
@@ -729,6 +736,8 @@ rutasRouter.patch('/:id/paradas/:viajeId/contenedor', requireRol('admin', 'opera
 
       await c.query(`UPDATE viajes SET contenedor_numero = $1 WHERE id = $2`, [contenedor_numero, viajeId]);
     });
+    emitRecursoActualizado('viajes');
+    emitRecursoActualizado('contenedores');
     res.json({ ok: true });
   } catch (error: any) {
     if (error.status) res.status(error.status).json({ error: error.message });
@@ -822,6 +831,8 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
 
       return { confirmadasAhora, choferId: ruta!.chofer_id, pendientes };
     });
+    emitRecursoActualizado('viajes');
+    emitRecursoActualizado('contenedores');
 
     // Aviso por WhatsApp fuera de la transacción (no bloqueante) — SOLO de la
     // primera parada todavía pendiente de toda la ruta, no de todo lo que se
@@ -941,6 +952,8 @@ rutasRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request, 
       const { rows: actualizada } = await c.query(`UPDATE rutas SET estado = $1 WHERE id = $2 RETURNING *`, [nuevoEstado, req.params.id]);
       return actualizada[0];
     });
+    emitRecursoActualizado('viajes');
+    if (nuevoEstado === 'cancelada') emitRecursoActualizado('contenedores');
     res.json(ruta);
   } catch (error: any) {
     if (error.status) res.status(error.status).json({ error: error.message });
@@ -965,5 +978,6 @@ rutasRouter.delete('/:id', requireRol('admin'), async (req: Request, res: Respon
   await query(`UPDATE viajes SET ruta_id = NULL, orden = NULL, chofer_id = NULL, patente = NULL WHERE ruta_id = $1`, [id]);
   await query(`DELETE FROM ruta_vaciados WHERE ruta_id = $1`, [id]);
   await query(`DELETE FROM rutas WHERE id = $1`, [id]);
+  emitRecursoActualizado('viajes');
   res.json({ ok: true });
 });

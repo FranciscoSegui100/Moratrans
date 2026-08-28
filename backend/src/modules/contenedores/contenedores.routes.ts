@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { finalizarRetiro } from '../../services/retiro.service';
-import { emitRecursoActualizado } from '../../config/socket';
 
 export const contenedoresRouter = Router();
 contenedoresRouter.use(requireAuth);
@@ -196,7 +195,6 @@ contenedoresRouter.patch('/:numero', requireRol('admin', 'operador'), async (req
       [numeroNuevo, req.params.numero],
     );
     if (!row) return res.status(404).json({ error: 'Contenedor inexistente' });
-    emitRecursoActualizado('contenedores');
     res.json(row);
   } catch (e: any) {
     if (e.code === '23505') return res.status(409).json({ error: 'Ya existe un contenedor con ese número' });
@@ -229,7 +227,6 @@ contenedoresRouter.delete('/:numero', requireRol('admin', 'operador'), async (re
   }
   const [row] = await query('DELETE FROM contenedores WHERE numero = $1 RETURNING numero', [numero]);
   if (!row) return res.status(404).json({ error: 'Contenedor inexistente' });
-  emitRecursoActualizado('contenedores');
   res.json({ ok: true });
 });
 
@@ -257,7 +254,6 @@ contenedoresRouter.patch(
         [parsed.data.estado, `operador:${req.user!.id}`, req.params.numero],
       );
       if (!row) return res.status(404).json({ error: 'Contenedor inexistente' });
-      emitRecursoActualizado('contenedores');
       res.json(row);
     } catch (e: any) {
       if (e.code === '23514') return res.status(409).json({ error: e.message });

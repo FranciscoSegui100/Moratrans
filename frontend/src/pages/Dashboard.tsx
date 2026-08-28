@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, Power, TriangleAlert } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
@@ -157,9 +158,9 @@ export function Dashboard() {
             ].map((item) => {
               const Icon = item.icon;
               return (
-                <a
+                <Link
                   key={item.href}
-                  href={item.href}
+                  to={item.href}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -179,7 +180,7 @@ export function Dashboard() {
                 >
                   <Icon size={16} strokeWidth={1.75} />
                   {item.label}
-                </a>
+                </Link>
               );
             })}
           </div>

@@ -500,14 +500,18 @@ export function Viajes() {
                         {esCC ? (
                           <span className="badge pendiente">📋 Cuenta corriente</span>
                         ) : inicial && (
-                          <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
-                            🧾 Inicial
-                          </button>
+                          <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
+                              🧾 Inicial
+                            </button>
+                          </RoleGate>
                         )}
                         {extensiones.length > 0 && (
-                          <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
-                            ⏳ Extensión{extensiones.length > 1 ? ` (${extensiones.length})` : ''}
-                          </button>
+                          <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
+                              ⏳ Extensión{extensiones.length > 1 ? ` (${extensiones.length})` : ''}
+                            </button>
+                          </RoleGate>
                         )}
                       </div>
                     );

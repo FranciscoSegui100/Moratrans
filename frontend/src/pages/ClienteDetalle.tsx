@@ -439,9 +439,11 @@ export function ClienteDetalle() {
                               {esCC ? (
                                 <span className="badge pendiente">📋 Cuenta corriente</span>
                               ) : inicial && (
-                                <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
-                                  🧾 Inicial
-                                </button>
+                                <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                                  <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
+                                    🧾 Inicial
+                                  </button>
+                                </RoleGate>
                               )}
                             </div>
                           );

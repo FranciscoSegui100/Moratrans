@@ -20,8 +20,11 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
        (SELECT count(*) FROM contenedores WHERE estado = 'reservado')::int               AS contenedores_activos,
        (SELECT count(*) FROM contenedores WHERE estado = 'disponible')::int              AS contenedores_disponibles,
        (SELECT count(*) FROM pagos WHERE estado = 'pendiente')::int                       AS cobros_pendientes,
-       (SELECT count(*) FROM historial_contenedores
-          WHERE estado = 'entregado' AND creado_en::date = current_date)::int             AS viajes_hoy`,
+       -- Antes contaba historial_contenedores con estado='entregado' creado
+       -- hoy: eso son confirmaciones de entrega, no "viajes de hoy" — excluía
+       -- todos los retiros y no tenía relación con viajes.fecha (la fecha
+       -- programada que usan Rutas/Viajes para todo lo demás).
+       (SELECT count(*) FROM viajes WHERE fecha = current_date AND estado <> 'cancelado')::int AS viajes_hoy`,
   );
   res.json(kpis);
 });

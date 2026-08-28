@@ -69,7 +69,7 @@ export function Comprobantes() {
                     {c.titular_transferencia && (
                       <div className="pago-detail">Transferencia a nombre de: <strong>{c.titular_transferencia}</strong></div>
                     )}
-                    <RoleGate roles={['admin', 'finanzas']}>
+                    <RoleGate roles={['admin', 'operador', 'finanzas']}>
                       <ComprobanteViewer pagoId={c.id} />
                     </RoleGate>
                   </div>

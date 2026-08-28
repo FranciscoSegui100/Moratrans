@@ -58,6 +58,17 @@ export function Alertas() {
     }
   }
 
+  async function onResolver(id: string) {
+    setProcesando(id);
+    try {
+      await resolver(id);
+    } catch (e: any) {
+      show('error', 'No se pudo resolver la alerta', e.response?.data?.error || 'Error desconocido');
+    } finally {
+      setProcesando(null);
+    }
+  }
+
   async function onConfirmarRetiro(numeroContenedor: string) {
     setProcesando(numeroContenedor);
     try {
@@ -108,9 +119,11 @@ export function Alertas() {
                     <div className="alerta-time">{formatearFechaHora(a.creado_en)}</div>
                   </div>
                   {!esPago && !esRetiro && (
-                    <button onClick={() => resolver(a.id)} className="btn btn-ghost btn-sm">
-                      <Check strokeWidth={2} /> Resolver
-                    </button>
+                    <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                      <button onClick={() => onResolver(a.id)} className="btn btn-ghost btn-sm" disabled={procesando === a.id}>
+                        <Check strokeWidth={2} /> Resolver
+                      </button>
+                    </RoleGate>
                   )}
                   {esRetiro && (
                     <RoleGate roles={['admin', 'operador']}>
@@ -133,7 +146,7 @@ export function Alertas() {
                         {a.zona ?? 'Sin zona'} ·{' '}
                         {a.precio ? `ARS ${Number(a.precio).toLocaleString('es-AR')}` : 'Sin monto'}
                       </div>
-                      <RoleGate roles={['admin', 'finanzas']}>
+                      <RoleGate roles={['admin', 'operador', 'finanzas']}>
                         {a.tiene_comprobante ? (
                           <ComprobanteViewer pagoId={a.referencia_id} />
                         ) : a.tipo === 'cuenta_corriente_solicitada' ? (

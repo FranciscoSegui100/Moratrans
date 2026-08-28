@@ -212,9 +212,25 @@ clientesRouter.patch('/:id', requireRol('admin', 'operador', 'finanzas'), async 
  * hay ON DELETE CASCADE desde viajes/pagos (se vinculan por teléfono, no por
  * FK a clientes.id) así que esto no borra ningún historial de viajes; sólo
  * contenedores.cliente_id se pone en NULL si tenía alguno asignado.
+ *
+ * Solo se permite si nunca pidió cuenta corriente (cuenta_corriente_estado =
+ * 'sin_pedir') — borrar un cliente 'aprobada'/'pendiente'/'rechazada' haría
+ * desaparecer silenciosamente ese estado: como viajes/pagos se vinculan por
+ * teléfono y no por FK, el saldo/historial de deuda sigue existiendo pero
+ * queda huérfano, y si el cliente vuelve a cotizar por WhatsApp se le crea
+ * una fila nueva arrancando en 'sin_pedir', perdiendo la aprobación.
  */
 clientesRouter.delete('/:id', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
-  const [row] = await query(`DELETE FROM clientes WHERE id = $1 RETURNING id`, [req.params.id]);
-  if (!row) return res.status(404).json({ error: 'Cliente inexistente' });
+  const [cliente] = await query<{ cuenta_corriente_estado: string }>(
+    'SELECT cuenta_corriente_estado FROM clientes WHERE id = $1',
+    [req.params.id],
+  );
+  if (!cliente) return res.status(404).json({ error: 'Cliente inexistente' });
+  if (cliente.cuenta_corriente_estado !== 'sin_pedir') {
+    return res.status(409).json({
+      error: 'Este cliente tiene (o tuvo) cuenta corriente — no se puede eliminar para no perder ese historial. Solo se pueden borrar clientes ocasionales.',
+    });
+  }
+  await query(`DELETE FROM clientes WHERE id = $1`, [req.params.id]);
   res.status(204).send();
 });
