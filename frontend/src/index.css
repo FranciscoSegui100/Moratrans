@@ -445,7 +445,7 @@ body {
   background: var(--bg-surface);
 }
 .data-table th {
-  padding: 9px 14px;
+  padding: 8px 9px;
   font-size: 0.68rem;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -455,15 +455,15 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .data-table td {
-  padding: 9px 14px;
-  font-size: 0.83rem;
+  padding: 6px 9px;
+  font-size: 0.8rem;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table tr:hover td { background: var(--bg-card-hover); }
-.data-table .mono { font-family: var(--font-mono); font-size: 0.79rem; color: var(--text-primary); }
+.data-table .mono { font-family: var(--font-mono); font-size: 0.76rem; color: var(--text-primary); }
 .data-table .strong { color: var(--text-primary); font-weight: 600; }
 
 /* ===== STATUS BADGES ===== */
