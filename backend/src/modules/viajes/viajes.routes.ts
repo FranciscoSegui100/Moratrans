@@ -203,13 +203,18 @@ export async function avisarChoferRecambio(
  * hay que esperar las dos), le avisa recién ahí la parada siguiente de la
  * MISMA ruta. Si `viajeCompletadoId` no pertenece a una ruta armada (viaje
  * suelto asignado directo, o un retiro espontáneo sin ruta) no hace nada.
+ *
+ * Devuelve `true` si había una parada siguiente y se la avisó (el aviso ya
+ * incluye su propio menú del chofer, ver avisarChoferViaje/Recambio) — el
+ * llamador usa esto para NO mandar además el menú suelto y evitar que al
+ * chofer le aparezca el menú dos veces al cerrar una parada.
  */
-export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Promise<void> {
+export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Promise<boolean> {
   const [actual] = await query<{ ruta_id: string | null; orden: number | null }>(
     `SELECT ruta_id, orden FROM viajes WHERE id = $1`,
     [viajeCompletadoId],
   );
-  if (!actual?.ruta_id || actual.orden == null) return;
+  if (!actual?.ruta_id || actual.orden == null) return false;
 
   const [pendienteEnMismoOrden] = await query<{ id: string }>(
     `SELECT id FROM viajes
@@ -217,7 +222,7 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
       LIMIT 1`,
     [actual.ruta_id, actual.orden],
   );
-  if (pendienteEnMismoOrden) return; // recambio: falta que termine la otra mitad de la visita
+  if (pendienteEnMismoOrden) return false; // recambio: falta que termine la otra mitad de la visita
 
   const siguientes = await query<{
     id: string; tipo: 'entrega' | 'retiro'; contenedor_numero: string | null; destino_direccion: string | null;
@@ -230,11 +235,11 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
       ORDER BY orden ASC`,
     [actual.ruta_id, actual.orden],
   );
-  if (siguientes.length === 0) return;
+  if (siguientes.length === 0) return false;
   const proximoOrden = siguientes[0].orden;
   const visita = siguientes.filter((v) => v.orden === proximoOrden);
   const choferId = visita[0].chofer_id;
-  if (!choferId) return;
+  if (!choferId) return false;
 
   const entrega = visita.find((v) => v.tipo === 'entrega');
   const retiro = visita.find((v) => v.tipo === 'retiro');
@@ -252,6 +257,9 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
       (e2) => console.error('Error registrando alerta de envío fallido:', e2),
     );
   }
+  // Había parada siguiente (se haya podido enviar o no): el menú suelto no
+  // corresponde — si falló el envío ya se levantó una alerta para el operador.
+  return true;
 }
 
 /** POST /api/viajes — programar un viaje, o un recambio (par retiro+entrega) (admin/operador). */
