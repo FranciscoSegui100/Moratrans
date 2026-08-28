@@ -116,16 +116,30 @@ const nuevoSchema = z.object({
   hora_estimada: z.string().optional(),
 });
 
+/** Nombre del cliente para mostrarle al chofer en el aviso, si el viaje tiene un teléfono asociado. */
+async function nombreClientePara(clienteTelefono: string | null): Promise<string | null> {
+  if (!clienteTelefono) return null;
+  const [c] = await query<{ nombre: string }>('SELECT nombre FROM clientes WHERE telefono = $1', [clienteTelefono]);
+  return c?.nombre && c.nombre !== 'Sin nombre' ? c.nombre : null;
+}
+
+/** "14:30:00" (formato TIME de Postgres) -> "14:30". */
+function formatearHora(horaEstimada: string | null): string | null {
+  return horaEstimada ? horaEstimada.slice(0, 5) : null;
+}
+
 /**
  * Le avisa por WhatsApp al chofer que le acaban de programar un viaje desde
  * el panel — aclara si es envío (llevar) o retiro (buscar) del contenedor,
- * y la dirección de destino, si se cargó.
+ * el cliente, el horario estimado (si se cargó) y la dirección de destino.
  */
 export async function avisarChoferViaje(
   choferId: string,
   tipo: 'entrega' | 'retiro',
   contenedorNumero: string | null,
   destinoDireccion: string | null,
+  clienteTelefono: string | null = null,
+  horaEstimada: string | null = null,
 ): Promise<void> {
   const [chofer] = await query<{ telefono: string | null; nombre: string }>(
     'SELECT telefono, nombre FROM choferes WHERE id = $1',
@@ -133,16 +147,21 @@ export async function avisarChoferViaje(
   );
   if (!chofer?.telefono) return; // chofer sin número vinculado todavía: nada que mandar
 
-  const titulo = tipo === 'entrega' ? '📦 Envío de contenedor' : '📥 Retiro de contenedor';
+  const titulo = tipo === 'entrega' ? '📦 Entrega de contenedor' : '📥 Retiro de contenedor';
   const destino = destinoDireccion
     ? `${destinoDireccion}\nhttps://www.google.com/maps?q=${encodeURIComponent(destinoDireccion)}`
-    : 'Sin ubicación registrada, coordiná con el cliente.';
+    : 'Sin dirección registrada. Coordiná con el cliente antes de salir.';
+  const cliente = await nombreClientePara(clienteTelefono);
+  const hora = formatearHora(horaEstimada);
 
   await sendText(
     chofer.telefono,
     `🚚 *${titulo}*\n\n` +
       (contenedorNumero ? `Contenedor: *${contenedorNumero}*\n` : '') +
-      `📍 Ubicación:\n${destino}`,
+      (cliente ? `Cliente: *${cliente}*\n` : '') +
+      (hora ? `Horario estimado: *${hora} hs*\n` : '') +
+      `📍 Dirección:\n${destino}\n\n` +
+      'Cuando la completes, marcala desde el menú del chofer.',
   );
   await menuChofer(chofer.telefono, chofer.nombre);
 }
@@ -159,6 +178,8 @@ export async function avisarChoferRecambio(
   vacioNumero: string | null,
   vacioUbicacionId: string | null,
   destinoDireccion: string | null,
+  clienteTelefono: string | null = null,
+  horaEstimada: string | null = null,
 ): Promise<void> {
   const [chofer] = await query<{ telefono: string | null; nombre: string }>(
     'SELECT telefono, nombre FROM choferes WHERE id = $1',
@@ -174,16 +195,22 @@ export async function avisarChoferRecambio(
 
   const destino = destinoDireccion
     ? `${destinoDireccion}\nhttps://www.google.com/maps?q=${encodeURIComponent(destinoDireccion)}`
-    : 'Sin ubicación registrada, coordiná con el cliente.';
+    : 'Sin dirección registrada. Coordiná con el cliente antes de salir.';
+  const cliente = await nombreClientePara(clienteTelefono);
+  const hora = formatearHora(horaEstimada);
 
   const lineaVacio = vacioNumero
-    ? `Se asignó el contenedor *${vacioNumero}* para el recambio del contenedor *${llenoNumero}*` +
-      (ubicacionNombre ? `, de la ubicación: *${ubicacionNombre}*` : '') + '.\n'
-    : `Retirás el contenedor *${llenoNumero}* — el vacío que dejás todavía no está asignado.\n`;
+    ? `Retirás el contenedor lleno *${llenoNumero}* y dejás el vacío *${vacioNumero}*` +
+      (ubicacionNombre ? ` (sale de: *${ubicacionNombre}*)` : '') + '.\n'
+    : `Retirás el contenedor lleno *${llenoNumero}*. El vacío que dejás todavía no está asignado.\n`;
 
   await sendText(
     chofer.telefono,
-    `🔄 *Recambio*\n\n${lineaVacio}📍 Ubicación:\n${destino}`,
+    `🔄 *Recambio de contenedor*\n\n${lineaVacio}` +
+      (cliente ? `Cliente: *${cliente}*\n` : '') +
+      (hora ? `Horario estimado: *${hora} hs*\n` : '') +
+      `📍 Dirección:\n${destino}\n\n` +
+      'Cuando lo completes, marcalo desde el menú del chofer.',
   );
   await menuChofer(chofer.telefono, chofer.nombre);
 }
@@ -216,8 +243,9 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
   const siguientes = await query<{
     id: string; tipo: 'entrega' | 'retiro'; contenedor_numero: string | null; destino_direccion: string | null;
     ubicacion_id: string | null; grupo_id: string | null; chofer_id: string | null; orden: number;
+    cliente_telefono: string | null; hora_estimada: string | null;
   }>(
-    `SELECT id, tipo, contenedor_numero, destino_direccion, ubicacion_id, grupo_id, chofer_id, orden
+    `SELECT id, tipo, contenedor_numero, destino_direccion, ubicacion_id, grupo_id, chofer_id, orden, cliente_telefono, hora_estimada
        FROM viajes
       WHERE ruta_id = $1 AND orden > $2 AND ruta_confirmada_en IS NOT NULL
         AND estado IN ('programado', 'en_curso') AND completada_en IS NULL
@@ -234,10 +262,13 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
   const retiro = visita.find((v) => v.tipo === 'retiro');
   try {
     if (entrega?.grupo_id && retiro) {
-      await avisarChoferRecambio(choferId, retiro.contenedor_numero!, entrega.contenedor_numero, entrega.ubicacion_id, entrega.destino_direccion);
+      await avisarChoferRecambio(
+        choferId, retiro.contenedor_numero!, entrega.contenedor_numero, entrega.ubicacion_id,
+        entrega.destino_direccion, entrega.cliente_telefono, entrega.hora_estimada,
+      );
     } else {
       const v = entrega ?? retiro!;
-      await avisarChoferViaje(choferId, v.tipo, v.contenedor_numero, v.destino_direccion);
+      await avisarChoferViaje(choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, v.hora_estimada);
     }
   } catch (e: any) {
     const motivo = motivoErrorWa(e);
@@ -351,8 +382,17 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
             resultado.secundario?.contenedor_numero ?? null,
             resultado.secundario?.ubicacion_id ?? null,
             v.destino_direccion ?? null,
+            v.cliente_telefono ?? null,
+            v.hora_estimada ?? null,
           )
-        : avisarChoferViaje(v.chofer_id, resultado.principal.tipo, resultado.principal.contenedor_numero ?? null, v.destino_direccion ?? null);
+        : avisarChoferViaje(
+            v.chofer_id,
+            resultado.principal.tipo,
+            resultado.principal.contenedor_numero ?? null,
+            v.destino_direccion ?? null,
+            v.cliente_telefono ?? null,
+            v.hora_estimada ?? null,
+          );
       avisoRecambioOChofer.catch((e) => {
         const motivo = motivoErrorWa(e);
         console.error('Error avisando al chofer el viaje programado:', motivo);
@@ -489,10 +529,13 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
             [row.grupo_id],
           );
           if (retiro?.contenedor_numero) {
-            await avisarChoferRecambio(row.chofer_id, retiro.contenedor_numero, entrega?.contenedor_numero ?? null, entrega?.ubicacion_id ?? null, row.destino_direccion);
+            await avisarChoferRecambio(
+              row.chofer_id, retiro.contenedor_numero, entrega?.contenedor_numero ?? null, entrega?.ubicacion_id ?? null,
+              row.destino_direccion, row.cliente_telefono, row.hora_estimada,
+            );
           }
         } else {
-          await avisarChoferViaje(row.chofer_id, row.tipo, row.contenedor_numero, row.destino_direccion);
+          await avisarChoferViaje(row.chofer_id, row.tipo, row.contenedor_numero, row.destino_direccion, row.cliente_telefono, row.hora_estimada);
         }
       })().catch((e) => {
         const motivo = motivoErrorWa(e);

@@ -34,6 +34,13 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   if (chofer.length === 0) {
     if (sesion.paso === 'esperando_dni' && m.tipo === 'text') {
       const dni = (m.texto ?? '').replace(/\D/g, '');
+      // DNI argentino: 7 u 8 dígitos. Filtra tipeos/mensajes sueltos antes de
+      // consultar o generar una alerta — evita ruido al operador por errores
+      // de tipeo (antes cualquier texto generaba una alerta nueva).
+      if (dni.length < 7 || dni.length > 8) {
+        await sendText(to, '⚠️ Ese número no parece un DNI válido. Por favor, enviá tu *DNI* completo, solo los números.');
+        return;
+      }
       const match = await query<{ id: string; nombre: string; telefono: string | null }>(
         'SELECT id, nombre, telefono FROM choferes WHERE dni_hash = $1 AND activo = TRUE',
         [blindIndex(dni)],
@@ -44,7 +51,7 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
           // Primer vínculo: no hay número previo que pisar, se aplica directo.
           await query('UPDATE choferes SET telefono = $1 WHERE id = $2', [to, chofer.id]);
           await clearSesion(to);
-          await sendText(to, `✅ ¡Buenísimo, ${chofer.nombre}! Ya te vinculamos el número. 🚚`);
+          await sendText(to, `✅ Identidad confirmada, ${chofer.nombre}. Tu número quedó vinculado. 🚚`);
           return menuChofer(to);
         }
         // Ya tiene otro número vinculado: el DNI solo no alcanza para pisarlo
@@ -64,27 +71,38 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
         await clearSesion(to);
         await sendText(
           to,
-          `🔒 Ese DNI ya tiene otro número de WhatsApp vinculado. Avisamos a un operador para que confirme el cambio antes de aplicarlo.`,
+          '🔒 Ese DNI ya tiene otro número de WhatsApp vinculado. Avisamos a un operador para que confirme el cambio antes de aplicarlo.',
         );
         return;
       }
-      // No coincide: derivar a operador
+      // No coincide: hasta 2 reintentos sin molestar a nadie (permite corregir
+      // un tipeo); a partir del tercero, se deriva a un operador — y solo se
+      // crea UNA alerta por número (antes cada intento fallido generaba una
+      // fila nueva en alertas, aunque fuera la misma persona reintentando).
+      const intentos = ((sesion.contexto?.intentosDni as number) || 0) + 1;
+      if (intentos < 3) {
+        await setSesion({ telefono: to, flujo: 'chofer', paso: 'esperando_dni', contexto: { intentosDni: intentos } });
+        await sendText(to, '⚠️ No encontramos ese DNI. Revisá el número y enviámelo de nuevo.');
+        return;
+      }
       const [alerta] = await query(
         `INSERT INTO alertas (tipo, referencia_id, mensaje)
-         VALUES ('chofer_no_reconocido', $1, $2) RETURNING id, tipo, referencia_id, mensaje, creado_en`,
+         VALUES ('chofer_no_reconocido', $1, $2)
+         ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+         RETURNING id, tipo, referencia_id, mensaje, creado_en`,
         [to, `Chofer no reconocido (${to}) intentó validarse con DNI ${dni}`],
       );
       if (alerta) emitAlerta(alerta);
       await clearSesion(to);
       await sendText(
         to,
-        '🙁 Ese DNI no nos cierra. Ya avisamos a un operador para que te contacte y te dé una mano.',
+        '🙁 No pudimos validar ese DNI. Ya avisamos a un operador para que se comunique con vos.',
       );
       return;
     }
     // Primer contacto: pedir DNI
     await setSesion({ telefono: to, flujo: 'chofer', paso: 'esperando_dni', contexto: {} });
-    await sendText(to, '🚚 ¡Hola! No tengo este número registrado. Pasame tu *DNI* para validarte como chofer.');
+    await sendText(to, '🚚 Hola. No tengo este número registrado como chofer. Para identificarte, enviame tu *DNI* (solo los números).');
     return;
   }
 
@@ -161,7 +179,7 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
 export async function menuChofer(to: string, nombre?: string): Promise<void> {
   await sendButtons(
     to,
-    nombre ? `🚚 ¡Hola, ${nombre}! ¿Qué querés registrar?` : '🚚 Panel del chofer. ¿Qué querés registrar?',
+    nombre ? `🚚 Hola, ${nombre}. ¿Qué acción querés registrar?` : '🚚 Panel del chofer. ¿Qué acción querés registrar?',
     ESTADOS_CHOFER.map((e) => ({ id: `estado:${e}`, title: LABEL_ESTADO[e] })),
   );
 
@@ -185,8 +203,8 @@ async function ofrecerVaciadosPendientes(to: string, choferId: string): Promise<
   if (pendientes.length === 0) return;
   await sendList(
     to,
-    '🗑️ Vaciado',
-    '¿Ya vaciaste alguno de estos contenedores?',
+    '🗑️ Confirmar vaciado',
+    '¿Ya vaciaste alguno de estos contenedores en el vaciadero?',
     'Ver contenedores',
     pendientes.map((p) => ({ id: `vaciado:${p.contenedor_numero}`, title: p.contenedor_numero })),
   );
@@ -235,7 +253,7 @@ async function enviarListaVacios(
   await sendList(
     to,
     '🔄 Completar recambio',
-    `¿Cuál contenedor vacío dejás para completar el recambio del lleno *${llenoNumero}*? Al elegirlo se marca todo junto: el vacío queda entregado y el lleno retirado, yendo a vaciar.`,
+    `¿Con qué contenedor vacío completás el recambio del lleno *${llenoNumero}*? Al elegirlo se registra todo junto: el vacío queda entregado y el lleno queda retirado, camino al vaciadero.`,
     'Ver contenedores',
     disponibles.map((d) => ({ id: `recvacio:${d.numero}`, title: d.numero })),
   );
@@ -255,7 +273,7 @@ async function elegirVacioRecambio(to: string, choferId: string, entregaId: stri
   }
   const disponibles = await contenedoresDisponibles();
   if (disponibles.length === 0) {
-    await sendText(to, '🙁 No hay ningún contenedor vacío disponible ahora mismo.');
+    await sendText(to, '🙁 No hay contenedores vacíos disponibles en este momento.');
     return;
   }
   await enviarListaVacios(to, entregaId, pendiente.contenedor_numero, disponibles);
@@ -270,7 +288,7 @@ async function elegirVacioRecambio(to: string, choferId: string, entregaId: stri
 async function aplicarVaciado(to: string, choferId: string, choferNombre: string, numero: string): Promise<void> {
   const resultado = await finalizarRetiro(numero, `chofer:${choferId}`, choferId);
   if ('error' in resultado) {
-    await sendText(to, `⚠️ No pudimos registrar el vaciado de ${numero}: ${resultado.error}`);
+    await sendText(to, `⚠️ No pudimos registrar el vaciado del contenedor ${numero}: ${resultado.error}`);
   }
   return menuChofer(to, choferNombre);
 }
@@ -362,7 +380,7 @@ async function aplicarVacioRecambio(
       [numero, `chofer:${choferId}`],
     );
     if (!vacio) {
-      await sendText(to, `🙁 El contenedor ${numero} ya no está disponible — alguien lo tomó justo antes. Probá con otro.`);
+      await sendText(to, `🙁 El contenedor ${numero} ya no está disponible: alguien lo tomó justo antes. Elegí otro.`);
       return menuChofer(to, choferNombre);
     }
 
@@ -395,10 +413,10 @@ async function aplicarVacioRecambio(
     emitRecursoActualizado('viajes');
     await sendText(
       to,
-      `✅ ¡Recambio completado! Dejaste *${numero}*${mensajeLleno}. ${mensajeLleno ? 'Avisame por acá cuando vacíes el lleno (🗑️ en el menú). ' : ''}¡Gracias por tu trabajo! 🙌`,
+      `✅ Recambio registrado. Contenedor *${numero}* entregado${mensajeLleno}. ${mensajeLleno ? 'Avisame por acá cuando vacíes el lleno (opción 🗑️ del menú). ' : ''}Gracias por tu trabajo. 🙌`,
     );
   } catch (err: any) {
-    await sendText(to, `⚠️ No pudimos completar el recambio con ${numero}. Probá de nuevo.`);
+    await sendText(to, `⚠️ No pudimos completar el recambio con el contenedor ${numero}. Probá de nuevo.`);
     console.error('Error en aplicarVacioRecambio:', err.message);
   }
   return menuChofer(to, choferNombre);
@@ -420,11 +438,20 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
   const tipoRequerido = estado === 'entregado' ? 'entrega' : 'retiro';
   // Solo contenedores con un viaje activo asignado a ESTE chofer.
   // Se usa DISTINCT ON (c.numero) para garantizar IDs únicos y no saturar Meta API.
-  const conts = await query<{ numero: string; grupo_id: string | null; tipo: string; pareja_numero: string | null; pareja_tipo: string | null }>(
+  // Se trae también el cliente y la dirección del viaje: sin esto, el chofer
+  // solo veía el número de contenedor en la lista y no tenía forma de
+  // confirmar que estaba por marcar la parada correcta cuando maneja varias
+  // entregas/retiros el mismo día.
+  const conts = await query<{
+    numero: string; grupo_id: string | null; tipo: string; pareja_numero: string | null; pareja_tipo: string | null;
+    destino_direccion: string | null; cliente_nombre: string | null;
+  }>(
     `SELECT DISTINCT ON (c.numero)
-            c.numero, v.grupo_id, v.tipo, pareja.contenedor_numero AS pareja_numero, pareja.tipo AS pareja_tipo
+            c.numero, v.grupo_id, v.tipo, pareja.contenedor_numero AS pareja_numero, pareja.tipo AS pareja_tipo,
+            v.destino_direccion, cl.nombre AS cliente_nombre
        FROM contenedores c
        JOIN viajes v ON v.contenedor_numero = c.numero
+       LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
        LEFT JOIN LATERAL (
          SELECT v2.contenedor_numero, v2.tipo
            FROM viajes v2
@@ -440,24 +467,28 @@ async function elegirContenedor(to: string, choferId: string, estado: string, se
     [origen, choferId, tipoRequerido],
   );
   if (conts.length === 0) {
-    await sendText(to, `🙁 No tengo contenedores en estado "${origen}" para pasar a "${estado.replace('_', ' ')}".`);
+    await sendText(to, `🙁 No tenés contenedores en estado "${origen}" para pasar a "${estado.replace('_', ' ')}".`);
     return menuChofer(to);
   }
   await setSesion({ telefono: to, flujo: 'chofer', paso: 'elegir_contenedor', contexto: { estado } });
   await sendList(
     to,
     LABEL_ESTADO[estado as keyof typeof LABEL_ESTADO],
-    '¿Cuál contenedor?',
+    '¿Cuál contenedor? Fijate el cliente y la dirección para confirmar que es la parada correcta.',
     'Ver contenedores',
-    conts.map((c) => ({
-      id: `cont:${estado}:${c.numero}`,
-      title: c.numero,
-      description: c.grupo_id
+    conts.map((c) => {
+      const clienteODireccion = [c.cliente_nombre, c.destino_direccion].filter(Boolean).join(' — ') || 'Sin datos del cliente';
+      const recambio = c.grupo_id
         ? c.pareja_tipo === 'retiro'
-          ? `🔄 Recambio — retira el lleno ${c.pareja_numero}`
-          : `🔄 Recambio — entrega el vacío ${c.pareja_numero}`
-        : undefined,
-    })),
+          ? `🔄 Recambio, retira lleno ${c.pareja_numero} · `
+          : `🔄 Recambio, entrega vacío ${c.pareja_numero} · `
+        : '';
+      return {
+        id: `cont:${estado}:${c.numero}`,
+        title: c.numero,
+        description: `${recambio}${clienteODireccion}`,
+      };
+    }),
   );
 }
 
@@ -504,7 +535,7 @@ async function aplicarEstado(
         [numero],
       );
       if (!retiroExistente) {
-        await sendText(to, `🙁 El contenedor ${numero} no tiene ningún retiro pedido todavía — no se puede marcar como retirado.`);
+        await sendText(to, `🙁 El contenedor ${numero} todavía no tiene un retiro solicitado, no se puede marcar como retirado.`);
         await clearSesion(to);
         return menuChofer(to, choferNombre);
       }
@@ -543,10 +574,10 @@ async function aplicarEstado(
       await clearSesion(to);
       await sendText(
         to,
-        `📥 ¡Anotado! Contenedor *${numero}* marcado como retirado${extraVacio}. Avisame por acá cuando lo vacíes (🗑️ en el menú). ¡Gracias por tu trabajo! 🙌`,
+        `📥 Registrado. Contenedor *${numero}* marcado como retirado${extraVacio}. Avisame por acá cuando lo vacíes en el vaciadero (opción 🗑️ del menú). Gracias por tu trabajo. 🙌`,
       );
     } catch (err: any) {
-      await sendText(to, `⚠️ No pudimos registrar el retiro de ${numero}. Probá de nuevo.`);
+      await sendText(to, `⚠️ No pudimos registrar el retiro del contenedor ${numero}. Probá de nuevo.`);
       console.error('Error registrando retiro pendiente:', err.message);
     }
     return menuChofer(to, choferNombre);
@@ -564,7 +595,7 @@ async function aplicarEstado(
       [numero, choferId],
     );
     if (!entregaAsignada) {
-      await sendText(to, `🙁 No tenés una entrega asignada para el contenedor ${numero}.`);
+      await sendText(to, `🙁 No tenés ninguna entrega asignada para el contenedor ${numero}.`);
       await clearSesion(to);
       return menuChofer(to, choferNombre);
     }
@@ -607,12 +638,12 @@ async function aplicarEstado(
     // importa si el chofer marca primero el vacío o el lleno.
     const extra = await cascadearParejaRecambio(numero, choferId, choferNombre);
     await clearSesion(to);
-    await sendText(to, `✅ ¡Listo! Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
+    await sendText(to, `✅ Registrado. Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
   } catch (err: any) {
     // Error de transición inválida u otro
     await sendText(
       to,
-      `⚠️ No pude aplicar el cambio en ${numero}. Puede que el contenedor no esté en el estado correcto.`,
+      `⚠️ No pudimos aplicar el cambio en el contenedor ${numero}. Puede que no esté en el estado correcto para esta acción.`,
     );
     console.error('Error aplicarEstado:', err.message);
   }
