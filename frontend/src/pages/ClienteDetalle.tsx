@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Download, Send, Pencil, X, Wallet, Receipt, CircleDollarSign } from 'lucide-react';
+import { ArrowLeft, Download, Send, Pencil, X, Wallet, Receipt, CircleDollarSign, Plus } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -36,6 +36,7 @@ interface ItemCuentaCorriente {
 }
 
 interface AbonoCuentaCorriente {
+  id: string;
   fecha: string;
   monto: string | null;
 }
@@ -98,6 +99,11 @@ export function ClienteDetalle() {
   const [remitoForm, setRemitoForm] = useState('');
   const [viajeComprobantes, setViajeComprobantes] = useState<ViajeCliente | null>(null);
   const [reenviando, setReenviando] = useState<string | null>(null);
+  const [editandoAbono, setEditandoAbono] = useState<string | null>(null);
+  const [montoAbonoForm, setMontoAbonoForm] = useState('');
+  const [agregandoPago, setAgregandoPago] = useState(false);
+  const [montoPagoForm, setMontoPagoForm] = useState('');
+  const [guardandoPago, setGuardandoPago] = useState(false);
 
   /**
    * Para el caso borde en que un pago (o alargue) quedó validado pero el
@@ -124,6 +130,38 @@ export function ClienteDetalle() {
       show('success', 'Nº de remito actualizado');
     } catch (err: any) {
       show('error', 'No se pudo guardar', err.response?.data?.error);
+    }
+  }
+
+  /** Corrige el monto de un abono ya validado (ver POST /api/pagos/:id/monto) — para cuando el operador se equivocó al tipearlo. */
+  async function guardarMontoAbono(abonoId: string) {
+    const monto = Number(montoAbonoForm);
+    if (!(monto > 0)) return show('error', 'Monto inválido');
+    try {
+      await api.patch(`/api/pagos/${abonoId}/monto`, { monto });
+      queryClient.invalidateQueries({ queryKey: ['clientes', telefono, 'cuenta-corriente'] });
+      setEditandoAbono(null);
+      show('success', 'Monto corregido');
+    } catch (err: any) {
+      show('error', 'No se pudo guardar', err.response?.data?.error);
+    }
+  }
+
+  /** Pago que no pasó por WhatsApp (ej. efectivo en mano) — se acredita directo, sin comprobante. */
+  async function agregarPagoManual() {
+    const monto = Number(montoPagoForm);
+    if (!(monto > 0)) return show('error', 'Monto inválido');
+    setGuardandoPago(true);
+    try {
+      await api.post('/api/pagos/abono-manual', { telefono, monto });
+      queryClient.invalidateQueries({ queryKey: ['clientes', telefono, 'cuenta-corriente'] });
+      setAgregandoPago(false);
+      setMontoPagoForm('');
+      show('success', 'Pago acreditado a la cuenta corriente');
+    } catch (err: any) {
+      show('error', 'No se pudo guardar', err.response?.data?.error);
+    } finally {
+      setGuardandoPago(false);
     }
   }
 
@@ -203,7 +241,36 @@ export function ClienteDetalle() {
 
       {esCC && cuentaCorriente && (
         <div style={{ marginTop: '20px' }}>
-          <div className="section-title">Cuenta corriente</div>
+          <div className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>Cuenta corriente</span>
+            <RoleGate roles={['admin', 'operador', 'finanzas']}>
+              {agregandoPago ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className="form-input"
+                    style={{ width: '140px', padding: '4px 8px' }}
+                    placeholder="Monto"
+                    value={montoPagoForm}
+                    onChange={(e) => setMontoPagoForm(e.target.value)}
+                    autoFocus
+                  />
+                  <button className="btn btn-success btn-sm" onClick={agregarPagoManual} disabled={guardandoPago}>OK</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => { setAgregandoPago(false); setMontoPagoForm(''); }}>✕</button>
+                </div>
+              ) : (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setAgregandoPago(true)}
+                  title="Para pagos que no pasaron por WhatsApp, ej. efectivo en mano"
+                >
+                  <Plus size={12} strokeWidth={1.75} /> Agregar pago manual
+                </button>
+              )}
+            </RoleGate>
+          </div>
           <div className="kpi-grid">
             <div className="kpi-card">
               <div className="kpi-icon"><Receipt strokeWidth={1.75} /></div>
@@ -230,8 +297,8 @@ export function ClienteDetalle() {
                 </thead>
                 <tbody>
                   {[
-                    ...cuentaCorriente.cargos.map((c) => ({ fecha: c.fecha, texto: c.zona ?? 'Sin zona', monto: c.monto ? Number(c.monto) : 0, signo: 1 })),
-                    ...cuentaCorriente.abonos.map((a) => ({ fecha: a.fecha, texto: 'Pago acreditado', monto: a.monto ? Number(a.monto) : 0, signo: -1 })),
+                    ...cuentaCorriente.cargos.map((c) => ({ id: null as string | null, fecha: c.fecha, texto: c.zona ?? 'Sin zona', monto: c.monto ? Number(c.monto) : 0, signo: 1 })),
+                    ...cuentaCorriente.abonos.map((a) => ({ id: a.id, fecha: a.fecha, texto: 'Pago acreditado', monto: a.monto ? Number(a.monto) : 0, signo: -1 })),
                   ]
                     .sort((a, b) => a.fecha.localeCompare(b.fecha))
                     .reverse()
@@ -239,7 +306,40 @@ export function ClienteDetalle() {
                       <tr key={i}>
                         <td style={{ whiteSpace: 'nowrap' }}>{formatearFecha(m.fecha)}</td>
                         <td>{m.signo > 0 ? m.texto : <span style={{ color: 'var(--color-success, #16a34a)' }}>{m.texto}</span>}</td>
-                        <td>{m.signo > 0 ? '' : '− '}${m.monto.toLocaleString('es-AR')}</td>
+                        <td>
+                          {editandoAbono === m.id ? (
+                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                className="form-input"
+                                style={{ width: '110px', padding: '4px 8px' }}
+                                value={montoAbonoForm}
+                                onChange={(e) => setMontoAbonoForm(e.target.value)}
+                                autoFocus
+                              />
+                              <button className="btn btn-success btn-sm" onClick={() => guardarMontoAbono(m.id!)}>OK</button>
+                              <button className="btn btn-ghost btn-sm" onClick={() => setEditandoAbono(null)}>✕</button>
+                            </div>
+                          ) : (
+                            <>
+                              {m.signo > 0 ? '' : '− '}${m.monto.toLocaleString('es-AR')}
+                              {m.id && (
+                                <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    style={{ marginLeft: '6px' }}
+                                    onClick={() => { setEditandoAbono(m.id); setMontoAbonoForm(String(m.monto)); }}
+                                    title="Corregir el monto de este pago"
+                                  >
+                                    <Pencil size={11} strokeWidth={1.75} />
+                                  </button>
+                                </RoleGate>
+                              )}
+                            </>
+                          )}
+                        </td>
                       </tr>
                     ))}
                 </tbody>
@@ -310,9 +410,8 @@ export function ClienteDetalle() {
                         {(() => {
                           const comprobantes = v.comprobantes ?? [];
                           const inicial = comprobantes.find((c) => c.tipo !== 'alargue_retiro');
-                          const extensiones = comprobantes.filter((c) => c.tipo === 'alargue_retiro');
                           const esCC = v.es_cuenta_corriente || inicial?.es_cuenta_corriente;
-                          if (!esCC && !inicial && extensiones.length === 0) {
+                          if (!esCC && !inicial) {
                             return <span className="text-muted">—</span>;
                           }
                           return (
@@ -322,11 +421,6 @@ export function ClienteDetalle() {
                               ) : inicial && (
                                 <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
                                   🧾 Inicial
-                                </button>
-                              )}
-                              {extensiones.length > 0 && (
-                                <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
-                                  ⏳ Extensión{extensiones.length > 1 ? ` (${extensiones.length})` : ''}
                                 </button>
                               )}
                             </div>

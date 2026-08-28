@@ -207,6 +207,7 @@ interface ItemCuentaCorriente {
 }
 
 interface AbonoCuentaCorriente {
+  id: string;
   fecha: string;
   monto: string | null;
 }
@@ -253,7 +254,7 @@ async function itemsCuentaCorriente(telefono: string): Promise<ItemCuentaCorrien
  */
 async function abonosCuentaCorriente(telefono: string): Promise<AbonoCuentaCorriente[]> {
   return query<AbonoCuentaCorriente>(
-    `SELECT creado_en::text AS fecha, monto::text AS monto
+    `SELECT id, creado_en::text AS fecha, monto::text AS monto
        FROM pagos
       WHERE cliente_telefono = $1 AND tipo = 'abono_cc' AND estado = 'validado'
       ORDER BY creado_en`,

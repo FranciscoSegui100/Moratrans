@@ -209,7 +209,14 @@ export function Pagos() {
                 <div className="pago-actions">
                   <RoleGate roles={['admin', 'operador', 'finanzas']}>
                     <button
-                      onClick={() => (p.tipo === 'abono_cc' ? validar(p.id, { monto: Number(montosAbono[p.id]) }) : validar(p.id))}
+                      onClick={() => {
+                        if (p.tipo !== 'abono_cc') return validar(p.id);
+                        const monto = Number(montosAbono[p.id]);
+                        // Es un monto tipeado a mano por el operador (el cliente no lo declara) —
+                        // se confirma antes de acreditarlo para evitar errores de tipeo.
+                        if (!confirm(`¿Confirmás acreditar $${monto.toLocaleString('es-AR')} a la cuenta corriente de ${p.cliente_telefono}?`)) return;
+                        validar(p.id, { monto });
+                      }}
                       className="btn btn-success btn-sm"
                       disabled={procesando === p.id || (p.tipo === 'abono_cc' && !(Number(montosAbono[p.id]) > 0))}
                     >

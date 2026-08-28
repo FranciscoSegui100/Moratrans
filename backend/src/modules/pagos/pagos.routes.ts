@@ -265,6 +265,52 @@ const abonoSchema = z.object({
   monto: z.coerce.number().positive('Indicá el monto transferido para poder acreditarlo.'),
 });
 
+const abonoManualSchema = z.object({
+  telefono: z.string().trim().min(6, 'Falta el teléfono'),
+  monto: z.coerce.number().positive('Indicá el monto del pago.'),
+});
+
+/**
+ * POST /api/pagos/abono-manual — acredita un pago a cuenta corriente que
+ * nunca pasó por WhatsApp (ej. el cliente pagó en efectivo en persona): a
+ * diferencia de validarAbonoCC, acá no hay un pago 'pendiente' previo — se
+ * crea y se valida en el mismo paso, sin comprobante. Se ofrece desde la
+ * ficha del cliente (ver ClienteDetalle.tsx), no desde la bandeja de
+ * comprobantes pendientes.
+ */
+pagosRouter.post('/abono-manual', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+  const parsed = abonoManualSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Datos inválidos' });
+  }
+  const { telefono, monto } = parsed.data;
+
+  const [pago] = await query<{ id: string }>(
+    `INSERT INTO pagos (cliente_telefono, monto, estado, es_cuenta_corriente, tipo, validado_por)
+     VALUES ($1,$2,'validado',TRUE,'abono_cc',$3) RETURNING id`,
+    [telefono, monto, req.user!.id],
+  );
+
+  emitRecursoActualizado('pagos');
+
+  try {
+    const saldo = await saldoCuentaCorriente(telefono);
+    await sendText(
+      telefono,
+      `✅ Registramos un pago de *$${monto.toLocaleString('es-AR')}* en tu cuenta corriente.\n\n` +
+        `Tu nuevo saldo es *$${saldo.toLocaleString('es-AR')}*.`,
+    );
+  } catch (e) {
+    const motivo = motivoErrorWa(e);
+    console.error('Error avisando abono manual de cuenta corriente:', motivo);
+    await notificarEnvioFallido(pago.id, telefono, 'aviso de pago manual a cuenta corriente', motivo).catch((e2) =>
+      console.error('Error registrando alerta de envío fallido:', e2),
+    );
+  }
+
+  res.json({ ok: true, id: pago.id, monto });
+});
+
 /**
  * Un pago 'abono_cc' no está atado a ningún pedido/ticket/contenedor: es
  * simplemente plata que el cliente transfirió contra su saldo de cuenta
@@ -649,5 +695,31 @@ pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), a
   ).catch((e) => console.error('Error avisando rechazo de pago:', motivoErrorWa(e)));
 
   res.json({ ok: true });
+});
+
+/**
+ * PATCH /api/pagos/:id/monto — corrige el monto de un abono de cuenta
+ * corriente YA validado (ver validarAbonoCC arriba): el operador lo carga a
+ * mano mirando la transferencia, así que puede equivocarse — esto le permite
+ * arreglarlo desde la ficha del cliente sin tener que rechazar y rehacer
+ * todo el circuito. Restringido a 'abono_cc' validado: los demás tipos de
+ * pago no tienen este problema (su monto sale de un pedido, no se tipea).
+ */
+pagosRouter.patch('/:id/monto', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+  const parsed = abonoSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Monto inválido' });
+  }
+
+  const [pago] = await query<{ id: string }>(
+    `UPDATE pagos SET monto = $2
+      WHERE id = $1 AND tipo = 'abono_cc' AND estado = 'validado'
+      RETURNING id`,
+    [req.params.id, parsed.data.monto],
+  );
+  if (!pago) return res.status(409).json({ error: 'Abono inexistente o no está validado' });
+
+  emitRecursoActualizado('pagos');
+  res.json({ ok: true, monto: parsed.data.monto });
 });
 
