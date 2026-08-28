@@ -100,8 +100,8 @@ async function pedirConfirmacion(to: string, cont: ContenedorCliente, sesion: Se
     await sendText(to, '🙁 No tenemos la zona cargada para tu contenedor actual. Escribí *asesor* para coordinarlo.');
     return;
   }
-  const tarifa = await query<{ precio: string; moneda: string }>(
-    'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+  const tarifa = await query<{ precio: string }>(
+    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
     [cont.zona],
   );
   if (tarifa.length === 0) {
@@ -109,18 +109,18 @@ async function pedirConfirmacion(to: string, cont: ContenedorCliente, sesion: Se
     await sendText(to, '🙁 No encontramos la tarifa para tu zona. Escribí *asesor* para coordinarlo.');
     return;
   }
-  const { precio, moneda } = tarifa[0];
+  const { precio } = tarifa[0];
   const costo = Math.round(Number(precio) * PORCENTAJE_ALARGUE);
 
   await setSesion({
     telefono: to,
     flujo: 'alargar_retiro',
     paso: 'confirmar_alargue',
-    contexto: { numero: cont.numero, costo, moneda },
+    contexto: { numero: cont.numero, costo },
   });
   await sendButtons(
     to,
-    `⏳ Extender *${DIAS_ALARGUE} días* más el retiro del contenedor *${cont.numero}* cuesta el *${Math.round(PORCENTAJE_ALARGUE * 100)}%* de tu tarifa: *${moneda} ${costo.toLocaleString('es-AR')}*.\n\n` +
+    `⏳ Extender *${DIAS_ALARGUE} días* más el retiro del contenedor *${cont.numero}* cuesta el *${Math.round(PORCENTAJE_ALARGUE * 100)}%* de tu tarifa: *ARS ${costo.toLocaleString('es-AR')}*.\n\n` +
       'Solo se puede pedir una vez por contenedor. ¿Confirmás la extensión?',
     [
       { id: 'alargue_si', title: '✅ Sí, confirmar' },
@@ -184,7 +184,6 @@ async function registrarAlargue(
 ): Promise<void> {
   const numero = sesion.contexto.numero as string;
   const costo = sesion.contexto.costo as number;
-  const moneda = (sesion.contexto.moneda as string | null) ?? 'ARS';
 
   const [row] = await query<{ id: string }>(
     `INSERT INTO pagos (cliente_telefono, tipo, contenedor_numero, monto, url_comprobante, media_id, estado)
@@ -198,7 +197,7 @@ async function registrarAlargue(
      VALUES ('alargue_solicitado', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [row.id, `${to} pidió alargar ${DIAS_ALARGUE} días el contenedor ${numero} (${moneda} ${costo})`],
+    [row.id, `${to} pidió alargar ${DIAS_ALARGUE} días el contenedor ${numero} (ARS ${costo})`],
   );
   if (alerta) {
     emitAlerta({
@@ -207,7 +206,6 @@ async function registrarAlargue(
       monto: costo,
       pago_estado: 'pendiente',
       tiene_comprobante: !!pago.rutaCifrada,
-      moneda,
     });
   }
   emitRecursoActualizado('pagos');
@@ -229,7 +227,6 @@ async function registrarAlargue(
 async function registrarAlargueCC(to: string, sesion: Sesion): Promise<void> {
   const numero = sesion.contexto.numero as string;
   const costo = sesion.contexto.costo as number;
-  const moneda = (sesion.contexto.moneda as string | null) ?? 'ARS';
 
   const [cont] = await query<{ vence_en: Date | null }>(
     `UPDATE contenedores
@@ -258,7 +255,7 @@ async function registrarAlargueCC(to: string, sesion: Sesion): Promise<void> {
      VALUES ('alargue_solicitado', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [pago.id, `${to} (cuenta corriente) extendió ${DIAS_ALARGUE} días el contenedor ${numero} — ya se aplicó solo, se sumó ${moneda} ${costo.toLocaleString('es-AR')} a su cuenta.`],
+    [pago.id, `${to} (cuenta corriente) extendió ${DIAS_ALARGUE} días el contenedor ${numero} — ya se aplicó solo, se sumó ARS ${costo.toLocaleString('es-AR')} a su cuenta.`],
   );
   if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
 
@@ -267,6 +264,6 @@ async function registrarAlargueCC(to: string, sesion: Sesion): Promise<void> {
     to,
     `✅ ¡Listo! Extendimos *${DIAS_ALARGUE} días* el retiro de tu contenedor *${numero}* — ` +
       `${cont?.vence_en ? `ahora vence el ${formatearFechaCorta(cont.vence_en)}. ` : ''}` +
-      `Costo: *${moneda} ${costo.toLocaleString('es-AR')}* — se agregó a tu cuenta corriente.`,
+      `Costo: *ARS ${costo.toLocaleString('es-AR')}* — se agregó a tu cuenta corriente.`,
   );
 }

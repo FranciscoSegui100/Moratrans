@@ -50,14 +50,12 @@ dashboardRouter.get('/comprobantes', async (_req: Request, res: Response) => {
     titular_transferencia: string | null;
     zona: string | null;
     precio: string | null;
-    moneda: string | null;
   }>(
     `SELECT p.id, p.cliente_telefono, COALESCE(c.nombre, pe.cliente_nombre) AS cliente_nombre,
             p.monto, p.estado, p.tipo, p.creado_en, p.titular_transferencia,
-            pe.zona, pe.precio, td.moneda
+            pe.zona, pe.precio
        FROM pagos p
        LEFT JOIN pedidos pe ON pe.id = p.pedido_id
-       LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
        LEFT JOIN clientes c ON c.telefono = p.cliente_telefono
       WHERE p.url_comprobante IS NOT NULL
       ORDER BY p.creado_en DESC

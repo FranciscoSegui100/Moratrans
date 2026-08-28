@@ -16,7 +16,6 @@ interface Pago {
   estado: string;
   zona: string | null;
   precio: string | null;
-  moneda: string | null;
   creado_en: string;
   adjuntos_count: number;
   titular_transferencia: string | null;
@@ -160,7 +159,7 @@ export function Pagos() {
                   {p.tipo === 'alargue_retiro' ? (
                     <div className="pago-detail">
                        ⏳ Alargue de retiro — contenedor <strong>{p.contenedor_numero ?? '—'}</strong> ·{' '}
-                      {p.monto ? `${p.moneda ?? ''} ${Number(p.monto).toLocaleString('es-AR')}`.trim() : 'Sin monto'} ·{' '}
+                      {p.monto ? `ARS ${Number(p.monto).toLocaleString('es-AR')}` : 'Sin monto'} ·{' '}
                       {formatearFechaHora(p.creado_en)}
                     </div>
                   ) : p.tipo === 'abono_cc' ? (
@@ -170,7 +169,7 @@ export function Pagos() {
                   ) : (
                     <div className="pago-detail">
                       {p.zona ?? 'Sin zona'} ·{' '}
-                      {p.precio ? `${p.moneda ?? ''} ${Number(p.precio).toLocaleString('es-AR')}`.trim() : 'Sin monto'} ·{' '}
+                      {p.precio ? `ARS ${Number(p.precio).toLocaleString('es-AR')}` : 'Sin monto'} ·{' '}
                       {formatearFechaHora(p.creado_en)}
                     </div>
                   )}

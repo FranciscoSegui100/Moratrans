@@ -131,7 +131,7 @@ export function Alertas() {
                       <div className="pago-phone">{a.cliente_telefono}</div>
                       <div className="pago-detail">
                         {a.zona ?? 'Sin zona'} ·{' '}
-                        {a.precio ? `${a.moneda ?? ''} ${Number(a.precio).toLocaleString('es-AR')}`.trim() : 'Sin monto'}
+                        {a.precio ? `ARS ${Number(a.precio).toLocaleString('es-AR')}` : 'Sin monto'}
                       </div>
                       <RoleGate roles={['admin', 'finanzas']}>
                         {a.tiene_comprobante ? (

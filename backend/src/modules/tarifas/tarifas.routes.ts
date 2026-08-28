@@ -9,7 +9,7 @@ tarifasRouter.use(requireAuth);
 /** GET /api/tarifas — todas las tarifas (activas e inactivas) para el panel. */
 tarifasRouter.get('/', async (_req: Request, res: Response) => {
   const rows = await query(
-    'SELECT departamento, precio, moneda, activo, actualizado_en FROM tarifas_departamento ORDER BY departamento',
+    'SELECT departamento, precio, activo, actualizado_en FROM tarifas_departamento ORDER BY departamento',
   );
   res.json(rows);
 });
@@ -17,18 +17,17 @@ tarifasRouter.get('/', async (_req: Request, res: Response) => {
 const nuevoSchema = z.object({
   departamento: z.string().min(2).max(100),
   precio: z.coerce.number().min(0),
-  moneda: z.string().min(1).max(10).default('ARS'),
 });
 
 /** POST /api/tarifas — agregar un nuevo departamento (solo admin). */
 tarifasRouter.post('/', requireRol('admin'), async (req: Request, res: Response) => {
   const parsed = nuevoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const { departamento, precio, moneda } = parsed.data;
+  const { departamento, precio } = parsed.data;
   try {
     const [row] = await query(
-      `INSERT INTO tarifas_departamento (departamento, precio, moneda) VALUES ($1,$2,$3) RETURNING *`,
-      [departamento.trim(), precio, moneda.trim().toUpperCase()],
+      `INSERT INTO tarifas_departamento (departamento, precio) VALUES ($1,$2) RETURNING *`,
+      [departamento.trim(), precio],
     );
     res.status(201).json(row);
   } catch (e: any) {
@@ -40,11 +39,10 @@ tarifasRouter.post('/', requireRol('admin'), async (req: Request, res: Response)
 
 const patchSchema = z.object({
   precio: z.coerce.number().min(0).optional(),
-  moneda: z.string().min(1).max(10).optional(),
   activo: z.boolean().optional(),
 });
 
-/** PATCH /api/tarifas/:departamento — modificar precio/moneda/activo (solo admin). */
+/** PATCH /api/tarifas/:departamento — modificar precio/activo (solo admin). */
 tarifasRouter.patch('/:departamento', requireRol('admin'), async (req: Request, res: Response) => {
   const parsed = patchSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
@@ -52,7 +50,7 @@ tarifasRouter.patch('/:departamento', requireRol('admin'), async (req: Request, 
   const sets: string[] = [];
   const params: any[] = [];
   for (const [k, val] of Object.entries(parsed.data)) {
-    params.push(k === 'moneda' ? String(val).toUpperCase() : val);
+    params.push(val);
     sets.push(`${k} = $${params.length}`);
   }
   if (sets.length === 0) return res.status(400).json({ error: 'Nada para actualizar' });

@@ -25,7 +25,6 @@ export interface DatosTicket {
   fechaRetiroEstimada?: string | null;
   horarioPreferido?: string | null;
   precio?: number | string | null;
-  moneda?: string | null;
   clienteNombre?: string | null;
   clienteTelefono: string;
   medioPago: 'transferencia' | 'cuenta_corriente';
@@ -33,9 +32,10 @@ export interface DatosTicket {
   fecha: Date;
 }
 
-export function formatearMonto(precio: number | string | null | undefined, moneda: string | null | undefined): string {
+/** MoraTrans siempre cotiza y cobra en pesos argentinos (ver migración 0039). */
+export function formatearMonto(precio: number | string | null | undefined): string {
   if (precio == null) return '—';
-  return `${moneda ?? ''} ${Number(precio).toLocaleString('es-AR', { minimumFractionDigits: 2 })}`.trim();
+  return `ARS ${Number(precio).toLocaleString('es-AR', { minimumFractionDigits: 2 })}`;
 }
 
 /**
@@ -196,7 +196,7 @@ function generarTicketPDF(d: DatosTicket): Promise<Buffer> {
     if (d.titularTransferencia) y = dibujarFila(doc, y, 'Titular de la transferencia', d.titularTransferencia);
     y += 10;
 
-    dibujarMontoDestacado(doc, y, formatearMonto(d.precio, d.moneda));
+    dibujarMontoDestacado(doc, y, formatearMonto(d.precio));
     dibujarPiePagina(doc);
 
     doc.end();

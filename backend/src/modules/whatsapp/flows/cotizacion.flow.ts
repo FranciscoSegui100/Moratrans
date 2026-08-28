@@ -59,9 +59,9 @@ import type { Sesion } from '../session.store';
  */
 
 /** Precio activo de una zona, o null si no está cargada/activa. */
-async function tarifaDeZona(departamento: string): Promise<{ precio: string; moneda: string } | null> {
-  const [tarifa] = await query<{ precio: string; moneda: string }>(
-    'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+async function tarifaDeZona(departamento: string): Promise<{ precio: string } | null> {
+  const [tarifa] = await query<{ precio: string }>(
+    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
     [departamento],
   );
   return tarifa ?? null;
@@ -88,7 +88,7 @@ async function avanzarAConfirmarUbicacion(
       : `*${destinoDireccion}*`;
 
   const tarifa = await tarifaDeZona(departamento);
-  const lineaPrecio = tarifa ? `\nPrecio: *${tarifa.moneda} ${Number(tarifa.precio).toLocaleString('es-AR')}*` : '';
+  const lineaPrecio = tarifa ? `\nPrecio: *ARS ${Number(tarifa.precio).toLocaleString('es-AR')}*` : '';
 
   await sendButtons(
     to,
@@ -526,7 +526,7 @@ async function mostrarResumenYConfirmar(to: string, sesion: Sesion, opcion: { ti
     await clearSesion(to);
     return;
   }
-  const { precio, moneda } = tarifa;
+  const { precio } = tarifa;
   const fechaRetiroEstimada = sumarDias(fechaEntrega, DIAS_ALQUILER_ANTES_RETIRO);
   const resumenUbicacion =
     destinoLat != null && destinoLng != null
@@ -538,7 +538,7 @@ async function mostrarResumenYConfirmar(to: string, sesion: Sesion, opcion: { ti
     `📦 *Resumen de tu pedido*\n\n` +
       `📍 Dirección: ${resumenUbicacion}\n` +
       `Zona: *${departamento}*\n` +
-      `Precio: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
+      `Precio: *ARS ${Number(precio).toLocaleString('es-AR')}*\n` +
       `Fecha de entrega: ${formatearFechaLarga(fechaEntrega)}\n` +
       `Franja horaria: ${opcion.title}\n` +
       `Fecha estimada de retiro: ${formatearFechaLarga(fechaRetiroEstimada)}\n\n` +
@@ -551,7 +551,7 @@ async function mostrarResumenYConfirmar(to: string, sesion: Sesion, opcion: { ti
   await setSesion({
     ...sesion,
     paso: 'confirmar_resumen',
-    contexto: { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada, tipoLugar, fechaEntrega, horarioTitle: opcion.title, precio, moneda, fechaRetiroEstimada },
+    contexto: { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada, tipoLugar, fechaEntrega, horarioTitle: opcion.title, precio, fechaRetiroEstimada },
   });
 }
 
@@ -594,7 +594,7 @@ async function manejarNombrePedido(m: MensajeEntrante, sesion: Sesion): Promise<
 
 /** Crea el pedido en la base y le pasa los datos para transferir — recién acá, con el resumen ya confirmado. */
 async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion): Promise<void> {
-  const { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada, tipoLugar, fechaEntrega, horarioTitle, precio, moneda, fechaRetiroEstimada } = sesion.contexto as {
+  const { departamento, destinoLat, destinoLng, destinoDireccion, direccionVerificada, tipoLugar, fechaEntrega, horarioTitle, precio, fechaRetiroEstimada } = sesion.contexto as {
     departamento: string;
     destinoLat: number | null;
     destinoLng: number | null;
@@ -604,7 +604,6 @@ async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion): 
     fechaEntrega: string;
     horarioTitle: string;
     precio: string;
-    moneda: string;
     fechaRetiroEstimada: string;
   };
 

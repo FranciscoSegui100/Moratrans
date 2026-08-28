@@ -14,11 +14,8 @@ pedidosRouter.use(requireAuth);
  *   {{1}} = zona/departamento   {{2}} = precio
  */
 pedidosRouter.post('/:id/recordar-pago', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
-  const [pedido] = await query<{ cliente_telefono: string; zona: string; precio: string; moneda: string | null }>(
-    `SELECT pe.cliente_telefono, pe.zona, pe.precio, td.moneda
-       FROM pedidos pe
-       LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
-      WHERE pe.id = $1`,
+  const [pedido] = await query<{ cliente_telefono: string; zona: string; precio: string }>(
+    `SELECT pe.cliente_telefono, pe.zona, pe.precio FROM pedidos pe WHERE pe.id = $1`,
     [req.params.id],
   );
   if (!pedido) return res.status(404).json({ error: 'Pedido inexistente' });
@@ -28,7 +25,7 @@ pedidosRouter.post('/:id/recordar-pago', requireRol('admin', 'operador', 'finanz
       pedido.cliente_telefono,
       'recordatorio_pago', // nombre de la plantilla aprobada
       'es_AR',
-      [pedido.zona ?? '-', pedido.precio ? `${pedido.moneda ?? ''} ${pedido.precio}`.trim() : '-'],
+      [pedido.zona ?? '-', pedido.precio ? `ARS ${pedido.precio}` : '-'],
     );
     res.json({ ok: true });
   } catch (e: any) {

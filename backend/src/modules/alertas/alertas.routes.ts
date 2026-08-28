@@ -20,12 +20,10 @@ const SELECT_ALERTAS = `
          p.estado AS pago_estado,
          (p.url_comprobante IS NOT NULL) AS tiene_comprobante,
          pe.zona,
-         pe.precio,
-         td.moneda
+         pe.precio
     FROM alertas a
     LEFT JOIN pagos p    ON a.tipo = 'pago_pendiente_validacion' AND p.id::text = a.referencia_id
     LEFT JOIN pedidos pe ON pe.id = p.pedido_id
-    LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
 `;
 alertasRouter.get('/', async (req: Request, res: Response) => {
   const estado = req.query.estado as string | undefined;

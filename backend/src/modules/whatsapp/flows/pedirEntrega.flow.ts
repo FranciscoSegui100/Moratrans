@@ -191,8 +191,8 @@ async function manejarMismatchDepartamento(m: MensajeEntrante, sesion: Sesion): 
     return;
   }
 
-  const [tarifa] = await query<{ precio: string; moneda: string }>(
-    'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+  const [tarifa] = await query<{ precio: string }>(
+    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
     [departamentoDetectado],
   );
   if (!tarifa) {
@@ -212,8 +212,8 @@ async function manejarUbicacionTexto(m: MensajeEntrante, sesion: Sesion): Promis
     return;
   }
 
-  const [tarifa] = await query<{ precio: string; moneda: string }>(
-    'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+  const [tarifa] = await query<{ precio: string }>(
+    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
     [departamento],
   );
   if (!tarifa) {
@@ -231,14 +231,14 @@ async function pedirConfirmacion(
   destinoLng: number | null,
   destinoDireccion: string | null,
   departamento: string,
-  tarifa: { precio: string; moneda: string } | null,
+  tarifa: { precio: string } | null,
   direccionVerificada: boolean,
 ): Promise<void> {
   const resumen =
     destinoLat != null && destinoLng != null
       ? `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`
       : `*${destinoDireccion}*`;
-  const lineaPrecio = tarifa ? `\nCosto: *${tarifa.moneda} ${Number(tarifa.precio).toLocaleString('es-AR')}*` : '';
+  const lineaPrecio = tarifa ? `\nCosto: *ARS ${Number(tarifa.precio).toLocaleString('es-AR')}*` : '';
 
   await sendButtons(
     to,
@@ -252,7 +252,7 @@ async function pedirConfirmacion(
     telefono: to,
     flujo: 'pedir_entrega',
     paso: 'confirmar_entrega_cliente',
-    contexto: { destinoDireccion, destinoLat, destinoLng, departamento, direccionVerificada, precio: tarifa?.precio ?? null, moneda: tarifa?.moneda ?? null },
+    contexto: { destinoDireccion, destinoLat, destinoLng, departamento, direccionVerificada, precio: tarifa?.precio ?? null },
   });
 }
 
@@ -319,17 +319,16 @@ async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void>
     return;
   }
 
-  const { destinoDireccion, destinoLat, destinoLng, departamento, precio, moneda, fechaEntrega } = sesion.contexto as {
+  const { destinoDireccion, destinoLat, destinoLng, departamento, precio, fechaEntrega } = sesion.contexto as {
     destinoDireccion: string | null;
     destinoLat: number | null;
     destinoLng: number | null;
     departamento: string;
     precio: string | null;
-    moneda: string | null;
     fechaEntrega: string;
   };
 
-  const lineaPrecio = precio ? `\nCosto: *${moneda} ${Number(precio).toLocaleString('es-AR')}*` : '';
+  const lineaPrecio = precio ? `\nCosto: *ARS ${Number(precio).toLocaleString('es-AR')}*` : '';
   await sendButtons(
     to,
     `📦 *Resumen del pedido*\n\n` +

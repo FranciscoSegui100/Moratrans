@@ -159,7 +159,9 @@ CREATE UNIQUE INDEX choferes_telefono_key ON choferes(telefono) WHERE telefono I
 CREATE TABLE tarifas_departamento (
   departamento  TEXT           PRIMARY KEY,   -- ej. 'Montevideo', 'Canelones'
   precio        NUMERIC(12,2)  NOT NULL CHECK (precio >= 0),
-  moneda        TEXT           NOT NULL DEFAULT 'ARS',
+  -- Siempre se cotiza y cobra en pesos argentinos (ARS): no hay columna de
+  -- moneda, se muestra como literal fijo en cualquier mensaje/PDF que
+  -- necesite mostrar el monto (ver formatearMonto en pdf.service.ts).
   activo        BOOLEAN        NOT NULL DEFAULT TRUE,
   actualizado_en TIMESTAMPTZ   NOT NULL DEFAULT now(),
   -- Anillo exterior [[lng,lat], ...] del límite administrativo, usado por

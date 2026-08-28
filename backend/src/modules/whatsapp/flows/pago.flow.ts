@@ -11,7 +11,7 @@ import { manejarRespuestaInvalida } from '../estados';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
-export type PedidoCandidato = { id: string; zona: string; precio: string; moneda: string | null };
+export type PedidoCandidato = { id: string; zona: string; precio: string };
 
 /**
  * Datos de la cuenta a la que el cliente tiene que transferir, para
@@ -141,7 +141,7 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
         pedidos.map((p) => ({
           id: `pedido:${p.id}`,
           title: p.zona,
-          description: `${p.moneda ?? ''} ${Number(p.precio).toLocaleString('es-AR')}`.trim(),
+          description: `ARS ${Number(p.precio).toLocaleString('es-AR')}`,
         })),
       );
       return;
@@ -189,9 +189,8 @@ export async function opcionesMetodoPago(telefono: string): Promise<{ id: string
  */
 export async function pedidosAbiertos(telefono: string): Promise<PedidoCandidato[]> {
   return query<PedidoCandidato>(
-    `SELECT pe.id, pe.zona, pe.precio, td.moneda
+    `SELECT pe.id, pe.zona, pe.precio
        FROM pedidos pe
-       LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
       WHERE pe.cliente_telefono = $1
         AND pe.estado IN ('cotizado','confirmado')
         AND NOT EXISTS (SELECT 1 FROM pagos pg WHERE pg.pedido_id = pe.id AND pg.estado = 'validado')
@@ -211,7 +210,7 @@ export async function pedidosAbiertos(telefono: string): Promise<PedidoCandidato
 export function mensajePedidoPendiente(pedido: PedidoCandidato): string {
   return (
     `🙁 Ya tenés un pedido pendiente de pago — *${pedido.zona}*` +
-    `${pedido.precio ? ` (*${pedido.moneda ?? ''} ${Number(pedido.precio).toLocaleString('es-AR')}*)` : ''}.\n\n` +
+    `${pedido.precio ? ` (*ARS ${Number(pedido.precio).toLocaleString('es-AR')}*)` : ''}.\n\n` +
     `Mandá el comprobante de ese primero (o escribí *Ya pagué*) antes de pedir uno nuevo.\n\n` +
     `_Si tenés dudas, escribí *asesor*._`
   );
@@ -267,7 +266,7 @@ async function iniciarCuentaCorriente(m: MensajeEntrante): Promise<void> {
       pedidos.map((p) => ({
         id: `pedido:${p.id}`,
         title: p.zona,
-        description: `${p.moneda ?? ''} ${Number(p.precio).toLocaleString('es-AR')}`.trim(),
+        description: `ARS ${Number(p.precio).toLocaleString('es-AR')}`,
       })),
     );
     return;
@@ -285,9 +284,8 @@ async function manejarEleccionPedidoCC(m: MensajeEntrante, _sesion: Sesion): Pro
   }
   const pedidoId = m.seleccionId.replace('pedido:', '');
   const [pedido] = await query<PedidoCandidato>(
-    `SELECT pe.id, pe.zona, pe.precio, td.moneda
+    `SELECT pe.id, pe.zona, pe.precio
        FROM pedidos pe
-       LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
       WHERE pe.id = $1 AND pe.cliente_telefono = $2`,
     [pedidoId, to],
   );
@@ -337,7 +335,6 @@ async function registrarCuentaCorriente(to: string, pedido: PedidoCandidato | un
       tiene_comprobante: false,
       zona: pedido?.zona ?? null,
       precio: pedido?.precio ?? null,
-      moneda: pedido?.moneda ?? null,
     });
   }
 
@@ -392,7 +389,6 @@ async function registrarAbonoCuentaCorriente(m: MensajeEntrante): Promise<void> 
         tiene_comprobante: true,
         zona: null,
         precio: null,
-        moneda: null,
       });
     }
 
@@ -421,9 +417,8 @@ async function manejarEleccionPedido(m: MensajeEntrante, sesion: Sesion): Promis
 
   const pedidoId = m.seleccionId.replace('pedido:', '');
   const [pedido] = await query<PedidoCandidato>(
-    `SELECT pe.id, pe.zona, pe.precio, td.moneda
+    `SELECT pe.id, pe.zona, pe.precio
        FROM pedidos pe
-       LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
       WHERE pe.id = $1 AND pe.cliente_telefono = $2`,
     [pedidoId, to],
   );
@@ -540,7 +535,6 @@ async function registrarComprobante(
       tiene_comprobante: true,
       zona: pedido?.zona ?? null,
       precio: pedido?.precio ?? null,
-      moneda: pedido?.moneda ?? null,
     });
   }
 

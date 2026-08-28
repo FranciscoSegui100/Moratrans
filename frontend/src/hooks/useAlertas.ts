@@ -25,7 +25,6 @@ export interface Alerta {
   tiene_comprobante?: boolean | null;
   zona?: string | null;
   precio?: string | null;
-  moneda?: string | null;
 }
 
 const ALERTAS_KEY = ['alertas'];

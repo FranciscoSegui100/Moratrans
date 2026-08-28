@@ -166,7 +166,7 @@ export function mensajePedirCalleNumero(departamento: string): string {
 }
 
 export type ResultadoUbicacionConDepartamento =
-  | { ok: true; coincide: true; departamento: string; tarifa: { precio: string; moneda: string } | null }
+  | { ok: true; coincide: true; departamento: string; tarifa: { precio: string } | null }
   | { ok: true; coincide: false; departamentoElegido: string; departamentoDetectado: string }
   | { ok: false };
 
@@ -207,8 +207,8 @@ export async function verificarUbicacionConDepartamentoElegido(
     return { ok: true, coincide: true, departamento: departamentoDetectado, tarifa: null };
   }
 
-  const [tarifa] = await query<{ precio: string; moneda: string }>(
-    'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+  const [tarifa] = await query<{ precio: string }>(
+    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
     [departamentoDetectado],
   );
   if (!tarifa) {

@@ -8,7 +8,6 @@ import { useToast } from '../components/Toast';
 interface Tarifa {
   departamento: string;
   precio: string;
-  moneda: string;
   activo: boolean;
   actualizado_en: string;
 }
@@ -16,10 +15,10 @@ interface Tarifa {
 export function Tarifas() {
   const { show } = useToast();
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ departamento: '', precio: '', moneda: 'ARS' });
+  const [form, setForm] = useState({ departamento: '', precio: '' });
   const [loading, setLoading] = useState(false);
   const [editando, setEditando] = useState<string | null>(null);
-  const [edit, setEdit] = useState({ precio: '', moneda: '' });
+  const [edit, setEdit] = useState({ precio: '' });
 
   const { data: tarifas = [] } = useQuery({
     queryKey: ['tarifas'],
@@ -32,7 +31,7 @@ export function Tarifas() {
     setLoading(true);
     try {
       await api.post('/api/tarifas', form);
-      setForm({ departamento: '', precio: '', moneda: form.moneda });
+      setForm({ departamento: '', precio: '' });
       cargar();
       show('success', 'Departamento agregado', form.departamento);
     } catch (err: any) {
@@ -44,14 +43,13 @@ export function Tarifas() {
 
   function empezarEdicion(t: Tarifa) {
     setEditando(t.departamento);
-    setEdit({ precio: t.precio, moneda: t.moneda });
+    setEdit({ precio: t.precio });
   }
 
   async function guardarEdicion(departamento: string) {
     try {
       await api.patch(`/api/tarifas/${encodeURIComponent(departamento)}`, {
         precio: Number(edit.precio),
-        moneda: edit.moneda,
       });
       setEditando(null);
       cargar();
@@ -85,7 +83,7 @@ export function Tarifas() {
     <div>
       <div className="page-header">
         <h2>Tarifas</h2>
-        <p>Precio y moneda por departamento — el bot siempre cotiza con estos valores</p>
+        <p>Precio por departamento (siempre en pesos argentinos) — el bot siempre cotiza con estos valores</p>
       </div>
 
       <RoleGate roles={['admin']}>
@@ -98,14 +96,9 @@ export function Tarifas() {
                 onChange={(e) => setForm({ ...form, departamento: e.target.value })} />
             </div>
             <div className="form-group">
-              <label className="form-label">Precio</label>
+              <label className="form-label">Precio (ARS)</label>
               <input className="form-input" type="number" min="0" step="0.01" placeholder="8000" value={form.precio} required
                 onChange={(e) => setForm({ ...form, precio: e.target.value })} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Moneda</label>
-              <input className="form-input" placeholder="ARS" value={form.moneda} required maxLength={10}
-                onChange={(e) => setForm({ ...form, moneda: e.target.value.toUpperCase() })} />
             </div>
             <button type="submit" className="btn btn-primary" disabled={loading}>
               {loading ? 'Guardando...' : 'Agregar departamento'}
@@ -119,8 +112,7 @@ export function Tarifas() {
           <thead>
             <tr>
               <th>Departamento</th>
-              <th>Precio</th>
-              <th>Moneda</th>
+              <th>Precio (ARS)</th>
               <th>Estado</th>
               <RoleGate roles={['admin']}><th>Acciones</th></RoleGate>
             </tr>
@@ -144,19 +136,6 @@ export function Tarifas() {
                       />
                     ) : (
                       Number(t.precio).toLocaleString('es-AR')
-                    )}
-                  </td>
-                  <td>
-                    {enEdicion ? (
-                      <input
-                        className="form-input"
-                        style={{ maxWidth: '80px' }}
-                        maxLength={10}
-                        value={edit.moneda}
-                        onChange={(e) => setEdit({ ...edit, moneda: e.target.value.toUpperCase() })}
-                      />
-                    ) : (
-                      t.moneda
                     )}
                   </td>
                   <td>
@@ -197,7 +176,7 @@ export function Tarifas() {
             })}
             {tarifas.length === 0 && (
               <tr>
-                <td colSpan={5} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={4} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No hay departamentos cargados
                 </td>
               </tr>

@@ -329,8 +329,8 @@ async function manejarMismatchDepartamento(m: MensajeEntrante, sesion: Sesion): 
     return;
   }
 
-  const [tarifa] = await query<{ precio: string; moneda: string }>(
-    'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+  const [tarifa] = await query<{ precio: string }>(
+    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
     [departamentoDetectado],
   );
   if (!tarifa) {
@@ -351,8 +351,8 @@ async function manejarUbicacionTexto(m: MensajeEntrante, sesion: Sesion): Promis
     return;
   }
 
-  const [tarifa] = await query<{ precio: string; moneda: string }>(
-    'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+  const [tarifa] = await query<{ precio: string }>(
+    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
     [departamento],
   );
   if (!tarifa) {
@@ -441,8 +441,8 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
 
-  const tarifa = await query<{ precio: string; moneda: string }>(
-    'SELECT precio, moneda FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+  const tarifa = await query<{ precio: string }>(
+    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
     [zona],
   );
   if (tarifa.length === 0) {
@@ -450,19 +450,19 @@ async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<
     await sendText(to, '🙁 No encontramos la tarifa para tu zona. Escribí *asesor* para coordinar el recambio.');
     return;
   }
-  const { precio, moneda } = tarifa[0];
+  const { precio } = tarifa[0];
 
   // Cuenta corriente aprobada: se confirma solo, sin pedir comprobante — se
   // suma directo a la deuda (ver reportes.service.ts::itemsCuentaCorriente).
   if (await tieneCuentaCorrienteAprobada(to)) {
-    return registrarRecambioCC(m, sesion, precio, moneda);
+    return registrarRecambioCC(m, sesion, precio);
   }
 
-  await mostrarResumenYConfirmarRecambio(to, sesion, precio, moneda);
+  await mostrarResumenYConfirmarRecambio(to, sesion, precio);
 }
 
 /** Resumen completo antes de pagar (mismo criterio que cotizacion.flow.ts): recién si confirma se crea el pedido y se le pasan los datos para transferir. */
-async function mostrarResumenYConfirmarRecambio(to: string, sesion: Sesion, precio: string, moneda: string): Promise<void> {
+async function mostrarResumenYConfirmarRecambio(to: string, sesion: Sesion, precio: string): Promise<void> {
   const numero = sesion.contexto.numero as string;
   const zona = sesion.contexto.zona as string;
   const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
@@ -477,7 +477,7 @@ async function mostrarResumenYConfirmarRecambio(to: string, sesion: Sesion, prec
       `Contenedor: *${numero}*\n` +
       (resumenDireccion ? `Dirección: ${resumenDireccion}\n` : '') +
       `Zona: *${zona}*\n` +
-      `Precio del flete: *${moneda} ${Number(precio).toLocaleString('es-AR')}*\n` +
+      `Precio del flete: *ARS ${Number(precio).toLocaleString('es-AR')}*\n` +
       (horarioPreferido ? `Franja horaria: ${horarioPreferido}\n` : '') +
       `\n¿Confirmás el recambio?`,
     [
@@ -485,7 +485,7 @@ async function mostrarResumenYConfirmarRecambio(to: string, sesion: Sesion, prec
       { id: 'resumen_recambio_no', title: '↩️ Cancelar' },
     ],
   );
-  await setSesion({ ...sesion, paso: 'confirmar_resumen_recambio', contexto: { ...sesion.contexto, precio, moneda } });
+  await setSesion({ ...sesion, paso: 'confirmar_resumen_recambio', contexto: { ...sesion.contexto, precio } });
 }
 
 async function manejarConfirmacionResumenRecambio(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -531,7 +531,6 @@ async function finalizarRecambioPago(m: MensajeEntrante, sesion: Sesion): Promis
   const direccionVerificada = (sesion.contexto.direccionVerificada as boolean | undefined) ?? true;
   const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
   const precio = sesion.contexto.precio as string;
-  const moneda = sesion.contexto.moneda as string;
 
   await query(
     `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, tipo, contenedor_recambio_numero)
@@ -560,7 +559,7 @@ async function finalizarRecambioPago(m: MensajeEntrante, sesion: Sesion): Promis
  * reportes.service.ts). Sin chofer asignado todavía — se arma después desde
  * la pestaña Rutas, como cualquier viaje nuevo.
  */
-async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: string, moneda: string): Promise<void> {
+async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: string): Promise<void> {
   const to = m.from;
   const numero = sesion.contexto.numero as string;
   const zona = sesion.contexto.zona as string;
@@ -598,7 +597,7 @@ async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: s
   await clearSesion(to);
   await sendText(
     to,
-    `✅ ¡Recambio confirmado! Costo: *${moneda} ${Number(precio).toLocaleString('es-AR')}* — se agregó a tu cuenta corriente.\n\n` +
+    `✅ ¡Recambio confirmado! Costo: *ARS ${Number(precio).toLocaleString('es-AR')}* — se agregó a tu cuenta corriente.\n\n` +
       'En breve te asignamos chofer para coordinarlo.\n\n' +
       '¡Gracias por confiar en *MoraTrans*! 🚚\n\n' +
       '_Si en un rato no tenés novedades, escribí *asesor*._',

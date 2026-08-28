@@ -16,7 +16,6 @@ interface Comprobante {
   titular_transferencia: string | null;
   zona: string | null;
   precio: string | null;
-  moneda: string | null;
 }
 
 export function Comprobantes() {
@@ -61,9 +60,9 @@ export function Comprobantes() {
                     <div className="pago-detail">
                       {c.tipo === 'alargue_retiro' ? '⏳ Alargue de retiro' : (c.zona ?? 'Sin zona')} ·{' '}
                       {c.precio
-                        ? `${c.moneda ?? ''} ${Number(c.precio).toLocaleString('es-AR')}`.trim()
+                        ? `ARS ${Number(c.precio).toLocaleString('es-AR')}`
                         : c.monto
-                        ? `${c.moneda ?? ''} ${Number(c.monto).toLocaleString('es-AR')}`.trim()
+                        ? `ARS ${Number(c.monto).toLocaleString('es-AR')}`
                         : 'Sin monto'}{' '}
                       · {formatearFechaHora(c.creado_en)}
                     </div>

@@ -34,11 +34,10 @@ pagosRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query(
     `SELECT p.id, p.cliente_telefono, p.monto, p.url_comprobante, p.estado, p.creado_en,
             p.titular_transferencia, p.es_cuenta_corriente, p.tipo, p.contenedor_numero,
-            pe.zona, pe.precio, td.moneda,
+            pe.zona, pe.precio,
             (SELECT COUNT(*) FROM pagos_adjuntos pa WHERE pa.pago_id = p.id)::int AS adjuntos_count
        FROM pagos p
        LEFT JOIN pedidos pe ON pe.id = p.pedido_id
-       LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
       WHERE p.estado = $1 ORDER BY p.creado_en DESC`,
     [estado],
   );
@@ -397,7 +396,6 @@ pagosRouter.post('/:id/reenviar-aviso', requireRol('admin', 'operador', 'finanza
         cliente_nombre: string | null;
         zona: string;
         precio: string;
-        moneda: string | null;
         destino_direccion: string | null;
         horario_preferido: string | null;
         es_cuenta_corriente: boolean;
@@ -406,12 +404,11 @@ pagosRouter.post('/:id/reenviar-aviso', requireRol('admin', 'operador', 'finanza
         fecha_retiro_estimada: string | null;
         titular_transferencia: string | null;
       }>(
-        `SELECT p.cliente_telefono, COALESCE(c.nombre, pe.cliente_nombre) AS cliente_nombre, pe.zona, pe.precio, td.moneda,
+        `SELECT p.cliente_telefono, COALESCE(c.nombre, pe.cliente_nombre) AS cliente_nombre, pe.zona, pe.precio,
                 pe.destino_direccion, pe.horario_preferido, p.es_cuenta_corriente,
                 pe.fecha_entrega, pe.numero_pedido, pe.fecha_retiro_estimada, p.titular_transferencia
            FROM pagos p
            LEFT JOIN pedidos pe ON pe.id = p.pedido_id
-           LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
            LEFT JOIN clientes c ON c.telefono = p.cliente_telefono
           WHERE p.id = $1`,
         [pagoId],
@@ -428,7 +425,6 @@ pagosRouter.post('/:id/reenviar-aviso', requireRol('admin', 'operador', 'finanza
         fechaRetiroEstimada: info.fecha_retiro_estimada ? formatearFechaLarga(info.fecha_retiro_estimada) : null,
         horarioPreferido: info.horario_preferido,
         precio: info.precio,
-        moneda: info.moneda ?? undefined,
         clienteNombre: info.cliente_nombre,
         clienteTelefono: info.cliente_telefono,
         medioPago: info.es_cuenta_corriente ? 'cuenta_corriente' : 'transferencia',
@@ -495,7 +491,6 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       cliente_nombre: string | null;
       zona: string;
       precio: string;
-      moneda: string | null;
       destino_lat: string | null;
       destino_lng: string | null;
       destino_direccion: string | null;
@@ -508,13 +503,12 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       fecha_retiro_estimada: string | null;
       titular_transferencia: string | null;
     }>(
-      `SELECT p.cliente_telefono, COALESCE(c.nombre, pe.cliente_nombre) AS cliente_nombre, pe.zona, pe.precio, td.moneda,
+      `SELECT p.cliente_telefono, COALESCE(c.nombre, pe.cliente_nombre) AS cliente_nombre, pe.zona, pe.precio,
               pe.destino_lat, pe.destino_lng, pe.destino_direccion, pe.horario_preferido, p.es_cuenta_corriente,
               pe.tipo AS pedido_tipo, pe.contenedor_recambio_numero, pe.fecha_entrega,
               pe.numero_pedido, pe.fecha_retiro_estimada, p.titular_transferencia
          FROM pagos p
          LEFT JOIN pedidos pe ON pe.id = p.pedido_id
-         LEFT JOIN tarifas_departamento td ON td.departamento = pe.zona
          LEFT JOIN clientes c ON c.telefono = p.cliente_telefono
         WHERE p.id = $1`,
       [pagoId],
@@ -628,7 +622,6 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       fechaRetiroEstimada: info?.fecha_retiro_estimada ? formatearFechaLarga(info.fecha_retiro_estimada) : null,
       horarioPreferido: info?.horario_preferido ?? null,
       precio: info?.precio,
-      moneda: info?.moneda ?? undefined,
       clienteNombre: info?.cliente_nombre ?? null,
       clienteTelefono: info.cliente_telefono,
       medioPago: info?.es_cuenta_corriente ? 'cuenta_corriente' : 'transferencia',
