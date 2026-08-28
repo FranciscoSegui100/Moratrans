@@ -319,7 +319,7 @@ export function ClienteDetalle() {
                         <td style={{ whiteSpace: 'nowrap' }}>{formatearFecha(m.fecha)}</td>
                         <td>{m.signo > 0 ? m.texto : <span style={{ color: 'var(--color-success, #16a34a)' }}>{m.texto}</span>}</td>
                         <td>
-                          {editandoAbono === m.id ? (
+                          {m.id !== null && editandoAbono === m.id ? (
                             <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                               <input
                                 type="number"
