@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Pencil, KeyRound, Trash2 } from 'lucide-react';
+import { Check, Pencil, KeyRound, Trash2, ShieldAlert } from 'lucide-react';
 import { api } from '../api/client';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, tieneRol } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 
 interface Usuario {
@@ -30,10 +30,12 @@ export function Usuarios() {
   const [loading, setLoading] = useState(false);
   const [editando, setEditando] = useState<string | null>(null);
   const [edit, setEdit] = useState<{ nombre: string; rol: Usuario['rol'] }>({ nombre: '', rol: 'lectura' });
+  const esAdmin = tieneRol(yo, 'admin');
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ['usuarios'],
     queryFn: () => api.get<Usuario[]>('/api/usuarios').then((r) => r.data),
+    enabled: esAdmin,
   });
   const cargar = () => queryClient.invalidateQueries({ queryKey: ['usuarios'] });
 
@@ -104,6 +106,28 @@ export function Usuarios() {
     } catch (err: any) {
       show('error', 'No se pudo actualizar la contraseña', err.response?.data?.error);
     }
+  }
+
+  // La barra lateral ya oculta este link para quien no es admin (a diferencia
+  // de Tarifas/Rutas, que sí dejan ver la pantalla en modo lectura), así que
+  // entrar acá directo por URL sin serlo tiene que mostrar lo mismo que
+  // insinúa el menú: esta sección no es para vos. El backend igual rechaza
+  // todo con 403, pero sin este corte se veía el formulario de alta y los
+  // botones de gestión funcionando "en falso" para roles que no pueden usarlos.
+  if (!esAdmin) {
+    return (
+      <div>
+        <div className="page-header">
+          <h2>Usuarios</h2>
+          <p>Altas y permisos de acceso al panel</p>
+        </div>
+        <div className="empty-state">
+          <div className="empty-state-icon"><ShieldAlert strokeWidth={1.5} /></div>
+          <div className="empty-state-title">Acceso restringido</div>
+          <div className="empty-state-text">Esta sección es solo para administradores.</div>
+        </div>
+      </div>
+    );
   }
 
   return (
