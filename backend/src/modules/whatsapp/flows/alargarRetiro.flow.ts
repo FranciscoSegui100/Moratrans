@@ -239,13 +239,28 @@ async function registrarAlargueCC(to: string, sesion: Sesion): Promise<void> {
     [numero, DIAS_ALARGUE],
   );
 
-  await query(
+  const [pago] = await query<{ id: string }>(
     `INSERT INTO pagos (cliente_telefono, tipo, contenedor_numero, monto, estado, es_cuenta_corriente)
-     VALUES ($1, 'alargue_retiro', $2, $3, 'validado', TRUE)`,
+     VALUES ($1, 'alargue_retiro', $2, $3, 'validado', TRUE)
+     RETURNING id`,
     [to, numero, costo],
   );
   emitRecursoActualizado('pagos');
   emitRecursoActualizado('contenedores');
+
+  // A diferencia del alargue normal, acá no hay nada que un operador tenga
+  // que validar (ya se aplicó solo) — pero igual se avisa: es plata que se
+  // movió en una cuenta corriente sin que nadie la mirara, y el operador
+  // tiene que enterarse aunque sea para revisarlo después (ver 'Resolver' en
+  // Alertas.tsx, que ya sabe mostrar este tipo sin botones de Aprobar/Rechazar).
+  const [alerta] = await query(
+    `INSERT INTO alertas (tipo, referencia_id, mensaje)
+     VALUES ('alargue_solicitado', $1, $2)
+     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+    [pago.id, `${to} (cuenta corriente) extendió ${DIAS_ALARGUE} días el contenedor ${numero} — ya se aplicó solo, se sumó ${moneda} ${costo.toLocaleString('es-AR')} a su cuenta.`],
+  );
+  if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
 
   await clearSesion(to);
   await sendText(
