@@ -15,6 +15,7 @@ import {
   LogOut,
   MessageCircle,
   Receipt,
+  TrendingUp,
 } from 'lucide-react';
 import { useAuth, tieneRol, Rol } from '../context/AuthContext';
 import { api } from '../api/client';
@@ -37,6 +38,7 @@ const nav: { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] }
   { to: '/clientes', label: 'Clientes', icon: Users },
   { to: '/contenedores', label: 'Contenedores', icon: Package },
   { to: '/tarifas', label: 'Tarifas', icon: DollarSign },
+  { to: '/finanzas', label: 'Finanzas', icon: TrendingUp, roles: ['admin', 'finanzas'] },
   { to: '/usuarios', label: 'Usuarios', icon: ShieldCheck, roles: ['admin'] },
 ];
 

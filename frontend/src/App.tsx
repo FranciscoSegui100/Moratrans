@@ -20,6 +20,7 @@ import { Rutas } from './pages/Rutas';
 import { Contenedores } from './pages/Contenedores';
 import { Tarifas } from './pages/Tarifas';
 import { Usuarios } from './pages/Usuarios';
+import { Finanzas } from './pages/Finanzas';
 
 // Datos ya vistos se muestran al instante desde caché al volver a una
 // pestaña (sin esperar el fetch), y se revalidan solos en segundo plano.
@@ -64,6 +65,7 @@ export default function App() {
                         <Route path="/contenedores"  element={<Contenedores />} />
                         <Route path="/tarifas"       element={<Tarifas />} />
                         <Route path="/usuarios"      element={<Usuarios />} />
+                        <Route path="/finanzas"      element={<Finanzas />} />
                       </Routes>
                     </Layout>
                   </ProtectedRoute>

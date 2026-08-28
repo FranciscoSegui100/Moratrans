@@ -24,6 +24,7 @@ import { ticketsRouter } from './modules/tickets/tickets.routes';
 import { viajesRouter } from './modules/viajes/viajes.routes';
 import { rutasRouter } from './modules/rutas/rutas.routes';
 import { reportesRouter } from './modules/reportes/reportes.routes';
+import { finanzasRouter } from './modules/finanzas/finanzas.routes';
 import { pedidosRouter } from './modules/pedidos/pedidos.routes';
 import { tarifasRouter } from './modules/tarifas/tarifas.routes';
 import { ubicacionesRouter } from './modules/ubicaciones/ubicaciones.routes';
@@ -128,6 +129,7 @@ export function crearApp() {
   app.use('/api/auditoria', auditoriaRouter);
   app.use('/api/chat', chatRouter);
   app.use('/api/reportes', reportesRouter);
+  app.use('/api/finanzas', finanzasRouter);
   app.use('/api/sync', syncRouter);
 
   // Sirve el build del panel (frontend/dist, copiado acá por `vite build` -> ../backend/public)
