@@ -114,6 +114,12 @@ const nuevoSchema = z.object({
   // retiro) — "HH:MM", independiente de horario_preferido (lo pidió el
   // cliente por WhatsApp, ver horarioPreferido.flow.ts).
   hora_estimada: z.string().optional(),
+  // Franja horaria que pidió el cliente. Normalmente la carga el bot solo
+  // (horarioPreferido.flow.ts), pero un viaje armado a mano desde el panel
+  // (ej. entrega directa por cuenta corriente, sin pasar por el bot) también
+  // puede necesitarla — mismos textos que OPCIONES_HORARIO ahí, pero es
+  // texto libre acá: no hace falta importarlos para validar.
+  horario_preferido: z.string().optional(),
 });
 
 /**

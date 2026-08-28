@@ -168,20 +168,21 @@ function etiquetaEspera(dias: number, fecha: string): string {
   return `hace ${dias} días`;
 }
 
-type GrupoDia = 'atrasados' | 'hoy' | 'proximos';
+/** 'atrasado' incluye dias === 1 ("hace 1 día"): todavía no es 2+, pero tampoco es hoy. */
+type CategoriaDia = 'atrasado' | 'hoy' | 'proximo';
 
-function grupoDia(fecha: string): GrupoDia {
-  const dias = diasEspera(fecha);
-  if (dias > DIAS_ALERTA_COLA) return 'atrasados';
-  if (dias <= 0) return dias === 0 ? 'hoy' : 'proximos';
-  return 'atrasados'; // dias === 1 ("hace 1 día"): todavía no es 2+, pero tampoco es hoy — va con atrasados para no perderlo de vista en su propio grupo "Hoy".
+function categoriaDia(dias: number): CategoriaDia {
+  if (dias > 0) return 'atrasado';
+  return dias === 0 ? 'hoy' : 'proximo';
 }
 
-const ETIQUETA_GRUPO_DIA: Record<GrupoDia, string> = {
-  atrasados: 'Atrasados',
-  hoy: 'Hoy',
-  proximos: 'Próximos',
-};
+/** Título de la sección de un día puntual de la bolsa (una sección por fecha, no por balde). */
+function tituloSeccionDia(fecha: string): string {
+  const dias = diasEspera(fecha);
+  if (dias === 0) return 'Hoy';
+  const etiqueta = etiquetaEspera(dias, fecha);
+  return dias > 0 ? `Atrasado — ${etiqueta}` : `Próximo — ${etiqueta}`;
+}
 
 // ── Detalle de una ruta (paradas, confirmación, vaciados) ─────────────────────
 
@@ -744,26 +745,28 @@ export function Rutas() {
   const ruteados = agruparPendientes(viajesDelDia.filter((v) => v.ruta_id)).length;
 
   // Agrupamiento en dos niveles de los pedidos sin rutear: primero por día
-  // (Atrasados / Hoy / Próximos, para no confundir pedidos de hoy con los de
-  // mañana al armar rutas) y dentro de cada día, por zona — igual que antes.
-  // La cola no filtra por fecha a propósito, para no perder pedidos viejos
-  // de vista, así que hay que ordenar para no perderlos.
+  // puntual (una sección por cada fecha distinta, no por balde "Atrasados/
+  // Próximos" — así no se mezclan pedidos de días distintos en una sola
+  // sección larga) y dentro de cada día, por zona. La cola no filtra por
+  // fecha a propósito, para no perder pedidos viejos de vista, así que hay
+  // que ordenar para no perderlos.
   const bolsaAgrupada = (() => {
     const ordenadas = [...visitasPendientes].sort((a, b) => a.fecha.localeCompare(b.fecha));
-    const porGrupo = new Map<GrupoDia, Map<string, VisitaPendiente[]>>();
+    const porFecha = new Map<string, Map<string, VisitaPendiente[]>>();
     for (const v of ordenadas) {
-      const grupo = grupoDia(v.fecha);
       const zona = v.zona ?? (v.destino_direccion ? v.destino_direccion.split(',')[0] : 'Sin zona');
-      const porZona = porGrupo.get(grupo) ?? new Map<string, VisitaPendiente[]>();
+      const porZona = porFecha.get(v.fecha) ?? new Map<string, VisitaPendiente[]>();
       const lista = porZona.get(zona) ?? [];
       lista.push(v);
       porZona.set(zona, lista);
-      porGrupo.set(grupo, porZona);
+      porFecha.set(v.fecha, porZona);
     }
-    const orden: GrupoDia[] = ['atrasados', 'hoy', 'proximos'];
-    return orden
-      .filter((g) => porGrupo.has(g))
-      .map((grupo) => ({ grupo, zonas: [...porGrupo.get(grupo)!.entries()] }));
+    return [...porFecha.entries()].map(([fecha, zonasMap]) => ({
+      fecha,
+      categoria: categoriaDia(diasEspera(fecha)),
+      titulo: tituloSeccionDia(fecha),
+      zonas: [...zonasMap.entries()],
+    }));
   })();
 
   // Selecciona la primera ruta del día automáticamente cuando cambia la fecha o cargan los datos.
@@ -934,21 +937,21 @@ export function Rutas() {
             <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes en la bolsa.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: 'calc(100vh - 240px)', overflowY: 'auto', paddingRight: '4px' }}>
-              {bolsaAgrupada.map(({ grupo, zonas }) => (
-                <div key={grupo} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {bolsaAgrupada.map(({ fecha, categoria, titulo, zonas }) => (
+                <div key={fecha} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <div style={{
                     display: 'flex', alignItems: 'center', gap: '6px',
                     fontSize: '0.78rem', fontWeight: 700,
-                    color: grupo === 'atrasados' ? 'var(--danger)' : grupo === 'proximos' ? 'var(--text-muted)' : 'var(--text-primary)',
+                    color: categoria === 'atrasado' ? 'var(--danger)' : categoria === 'proximo' ? 'var(--text-muted)' : 'var(--text-primary)',
                     padding: '4px 8px', borderRadius: 'var(--radius-sm)',
-                    background: grupo === 'atrasados' ? 'var(--warning-bg)' : 'transparent',
+                    background: categoria === 'atrasado' ? 'var(--warning-bg)' : 'transparent',
                   }}>
-                    {grupo === 'atrasados' && <AlertTriangle size={13} strokeWidth={2} />}
-                    {ETIQUETA_GRUPO_DIA[grupo]}
+                    {categoria === 'atrasado' && <AlertTriangle size={13} strokeWidth={2} />}
+                    {titulo}
                   </div>
 
                   {zonas.map(([zona, items]) => (
-                    <div key={zona} style={{ display: 'flex', flexDirection: 'column', gap: '8px', opacity: grupo === 'proximos' ? 0.75 : 1 }}>
+                    <div key={zona} style={{ display: 'flex', flexDirection: 'column', gap: '8px', opacity: categoria === 'proximo' ? 0.75 : 1 }}>
                       <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', background: 'var(--bg-surface)', padding: '4px 8px', borderRadius: 'var(--radius-sm)' }}>
                         📍 {zona} ({items.length})
                       </div>
