@@ -64,7 +64,7 @@ const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
 
 const formInicial = {
   tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', contenedor_numero_entrega: '',
-  chofer_id: '', destino_direccion: '', remito: '', importe: '', ubicacion_id: '',
+  destino_direccion: '', importe: '', ubicacion_id: '',
 };
 
 type PestanaViajes = 'activos' | 'historial';
@@ -89,36 +89,15 @@ export function Viajes() {
     queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
   });
 
-  // Retiro: se va a buscar un contenedor que ya está entregado en lo del
-  // cliente (venció el alquiler). Entrega: se puede elegir cualquier
-  // contenedor que no tenga ya otra entrega reservada — si está ocupado, el
-  // combo lo deja elegir igual pero avisando desde cuándo vuelve, y el
-  // input de fecha se bloquea hasta ese día (ver minFecha más abajo).
-  const entregasActivas = new Set(
-    viajes.filter((v) => v.tipo === 'entrega' && (v.estado === 'programado' || v.estado === 'en_curso')).map((v) => v.contenedor_numero),
-  );
-
-  // Recambio: el contenedor principal es el LLENO que se retira, mismo
-  // criterio que un retiro suelto.
-  const contenedoresElegibles = form.tipo === 'retiro' || form.tipo === 'recambio'
-    ? contenedores.filter((c) => c.estado === 'entregado')
-    : contenedores.filter((c) => !entregasActivas.has(c.numero));
+  // El contenedor y el chofer de una Entrega o un Retiro ya no se piden al
+  // programar el viaje: se asignan después, cuando entra a la bolsa de ruta
+  // (o desde la columna "Contenedor"/"Chofer" de esta misma tabla), porque
+  // hasta ese momento no se sabe cuál corresponde (ver DetalleRuta en
+  // Rutas.tsx). El Recambio es la excepción: el contenedor lleno que se va a
+  // retirar SÍ se sabe de entrada (es el que ya tiene ese cliente) y el
+  // backend lo exige al crear (viajes.routes.ts, "Un recambio necesita...").
+  const contenedoresEntregados = contenedores.filter((c) => c.estado === 'entregado');
   const vaciosDisponibles = contenedores.filter((c) => c.estado === 'disponible');
-
-  const contenedorSeleccionado = contenedores.find((c) => c.numero === form.contenedor_numero);
-  // Si el contenedor elegido para una entrega está ocupado, no se puede
-  // programar para antes de que vuelva — este es el "calendario bloqueado
-  // hasta el día de vuelta".
-  const minFecha = form.tipo === 'entrega' && contenedorSeleccionado && contenedorSeleccionado.estado !== 'disponible' && contenedorSeleccionado.vence_en
-    ? new Date(contenedorSeleccionado.vence_en).toISOString().slice(0, 10)
-    : undefined;
-
-  function etiquetaContenedor(c: Contenedor): { texto: string; disabled: boolean } {
-    if (form.tipo === 'retiro' || form.tipo === 'recambio' || c.estado === 'disponible') return { texto: c.numero, disabled: false };
-    if (!c.vence_en) return { texto: `${c.numero} — ${c.estado}, sin fecha de vuelta cargada`, disabled: true };
-    const fecha = formatearFecha(c.vence_en);
-    return { texto: `${c.numero} — vuelve el ${fecha}`, disabled: false };
-  }
 
   const { data: zonas = [] } = useQuery({
     queryKey: ['tarifas', 'activas'],
@@ -146,18 +125,16 @@ export function Viajes() {
     try {
       await api.post('/api/viajes', {
         ...form,
-        chofer_id: form.chofer_id || undefined,
-        contenedor_numero: form.contenedor_numero || undefined,
+        contenedor_numero: form.tipo === 'recambio' ? (form.contenedor_numero || undefined) : undefined,
         contenedor_numero_entrega: form.tipo === 'recambio' ? (form.contenedor_numero_entrega || undefined) : undefined,
         zona: form.zona || undefined,
         destino_direccion: form.destino_direccion || undefined,
-        remito: form.remito || undefined,
         importe: form.importe || undefined,
         ubicacion_id: form.ubicacion_id || undefined,
       });
       setForm(formInicial);
       cargar();
-      show('success', form.tipo === 'recambio' ? 'Recambio programado correctamente' : 'Viaje programado correctamente', form.chofer_id ? 'Se avisó al chofer por WhatsApp' : undefined);
+      show('success', form.tipo === 'recambio' ? 'Recambio programado correctamente' : 'Viaje programado correctamente');
     } catch (err: any) {
       show('error', 'Error al programar', err.response?.data?.error || 'Error desconocido');
     } finally {
@@ -274,13 +251,9 @@ export function Viajes() {
                 type="date"
                 className="form-input"
                 value={form.fecha}
-                min={minFecha}
                 onChange={(e) => setForm({ ...form, fecha: e.target.value })}
                 required
               />
-              {minFecha && (
-                <small className="text-muted">Contenedor ocupado: recién se puede elegir desde el {formatearFecha(minFecha)}</small>
-              )}
             </div>
             <div className="form-group">
               <label className="form-label">Zona</label>
@@ -294,38 +267,29 @@ export function Viajes() {
                 {zonas.map((z) => <option key={z.departamento} value={z.departamento}>{z.departamento}</option>)}
               </select>
             </div>
-            <div className="form-group">
-              <label className="form-label">{form.tipo === 'recambio' ? 'Contenedor lleno (a retirar)' : 'Contenedor'}</label>
-              <select
-                className="form-select"
-                value={form.contenedor_numero}
-                onChange={(e) => {
-                  const numero = e.target.value;
-                  const c = contenedores.find((x) => x.numero === numero);
-                  const nuevoMin = form.tipo === 'entrega' && c && c.estado !== 'disponible' && c.vence_en
-                    ? new Date(c.vence_en).toISOString().slice(0, 10)
-                    : undefined;
-                  // Recambio: al elegir el lleno, se completan zona/dirección/
-                  // importe con los de SU entrega activa (el viaje que lo tiene
-                  // hoy con ese cliente) — evita tipearlos de nuevo a mano.
-                  const activa = form.tipo === 'recambio'
-                    ? viajes.find((v) => v.contenedor_numero === numero && v.tipo === 'entrega' && (v.estado === 'programado' || v.estado === 'en_curso'))
-                    : undefined;
-                  const datosAuto = activa
-                    ? { zona: activa.zona ?? '', destino_direccion: activa.destino_direccion ?? '', importe: activa.importe ?? '' }
-                    : {};
-                  setForm((f) => ({ ...f, contenedor_numero: numero, ...datosAuto, fecha: nuevoMin && f.fecha < nuevoMin ? nuevoMin : f.fecha }));
-                }}
-              >
-                <option value="">
-                  {form.tipo === 'retiro' || form.tipo === 'recambio' ? '— Elegir contenedor entregado —' : '— Elegir contenedor —'}
-                </option>
-                {contenedoresElegibles.map((c) => {
-                  const { texto, disabled } = etiquetaContenedor(c);
-                  return <option key={c.numero} value={c.numero} disabled={disabled}>{texto}</option>;
-                })}
-              </select>
-            </div>
+            {form.tipo === 'recambio' && (
+              <div className="form-group">
+                <label className="form-label">Contenedor lleno (a retirar)</label>
+                <select
+                  className="form-select"
+                  value={form.contenedor_numero}
+                  onChange={(e) => {
+                    const numero = e.target.value;
+                    // Al elegir el lleno, se completan zona/dirección/importe
+                    // con los de SU entrega activa (el viaje que lo tiene hoy
+                    // con ese cliente) — evita tipearlos de nuevo a mano.
+                    const activa = viajes.find((v) => v.contenedor_numero === numero && v.tipo === 'entrega' && (v.estado === 'programado' || v.estado === 'en_curso'));
+                    const datosAuto = activa
+                      ? { zona: activa.zona ?? '', destino_direccion: activa.destino_direccion ?? '', importe: activa.importe ?? '' }
+                      : {};
+                    setForm((f) => ({ ...f, contenedor_numero: numero, ...datosAuto }));
+                  }}
+                >
+                  <option value="">— Elegir contenedor entregado —</option>
+                  {contenedoresEntregados.map((c) => <option key={c.numero} value={c.numero}>{c.numero}</option>)}
+                </select>
+              </div>
+            )}
             {form.tipo === 'recambio' && (
               <div className="form-group">
                 <label className="form-label">Contenedor vacío (a entregar)</label>
@@ -340,13 +304,6 @@ export function Viajes() {
               </div>
             )}
             <div className="form-group">
-              <label className="form-label">Chofer</label>
-              <select className="form-select" value={form.chofer_id} onChange={(e) => setForm({ ...form, chofer_id: e.target.value })}>
-                <option value="">— Sin asignar —</option>
-                {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
               <label className="form-label">Dirección de destino</label>
               <input
                 className="form-input"
@@ -354,15 +311,6 @@ export function Viajes() {
                 value={form.destino_direccion}
                 required={form.tipo === 'recambio'}
                 onChange={(e) => setForm({ ...form, destino_direccion: e.target.value })}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Nº remito</label>
-              <input
-                className="form-input"
-                placeholder="Ej. 11938"
-                value={form.remito}
-                onChange={(e) => setForm({ ...form, remito: e.target.value })}
               />
             </div>
             <div className="form-group">
