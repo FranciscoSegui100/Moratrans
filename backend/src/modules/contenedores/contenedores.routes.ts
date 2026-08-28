@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { finalizarRetiro } from '../../services/retiro.service';
+import { emitRecursoActualizado } from '../../config/socket';
 
 export const contenedoresRouter = Router();
 contenedoresRouter.use(requireAuth);
@@ -39,19 +40,27 @@ contenedoresRouter.get('/', async (req: Request, res: Response) => {
               WHEN c.actualizado_por = 'validacion_pago' THEN 'Sistema (validación de pago)'
               ELSE c.actualizado_por
             END AS actualizado_por,
-            va.tipo AS viaje_tipo, vch.nombre AS chofer_asignado
+            va.tipo AS viaje_tipo, vch.nombre AS chofer_asignado,
+            -- Cliente/dirección de la visita activa (reservado/entregado/
+            -- retirado): contenedores.cliente_id nunca se llega a completar
+            -- en ningún flujo (queda siempre NULL salvo cuando se limpia a
+            -- mano), así que el dato real hay que sacarlo del viaje vigente.
+            va.cliente_telefono, va.destino_direccion,
+            COALESCE(cl.nombre, va.cliente_telefono) AS cliente_nombre
        FROM contenedores c
        LEFT JOIN choferes ch ON c.actualizado_por LIKE 'chofer:%' AND ch.id::text = substring(c.actualizado_por FROM 8)
        LEFT JOIN usuarios u  ON c.actualizado_por LIKE 'operador:%' AND u.id::text = substring(c.actualizado_por FROM 10)
        -- Viaje activo (entrega o retiro) que tiene hoy asignado este contenedor,
-       -- para que el operador vea de un vistazo si quedó "huérfano" sin chofer.
+       -- para que el operador vea de un vistazo si quedó "huérfano" sin chofer,
+       -- y de quién/adónde es la entrega en curso.
        LEFT JOIN LATERAL (
-         SELECT v.tipo, v.chofer_id
+         SELECT v.tipo, v.chofer_id, v.cliente_telefono, v.destino_direccion
            FROM viajes v
           WHERE v.contenedor_numero = c.numero AND v.estado IN ('programado', 'en_curso')
           ORDER BY v.creado_en DESC LIMIT 1
        ) va ON true
        LEFT JOIN choferes vch ON vch.id = va.chofer_id
+       LEFT JOIN clientes cl ON cl.telefono = va.cliente_telefono
       ORDER BY c.actualizado_en DESC`,
   );
   res.json(rows);
@@ -166,5 +175,94 @@ contenedoresRouter.post(
       return res.status(status).json({ error: resultado.error });
     }
     res.json(resultado);
+  },
+);
+
+/**
+ * PATCH /api/contenedores/:numero — corregir el número (ej. error de tipeo
+ * al darlo de alta). Es un UPDATE directo de la PK: las FK que apuntan acá
+ * (historial_contenedores, pedidos, pagos, tickets, viajes) tienen
+ * ON UPDATE CASCADE desde la migración 0040, así que todo lo que ya
+ * referenciaba el número viejo queda consistente solo, sin importar si el
+ * contenedor ya tuvo movimientos o no.
+ */
+contenedoresRouter.patch('/:numero', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const parsed = nuevoSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
+  const numeroNuevo = parsed.data.numero.trim().toUpperCase();
+  try {
+    const [row] = await query(
+      `UPDATE contenedores SET numero = $1 WHERE numero = $2 RETURNING *`,
+      [numeroNuevo, req.params.numero],
+    );
+    if (!row) return res.status(404).json({ error: 'Contenedor inexistente' });
+    emitRecursoActualizado('contenedores');
+    res.json(row);
+  } catch (e: any) {
+    if (e.code === '23505') return res.status(409).json({ error: 'Ya existe un contenedor con ese número' });
+    console.error('Error al renombrar contenedor:', e);
+    res.status(500).json({ error: 'Error interno del servidor.' });
+  }
+});
+
+/**
+ * DELETE /api/contenedores/:numero — borra un contenedor dado de alta por
+ * error. Solo se permite si nunca tuvo un movimiento real (ningún viaje,
+ * pago, ticket o pedido lo referenció jamás) — si lo hubo, borrarlo se
+ * llevaría puesto ese historial de negocio (historial_contenedores cascadea
+ * al borrar). Un contenedor que sí se usó y ya no sirve se saca de
+ * circulación con el estado 'mantenimiento', no borrándolo.
+ */
+contenedoresRouter.delete('/:numero', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const numero = req.params.numero;
+  const [usado] = await query<{ existe: boolean }>(
+    `SELECT
+       EXISTS(SELECT 1 FROM viajes WHERE contenedor_numero = $1) OR
+       EXISTS(SELECT 1 FROM pagos WHERE contenedor_numero = $1) OR
+       EXISTS(SELECT 1 FROM tickets WHERE contenedor_numero = $1) OR
+       EXISTS(SELECT 1 FROM pedidos WHERE contenedor_recambio_numero = $1)
+       AS existe`,
+    [numero],
+  );
+  if (usado?.existe) {
+    return res.status(409).json({ error: 'Este contenedor ya tiene movimientos registrados — no se puede eliminar. Si ya no sirve, marcalo en mantenimiento.' });
+  }
+  const [row] = await query('DELETE FROM contenedores WHERE numero = $1 RETURNING numero', [numero]);
+  if (!row) return res.status(404).json({ error: 'Contenedor inexistente' });
+  emitRecursoActualizado('contenedores');
+  res.json({ ok: true });
+});
+
+const estadoSchema = z.object({ estado: z.enum(['mantenimiento', 'disponible']) });
+
+/**
+ * PATCH /api/contenedores/:numero/estado — sacar un contenedor de servicio
+ * o devolverlo (solo admin/operador). El trigger fn_validar_transicion_contenedor
+ * ya sabe que 'mantenimiento' solo se puede pisar desde 'disponible'/'retirado',
+ * y que desde 'mantenimiento' solo se vuelve a 'disponible' — acá no se
+ * duplica esa matriz, si la transición no es válida el trigger la rechaza
+ * y se traduce a un 409 legible. Un contenedor 'reservado'/'entregado' (en
+ * medio de un ciclo de alquiler) no se puede pasar a mantenimiento sin
+ * primero cerrar ese ciclo — evita dejar un viaje activo "huérfano".
+ */
+contenedoresRouter.patch(
+  '/:numero/estado',
+  requireRol('admin', 'operador'),
+  async (req: Request, res: Response) => {
+    const parsed = estadoSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Estado inválido' });
+    try {
+      const [row] = await query(
+        `UPDATE contenedores SET estado = $1, actualizado_por = $2 WHERE numero = $3 RETURNING *`,
+        [parsed.data.estado, `operador:${req.user!.id}`, req.params.numero],
+      );
+      if (!row) return res.status(404).json({ error: 'Contenedor inexistente' });
+      emitRecursoActualizado('contenedores');
+      res.json(row);
+    } catch (e: any) {
+      if (e.code === '23514') return res.status(409).json({ error: e.message });
+      console.error('Error al cambiar estado del contenedor:', e);
+      res.status(500).json({ error: 'Error interno del servidor.' });
+    }
   },
 );

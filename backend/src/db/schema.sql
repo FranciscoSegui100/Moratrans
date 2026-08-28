@@ -191,7 +191,7 @@ CREATE INDEX idx_contenedores_vence  ON contenedores(vence_en);
 
 CREATE TABLE historial_contenedores (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  numero_contenedor TEXT NOT NULL REFERENCES contenedores(numero) ON DELETE CASCADE,
+  numero_contenedor TEXT NOT NULL REFERENCES contenedores(numero) ON DELETE CASCADE ON UPDATE CASCADE,
   estado            estado_contenedor NOT NULL,
   chofer_id         UUID REFERENCES choferes(id) ON DELETE SET NULL,
   nota              TEXT,
@@ -229,7 +229,7 @@ CREATE TABLE pedidos (
   tipo             TEXT NOT NULL DEFAULT 'entrega' CHECK (tipo IN ('entrega', 'recambio')),
   -- Solo si tipo = 'recambio': el contenedor lleno que ya se sabe que hay que
   -- retirar (viene de contenedoresDelCliente, no se le vuelve a preguntar).
-  contenedor_recambio_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
+  contenedor_recambio_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL ON UPDATE CASCADE,
   -- false cuando la dirección se escribió a mano (calle y número, sin
   -- buscarla en el mapa) en vez de venir de un pin o link de Maps — señala
   -- que una persona la tiene que confirmar con el cliente antes de despachar
@@ -256,7 +256,7 @@ CREATE TABLE pagos (
   -- 'flete' (default) o 'alargue_retiro' — ver comentario de tipo_pago arriba.
   tipo             tipo_pago   NOT NULL DEFAULT 'flete',
   -- Solo se usa cuando tipo = 'alargue_retiro': qué contenedor extender.
-  contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
+  contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL ON UPDATE CASCADE,
   estado           estado_pago NOT NULL DEFAULT 'pendiente',
   validado_por     UUID REFERENCES usuarios(id) ON DELETE SET NULL,
   motivo_rechazo   TEXT,
@@ -283,7 +283,7 @@ CREATE TABLE tickets (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   pedido_id         UUID REFERENCES pedidos(id) ON DELETE SET NULL,
   pago_id           UUID REFERENCES pagos(id)   ON DELETE SET NULL,
-  contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
+  contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL ON UPDATE CASCADE,
   estado            estado_ticket NOT NULL DEFAULT 'activo', -- activo -> cerrado
   cerrado_en        TIMESTAMPTZ,
   creado_en         TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -397,7 +397,7 @@ CREATE TABLE viajes (
   tipo              tipo_viaje   NOT NULL,
   fecha             DATE         NOT NULL,
   chofer_id         UUID REFERENCES choferes(id)   ON DELETE SET NULL,
-  contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
+  contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL ON UPDATE CASCADE,
   cliente_telefono  TEXT,
   -- Foto de la patente del chofer al momento de crear el viaje (se copia de
   -- choferes.patente): si el chofer cambia de camión después, este viaje ya
