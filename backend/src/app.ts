@@ -41,7 +41,16 @@ export function crearApp() {
   // cookie Secure en producción).
   app.set('trust proxy', 1);
 
-  app.use(helmet());
+  app.use(helmet({
+    // Default de helmet es img-src 'self' data:, pero ComprobanteViewer.tsx
+    // descarga el comprobante protegido con fetch y lo muestra con
+    // URL.createObjectURL (blob:) — sin agregar blob: acá el browser lo
+    // bloquea aunque la imagen ya esté en memoria del lado del cliente.
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: { imgSrc: ["'self'", 'data:', 'blob:'] },
+    },
+  }));
 
   // origin como función: permite una lista (CORS_ORIGIN admite varios,
   // separados por coma) y es obligatorio para que las cookies con
