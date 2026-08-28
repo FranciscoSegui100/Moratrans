@@ -1,5 +1,6 @@
 import { PoolClient } from 'pg';
-import { formatearFechaCorta, medianocheArgentina } from './diasHabiles.service';
+import { formatearFechaCorta, medianocheArgentina, sumarDias } from './diasHabiles.service';
+import { DIAS_ALQUILER_ANTES_RETIRO } from '../config/bot.config';
 
 /** Mismo patrón que el resto del código: un error con `.status` que las rutas mapean a la respuesta HTTP. */
 function fail(msg: string): never {
@@ -57,16 +58,22 @@ export async function reservarParaEntrega(
   }
 
   if (cont!.estado === 'disponible') {
-    // La fecha de la entrega ES el vencimiento: cuándo se espera que este
-    // contenedor vuelva una vez alquilado (no al programar el retiro — para
-    // entonces la alerta de "por vencer" ya llegaría tarde). vence_en es
-    // TIMESTAMPTZ: bindear la fecha pelada (`::date`) la hace caer a
-    // medianoche UTC, que en Argentina se ve como las 21hs del día
+    // vence_en es "cuándo se espera que este contenedor vuelva": la fecha de
+    // ENTREGA más los días de alquiler estándar (no la fecha de entrega en sí
+    // — eso fue un bug: mientras el contenedor estaba 'reservado', esperando
+    // que el chofer lo entregue, la columna "Vence" del panel mostraba la
+    // fecha de entrega pelada, días antes de lo que correspondía, y el chequeo
+    // de abajo (`venceFecha`) dejaba reservar el contenedor a otro cliente
+    // demasiado pronto). Una vez que el chofer marca "entregado" de verdad
+    // (chofer.flow.ts), esta estimación se pisa con la fecha real +
+    // DIAS_ALQUILER_ANTES_RETIRO contada desde ESE momento, no desde acá.
+    // vence_en es TIMESTAMPTZ: bindear la fecha pelada (`::date`) la hace caer
+    // a medianoche UTC, que en Argentina se ve como las 21hs del día
     // anterior — medianocheArgentina() guarda el instante correcto.
     await c.query(
       `UPDATE contenedores SET estado = 'reservado', vence_en = $2, actualizado_por = $3
          WHERE numero = $1 AND estado = 'disponible'`,
-      [numero, medianocheArgentina(fecha), actualizadoPor],
+      [numero, medianocheArgentina(sumarDias(fecha, DIAS_ALQUILER_ANTES_RETIRO)), actualizadoPor],
     );
     return;
   }
