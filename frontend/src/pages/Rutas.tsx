@@ -251,6 +251,7 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
   const [agregandoVaciado, setAgregandoVaciado] = useState(false);
   const [vaciadoForm, setVaciadoForm] = useState({ ubicacion_id: '', notas: '' });
   const [confirmando, setConfirmando] = useState(false);
+  const [reordenando, setReordenando] = useState(false);
 
   const { data: ruta } = useQuery({
     queryKey: ['rutas', rutaId],
@@ -367,6 +368,14 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
   }
 
   async function reordenar(nuevasVisitas: Visita[]) {
+    // Evita que varios clicks seguidos en ↑/↓ (más rápido de lo que tarda la
+    // ida y vuelta) disparen reordenamientos en paralelo con el mismo
+    // `ruta.version` viejo: el primero pasa, todos los demás chocan con el
+    // chequeo optimista del backend (409 "alguien más modificó la ruta") aun
+    // sin que nadie más la haya tocado en verdad.
+    if (reordenando) return;
+    setReordenando(true);
+
     // Optimista: repinta el nuevo orden en el momento (es la acción más
     // frecuente al armar una ruta) — `disponibles` por parada queda
     // desactualizado hasta que cargar() traiga la simulación real del
@@ -387,16 +396,22 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
         secuencia: nuevasVisitas.map((v) => ({ tipo: v.tipoParada, id: v.id })),
         version: ruta?.version,
       });
-      cargar();
+      // Esperamos a que la caché tenga el version nuevo antes de soltar el
+      // candado — si no, el próximo click todavía leería el version viejo.
+      await queryClient.invalidateQueries({ queryKey: ['rutas', rutaId] });
+      onCambio();
     } catch (err: any) {
       if (previo) queryClient.setQueryData(['rutas', rutaId], previo);
       if (err.response?.status === 409) {
         show('error', 'Esta ruta cambió', 'Otro usuario la modificó mientras tanto — se recargó con los cambios de él.');
-        cargar();
+        await queryClient.invalidateQueries({ queryKey: ['rutas', rutaId] });
+        onCambio();
+        setReordenando(false);
         return;
       }
       show('error', 'No se pudo reordenar', err.response?.data?.error);
     }
+    setReordenando(false);
   }
 
   function mover(idx: number, direccion: -1 | 1) {
@@ -609,8 +624,8 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
                   </div>
 
                   <div className="arrows">
-                    <button disabled={idx === 0 || !editable} onClick={() => mover(idx, -1)} title="Subir orden"><ArrowUp size={12} strokeWidth={2} /></button>
-                    <button disabled={idx === visitas.length - 1 || !editable} onClick={() => mover(idx, 1)} title="Bajar orden"><ArrowDown size={12} strokeWidth={2} /></button>
+                    <button disabled={idx === 0 || !editable || reordenando} onClick={() => mover(idx, -1)} title="Subir orden"><ArrowUp size={12} strokeWidth={2} /></button>
+                    <button disabled={idx === visitas.length - 1 || !editable || reordenando} onClick={() => mover(idx, 1)} title="Bajar orden"><ArrowDown size={12} strokeWidth={2} /></button>
                   </div>
 
                   {editable && (
