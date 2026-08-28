@@ -89,9 +89,13 @@ async function calcularDisponibilidadRuta(
             SELECT v.contenedor_numero
               FROM viajes v
              WHERE v.contenedor_numero IS NOT NULL
-               AND v.ruta_id IS NOT NULL
-               AND v.ruta_id <> $1
                AND v.estado IN ('programado', 'en_curso')
+               -- Comprometido en un viaje activo que NO es parada de ESTA ruta:
+               -- otra ruta o todavía sin rutear (bolsa, alta manual, validación
+               -- de pago). Ofrecerlo igual llevaba a violar
+               -- ux_viajes_activo_por_tipo al asignarlo (un viaje activo por
+               -- contenedor+tipo).
+               AND (v.ruta_id IS NULL OR v.ruta_id <> $1)
           )`,
       [rutaId],
     ) as Promise<{ numero: string }[]>,
@@ -706,6 +710,21 @@ rutasRouter.patch('/:id/paradas/:viajeId/contenedor', requireRol('admin', 'opera
       const disponibles = porOrden.get(viaje!.orden!) ?? [];
       if (!disponibles.includes(contenedor_numero)) {
         fail(`El contenedor ${contenedor_numero} no está disponible en esta parada.`, 409);
+      }
+
+      // Barrera dura contra ux_viajes_activo_por_tipo (un viaje activo por
+      // contenedor+tipo): si el contenedor ya está en otra entrega activa
+      // —otra ruta, o sin rutear— sin esto el UPDATE de abajo tira un 500 de
+      // constraint en vez de este 409.
+      const { rows: conflicto } = await c.query(
+        `SELECT 1 FROM viajes
+          WHERE contenedor_numero = $1 AND tipo = 'entrega'
+            AND estado IN ('programado', 'en_curso') AND id <> $2
+          LIMIT 1`,
+        [contenedor_numero, viajeId],
+      );
+      if (conflicto[0]) {
+        fail(`El contenedor ${contenedor_numero} ya está asignado a otra entrega activa.`, 409);
       }
 
       await c.query(`UPDATE viajes SET contenedor_numero = $1 WHERE id = $2`, [contenedor_numero, viajeId]);

@@ -299,17 +299,23 @@ async function aplicarVaciado(to: string, choferId: string, choferNombre: string
  * en el mismo momento. Se llama SIEMPRE que un contenedor pasa a 'entregado'
  * o 'retirado' — así no importa si el vacío se asignó desde el panel o por
  * WhatsApp, ni cuál de los dos lados toca el chofer primero: el otro sigue
- * solo. Devuelve un texto para sumar al mensaje de confirmación, o '' si no
- * había pareja o todavía no estaba lista (ej. el vacío aún no se asignó).
+ * solo. Devuelve `texto` para sumar al mensaje de confirmación ('' si no
+ * había pareja o todavía no estaba lista) y `siguienteEnviada` = true si al
+ * cascadear se avisó una parada siguiente de la ruta (para que el llamador no
+ * mande además el menú suelto).
  */
-async function cascadearParejaRecambio(numero: string, choferId: string, choferNombre: string): Promise<string> {
+async function cascadearParejaRecambio(
+  numero: string,
+  choferId: string,
+  choferNombre: string,
+): Promise<{ texto: string; siguienteEnviada: boolean }> {
   const [propio] = await query<{ tipo: string; grupo_id: string | null }>(
     `SELECT tipo, grupo_id FROM viajes
       WHERE contenedor_numero = $1 AND chofer_id = $2 AND grupo_id IS NOT NULL AND estado IN ('programado', 'en_curso')
       ORDER BY creado_en DESC LIMIT 1`,
     [numero, choferId],
   );
-  if (!propio?.grupo_id) return '';
+  if (!propio?.grupo_id) return { texto: '', siguienteEnviada: false };
 
   const parejaTipo = propio.tipo === 'retiro' ? 'entrega' : 'retiro';
   const [pareja] = await query<{ id: string; contenedor_numero: string | null }>(
@@ -318,21 +324,24 @@ async function cascadearParejaRecambio(numero: string, choferId: string, choferN
       ORDER BY creado_en DESC LIMIT 1`,
     [propio.grupo_id, parejaTipo],
   );
-  if (!pareja?.contenedor_numero) return ''; // el vacío todavía no se asignó — nada para cascadear
+  if (!pareja?.contenedor_numero) return { texto: '', siguienteEnviada: false }; // el vacío todavía no se asignó — nada para cascadear
 
   const [cont] = await query<{ estado: string }>('SELECT estado FROM contenedores WHERE numero = $1', [pareja.contenedor_numero]);
 
   if (parejaTipo === 'entrega') {
     // La pareja es el vacío: se entrega si está 'reservado' (ya asignado, esperando salir).
-    if (cont?.estado !== 'reservado') return '';
+    if (cont?.estado !== 'reservado') return { texto: '', siguienteEnviada: false };
     await query(`UPDATE contenedores SET estado = 'entregado', actualizado_por = $2 WHERE numero = $1`, [pareja.contenedor_numero, `chofer:${choferId}`]);
     await query(`UPDATE viajes SET completada_en = now() WHERE id = $1`, [pareja.id]);
-    avisarSiguienteParadaRuta(pareja.id).catch((e) => console.error('Error avisando siguiente parada:', e.message));
-    return ` y entregaste *${pareja.contenedor_numero}*`;
+    const siguienteEnviada = await avisarSiguienteParadaRuta(pareja.id).catch((e) => {
+      console.error('Error avisando siguiente parada:', e.message);
+      return false;
+    });
+    return { texto: ` y entregaste *${pareja.contenedor_numero}*`, siguienteEnviada };
   }
 
   // La pareja es el lleno: se retira (yendo a vaciar) si está 'entregado'.
-  if (cont?.estado !== 'entregado') return '';
+  if (cont?.estado !== 'entregado') return { texto: '', siguienteEnviada: false };
   const vaciadero = await resolverUbicacion('vaciadero');
   await query(
     `UPDATE viajes SET estado = 'en_curso', completada_en = now(),
@@ -341,7 +350,10 @@ async function cascadearParejaRecambio(numero: string, choferId: string, choferN
     [pareja.id, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
   );
   await query(`UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`, [pareja.contenedor_numero, `chofer:${choferId}`]);
-  avisarSiguienteParadaRuta(pareja.id).catch((e) => console.error('Error avisando siguiente parada:', e.message));
+  const siguienteEnviada = await avisarSiguienteParadaRuta(pareja.id).catch((e) => {
+    console.error('Error avisando siguiente parada:', e.message);
+    return false;
+  });
   const [alerta] = await query(
     `INSERT INTO alertas (tipo, referencia_id, mensaje)
      VALUES ('confirmar_retiro', $1, $2)
@@ -350,7 +362,7 @@ async function cascadearParejaRecambio(numero: string, choferId: string, choferN
     [pareja.contenedor_numero, `${choferNombre} completó el recambio: retiró ${pareja.contenedor_numero}, va camino al vaciadero.`],
   );
   if (alerta) emitAlerta(alerta);
-  return ` y retiraste *${pareja.contenedor_numero}* (yendo a vaciar)`;
+  return { texto: ` y retiraste *${pareja.contenedor_numero}* (yendo a vaciar)`, siguienteEnviada };
 }
 
 /**
@@ -405,9 +417,8 @@ async function aplicarVacioRecambio(
       [numero, DIAS_ALQUILER_ANTES_RETIRO, `chofer:${choferId}`],
     );
     await query(`UPDATE viajes SET completada_en = now() WHERE id = $1`, [entregaId]);
-    avisarSiguienteParadaRuta(entregaId).catch((e) => console.error('Error avisando siguiente parada:', e.message));
 
-    const mensajeLleno = await cascadearParejaRecambio(numero, choferId, choferNombre);
+    const { texto: mensajeLleno, siguienteEnviada: siguienteLleno } = await cascadearParejaRecambio(numero, choferId, choferNombre);
 
     emitRecursoActualizado('contenedores');
     emitRecursoActualizado('viajes');
@@ -415,6 +426,14 @@ async function aplicarVacioRecambio(
       to,
       `✅ Recambio registrado. Contenedor *${numero}* entregado${mensajeLleno}. ${mensajeLleno ? 'Avisame por acá cuando vacíes el lleno (opción 🗑️ del menú). ' : ''}Gracias por tu trabajo. 🙌`,
     );
+    // Después de la confirmación: avisar la parada siguiente de la ruta (trae su
+    // propio menú, así que no se manda el menú suelto para no duplicarlo).
+    const siguienteEntrega = await avisarSiguienteParadaRuta(entregaId).catch((e) => {
+      console.error('Error avisando siguiente parada:', e.message);
+      return false;
+    });
+    if (!siguienteEntrega && !siguienteLleno) return menuChofer(to, choferNombre);
+    return;
   } catch (err: any) {
     await sendText(to, `⚠️ No pudimos completar el recambio con el contenedor ${numero}. Probá de nuevo.`);
     console.error('Error en aplicarVacioRecambio:', err.message);
@@ -550,7 +569,6 @@ async function aplicarEstado(
           WHERE id = $1`,
         [retiroExistente.id, choferId, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
       );
-      avisarSiguienteParadaRuta(retiroId).catch((e) => console.error('Error avisando siguiente parada:', e.message));
       await query(
         `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
         [numero, `chofer:${choferId}`],
@@ -568,7 +586,7 @@ async function aplicarEstado(
       // Si este lleno es parte de un recambio y el vacío pareja ya está
       // asignado y en 'reservado', se entrega en el mismo momento — así no
       // importa si el chofer marca primero el lleno o el vacío.
-      const extraVacio = await cascadearParejaRecambio(numero, choferId, choferNombre);
+      const { texto: extraVacio, siguienteEnviada: siguienteCascada } = await cascadearParejaRecambio(numero, choferId, choferNombre);
       emitRecursoActualizado('contenedores');
       emitRecursoActualizado('viajes');
       await clearSesion(to);
@@ -576,12 +594,25 @@ async function aplicarEstado(
         to,
         `📥 Registrado. Contenedor *${numero}* marcado como retirado${extraVacio}. Avisame por acá cuando lo vacíes en el vaciadero (opción 🗑️ del menú). Gracias por tu trabajo. 🙌`,
       );
+      // Después de la confirmación: avisar la parada siguiente de la ruta (trae
+      // su propio menú, así que no se manda el menú suelto para no duplicarlo).
+      const siguienteRetiro = await avisarSiguienteParadaRuta(retiroId).catch((e) => {
+        console.error('Error avisando siguiente parada:', e.message);
+        return false;
+      });
+      if (!siguienteRetiro && !siguienteCascada) return menuChofer(to, choferNombre);
+      return;
     } catch (err: any) {
       await sendText(to, `⚠️ No pudimos registrar el retiro del contenedor ${numero}. Probá de nuevo.`);
       console.error('Error registrando retiro pendiente:', err.message);
     }
     return menuChofer(to, choferNombre);
   }
+
+  // Se pone en true si al cerrar esta parada ya se avisó la siguiente de la
+  // ruta (ese aviso trae su propio menú) — entonces no se manda el menú suelto
+  // para que no le aparezca dos veces al chofer.
+  let siguienteEnviada = false;
 
   try {
     // El trigger fn_validar_transicion_contenedor solo valida el estado PREVIO
@@ -622,23 +653,30 @@ async function aplicarEstado(
     // Marca la parada de entrega como hecha (alimenta la vista día: "marcó
     // hace X min" por chofer). Solo aplica acá — 'retirado' ya se marca más
     // arriba, donde crea/actualiza su propia fila de viajes.
-    if (estado === 'entregado') {
-      const entregasCompletadas = await query<{ id: string }>(
-        `UPDATE viajes SET completada_en = now()
-          WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
-          RETURNING id`,
-        [numero, choferId],
-      );
-      for (const v of entregasCompletadas) {
-        avisarSiguienteParadaRuta(v.id).catch((e) => console.error('Error avisando siguiente parada:', e.message));
-      }
-    }
+    const entregasCompletadas = estado === 'entregado'
+      ? await query<{ id: string }>(
+          `UPDATE viajes SET completada_en = now()
+            WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
+            RETURNING id`,
+          [numero, choferId],
+        )
+      : [];
     // Si esto es el vacío de un recambio y el lleno pareja ya está listo
     // (entregado), se retira en el mismo momento (yendo a vaciar) — así no
     // importa si el chofer marca primero el vacío o el lleno.
-    const extra = await cascadearParejaRecambio(numero, choferId, choferNombre);
+    const { texto: extra, siguienteEnviada: siguienteCascada } = await cascadearParejaRecambio(numero, choferId, choferNombre);
+    if (siguienteCascada) siguienteEnviada = true;
     await clearSesion(to);
     await sendText(to, `✅ Registrado. Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
+    // Después de la confirmación: si hay una parada siguiente en la ruta se la
+    // avisa (ese aviso trae su propio menú, así que abajo no se manda el suelto).
+    for (const v of entregasCompletadas) {
+      const enviada = await avisarSiguienteParadaRuta(v.id).catch((e) => {
+        console.error('Error avisando siguiente parada:', e.message);
+        return false;
+      });
+      if (enviada) siguienteEnviada = true;
+    }
   } catch (err: any) {
     // Error de transición inválida u otro
     await sendText(
@@ -647,5 +685,6 @@ async function aplicarEstado(
     );
     console.error('Error aplicarEstado:', err.message);
   }
-  return menuChofer(to, choferNombre);
+  // El aviso de la parada siguiente ya trajo su propio menú: no duplicarlo.
+  if (!siguienteEnviada) return menuChofer(to, choferNombre);
 }
