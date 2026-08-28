@@ -238,6 +238,49 @@ body {
   padding: 26px 32px 40px;
   min-height: 100vh;
   max-width: 1440px;
+  transition: margin-left var(--transition), max-width var(--transition), padding-left var(--transition);
+}
+
+/* ===== OCULTAR / MOSTRAR SIDEBAR ===== */
+/* Botón siempre visible: pegado al borde derecho del sidebar cuando está
+   abierto (zona libre del header), arriba a la izquierda cuando está oculto. */
+.sidebar-toggle {
+  position: fixed;
+  top: 18px;
+  left: 176px;
+  z-index: 150;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: left var(--transition), color var(--transition), border-color var(--transition);
+}
+.sidebar-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+.sidebar-toggle svg { width: 16px; height: 16px; }
+
+.sidebar { transition: transform var(--transition); }
+
+.layout.sidebar-hidden .sidebar {
+  transform: translateX(-100%);
+}
+.layout.sidebar-hidden .sidebar-toggle {
+  top: 12px;
+  left: 12px;
+}
+.layout.sidebar-hidden .main-content {
+  margin-left: 0;
+  max-width: none;
+  padding-left: 54px; /* deja pasar el botón flotante sin taparse con el título */
 }
 
 /* ===== PAGE HEADER ===== */

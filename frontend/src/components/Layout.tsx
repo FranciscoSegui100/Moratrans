@@ -16,6 +16,8 @@ import {
   MessageCircle,
   Receipt,
   TrendingUp,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { useAuth, tieneRol, Rol } from '../context/AuthContext';
 import { api } from '../api/client';
@@ -51,7 +53,16 @@ export function Layout({ children }: { children: ReactNode }) {
   const [conversacionesCount, setConversacionesCount] = useState(0);
   const [pagosCount, setPagosCount] = useState(0);
   const [conectado, setConectado] = useState(true);
+  // Ocultar la barra lateral para que las tablas anchas (Viajes, Contenedores…)
+  // usen todo el ancho. Se recuerda por navegador.
+  const [sidebarOculta, setSidebarOculta] = useState(() => {
+    try { return localStorage.getItem('sidebarOculta') === '1'; } catch { return false; }
+  });
   const navVisible = nav.filter((n) => !n.roles || tieneRol(user, ...n.roles));
+
+  useEffect(() => {
+    try { localStorage.setItem('sidebarOculta', sidebarOculta ? '1' : '0'); } catch { /* modo privado */ }
+  }, [sidebarOculta]);
 
   // Indicador visible de si el socket está conectado, sin depender de que
   // alguien sepa abrir la consola del navegador: si dice "Sin conexión en
@@ -142,7 +153,15 @@ export function Layout({ children }: { children: ReactNode }) {
   }, [loc.pathname]);
 
   return (
-    <div className="layout">
+    <div className={`layout ${sidebarOculta ? 'sidebar-hidden' : ''}`}>
+      <button
+        className="sidebar-toggle"
+        onClick={() => setSidebarOculta((o) => !o)}
+        title={sidebarOculta ? 'Mostrar barra lateral' : 'Ocultar barra lateral'}
+        aria-label={sidebarOculta ? 'Mostrar barra lateral' : 'Ocultar barra lateral'}
+      >
+        {sidebarOculta ? <PanelLeftOpen strokeWidth={1.75} /> : <PanelLeftClose strokeWidth={1.75} />}
+      </button>
       <aside className="sidebar">
         <div className="sidebar-logo">
           <img src="/logo.png" alt="MoraTrans" className="sidebar-logo-mark" />
