@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
-import { excelClientes, enviarExcelClientePorWhatsApp, resumenCuentaCorriente } from '../reportes/reportes.service';
+import { excelClientes, enviarExcelClientePorWhatsApp, enviarResumenCuentaCorrientePorWhatsApp, resumenCuentaCorriente } from '../reportes/reportes.service';
 import { motivoErrorWa } from '../whatsapp/graphApi';
 import { normalizarTelefonoAR } from '../../services/telefono.service';
 
@@ -53,6 +53,31 @@ clientesRouter.post(
     } catch (e) {
       const motivo = motivoErrorWa(e);
       console.error('Error enviando Excel de cliente por WhatsApp:', motivo);
+      res.status(502).json({ error: `No se pudo enviar por WhatsApp: ${motivo}` });
+    }
+  },
+);
+
+/**
+ * POST /api/clientes/:telefono/enviar-resumen-cuenta — el mismo PDF
+ * (colores/logo/saldo, ver pdfResumenCuentaCorriente) que el cliente puede
+ * pedir él mismo por WhatsApp con "📊 Resumen de cuenta" (ver
+ * movimientos.flow.ts), pero disparado por un operador desde el panel — para
+ * cuando el cliente pregunta por su saldo y conviene mandárselo de una en
+ * vez de decirle que lo pida él.
+ */
+clientesRouter.post(
+  '/:telefono/enviar-resumen-cuenta',
+  requireRol('admin', 'operador', 'finanzas'),
+  async (req: Request, res: Response) => {
+    const telefono = req.params.telefono;
+    const [cliente] = await query<{ nombre: string }>('SELECT nombre FROM clientes WHERE telefono = $1', [telefono]);
+    try {
+      await enviarResumenCuentaCorrientePorWhatsApp(telefono, cliente?.nombre ?? null);
+      res.json({ ok: true });
+    } catch (e) {
+      const motivo = motivoErrorWa(e);
+      console.error('Error enviando resumen de cuenta por WhatsApp:', motivo);
       res.status(502).json({ error: `No se pudo enviar por WhatsApp: ${motivo}` });
     }
   },

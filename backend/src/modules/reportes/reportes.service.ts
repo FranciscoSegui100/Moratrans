@@ -49,7 +49,9 @@ export async function excelContenedores(): Promise<Buffer> {
  * mueve contenedores de a uno por viaje. "TIPO BULTO" se deriva:
  * 'entrega' -> VACIO (deja un contenedor vacío), 'retiro' con grupo_id (es
  * parte de un recambio, ver recambio.flow.ts) -> Recambio, 'retiro' suelto
- * -> Retiro.
+ * -> Retiro. Los alargues de retiro (pagos.tipo = 'alargue_retiro') no
+ * generan un `viaje` — se agregan acá con un UNION ALL como su propia fila
+ * "Extensión", si no, no aparecían en ningún lado de este Excel.
  */
 export async function excelClientes(mes?: string, telefono?: string): Promise<Buffer> {
   const rows = await query<{
@@ -77,7 +79,18 @@ export async function excelClientes(mes?: string, telefono?: string): Promise<Bu
       WHERE v.cliente_telefono IS NOT NULL
         AND ($1::text IS NULL OR to_char(v.fecha, 'YYYY-MM') = $1)
         AND ($2::text IS NULL OR v.cliente_telefono = $2)
-      ORDER BY v.fecha`,
+     UNION ALL
+     SELECT pg.creado_en::date AS fecha, NULL::text AS patente,
+            'Extensión de retiro' || COALESCE(' — ' || pg.contenedor_numero, '') AS posicion,
+            'Extensión' AS tipo_bulto,
+            NULL::text AS remito, pg.monto AS importe, NULL::text AS chofer_nombre, cl.numero_plan,
+            to_char(pg.creado_en, 'YYYY-MM') AS mes
+       FROM pagos pg
+       LEFT JOIN clientes cl ON cl.telefono = pg.cliente_telefono
+      WHERE pg.tipo = 'alargue_retiro' AND pg.estado = 'validado'
+        AND ($1::text IS NULL OR to_char(pg.creado_en, 'YYYY-MM') = $1)
+        AND ($2::text IS NULL OR pg.cliente_telefono = $2)
+      ORDER BY fecha`,
     [mes ?? null, telefono ?? null],
   );
 

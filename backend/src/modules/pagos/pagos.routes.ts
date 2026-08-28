@@ -556,10 +556,14 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
          info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, pagoId],
       );
       await query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion, pago_id)
-         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, $7, $8, $9, 'programado', 'Creado al validar el pago (recambio)', $10, $11, $12, $13)`,
+        // El costo del recambio va en la entrega (el nuevo contenedor), no en el
+        // retiro — mismo criterio que el recambio directo de cuenta corriente
+        // (ver recambio.flow.ts). Sin esto, el Excel de movimientos exportaba
+        // este viaje con IMPORTE vacío (ver excelClientes en reportes.service.ts).
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, importe, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion, pago_id)
+         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, $7, $8, $9, $10, 'programado', 'Creado al validar el pago (recambio)', $11, $12, $13, $14)`,
         [fechaViaje, choferId ?? null, result.contenedor ?? null, info?.cliente_telefono ?? null, info?.zona ?? null,
-         info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, grupoId, ubicacion?.id ?? null, ubicacion?.direccion ?? null, pagoId],
+         info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, info?.precio ?? null, grupoId, ubicacion?.id ?? null, ubicacion?.direccion ?? null, pagoId],
       );
 
       if (choferId && result.contenedor) {
@@ -578,9 +582,13 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       // viaje caía en CURRENT_DATE.
       const fechaViaje = fechaEntrega ?? venceEn ?? info?.fecha_entrega ?? null;
       await query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, estado, notas, ubicacion_id, ubicacion_direccion, destino_direccion, destino_lat, destino_lng, horario_preferido, pago_id)
-         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, 'programado', $6, $7, $8, $9, $10, $11, $12, $13)`,
-        [fechaViaje, choferId ?? null, result.contenedor ?? null, info?.cliente_telefono ?? null, info?.zona ?? null,
+        // importe = info.precio: sin esto, el Excel de movimientos (ver
+        // excelClientes en reportes.service.ts) exportaba TODO flete pagado
+        // por transferencia/cuenta corriente con la columna IMPORTE vacía —
+        // el caso más común de todos.
+        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, importe, estado, notas, ubicacion_id, ubicacion_direccion, destino_direccion, destino_lat, destino_lng, horario_preferido, pago_id)
+         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, 'programado', $7, $8, $9, $10, $11, $12, $13, $14)`,
+        [fechaViaje, choferId ?? null, result.contenedor ?? null, info?.cliente_telefono ?? null, info?.zona ?? null, info?.precio ?? null,
          result.contenedor ? (result.reservado_ahora ? 'Creado al validar el pago' : 'Reservado al validar el pago; contenedor ocupado, pendiente de que vuelva') : 'Creado al validar el pago (en bolsa sin rutear)',
          ubicacion?.id ?? null, ubicacion?.direccion ?? null, info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, pagoId],
       );

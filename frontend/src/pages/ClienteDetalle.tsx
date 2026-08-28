@@ -177,10 +177,11 @@ export function ClienteDetalle() {
     }
   }
 
-  async function enviarPorWhatsApp() {
+  /** Mismo PDF que el cliente puede pedir él mismo con "📊 Resumen de cuenta" por WhatsApp (ver movimientos.flow.ts). */
+  async function enviarResumenPorWhatsApp() {
     setEnviando(true);
     try {
-      await api.post(`/api/clientes/${encodeURIComponent(telefono)}/enviar-excel`);
+      await api.post(`/api/clientes/${encodeURIComponent(telefono)}/enviar-resumen-cuenta`);
       show('success', 'Enviado por WhatsApp', telefono);
     } catch (err: any) {
       show('error', 'No se pudo enviar', err.response?.data?.error);
@@ -245,8 +246,8 @@ export function ClienteDetalle() {
           <Download strokeWidth={1.75} /> Exportar a Excel
         </button>
         <RoleGate roles={['admin', 'operador', 'finanzas']}>
-          <button className="btn btn-ghost" onClick={enviarPorWhatsApp} disabled={enviando}>
-            <Send strokeWidth={1.75} /> {enviando ? 'Enviando...' : 'Enviar por WhatsApp'}
+          <button className="btn btn-ghost" onClick={enviarResumenPorWhatsApp} disabled={enviando}>
+            <Send strokeWidth={1.75} /> {enviando ? 'Enviando...' : 'Enviar resumen de cuenta por WhatsApp'}
           </button>
         </RoleGate>
       </div>
