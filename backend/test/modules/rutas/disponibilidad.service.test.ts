@@ -53,6 +53,18 @@ describe('simularDisponibilidad', () => {
     expect(porOrden.get(2)).toEqual(['VACIO2']);
   });
 
+  it('un contenedor ya asignado a una entrega posterior no se ofrece en una entrega anterior', () => {
+    const paradas: ParadaSimulada[] = [
+      { orden: 1, tipoParada: 'viaje', viajeTipo: 'entrega', contenedorNumero: null },
+      { orden: 2, tipoParada: 'viaje', viajeTipo: 'entrega', contenedorNumero: 'VACIO1' },
+    ];
+    const { porOrden } = simularDisponibilidad(paradas, ['VACIO1', 'VACIO2']);
+    // VACIO1 ya es de la parada 2 — la 1 solo puede usar VACIO2.
+    expect(porOrden.get(1)).toEqual(['VACIO2']);
+    // La parada 2 igual se ve a sí misma (el select del panel muestra el valor actual).
+    expect(porOrden.get(2)).toEqual(['VACIO1', 'VACIO2']);
+  });
+
   it('una parada de vaciado libera TODO el set pendiente, no un contenedor puntual', () => {
     const paradas: ParadaSimulada[] = [
       { orden: 1, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'A' },

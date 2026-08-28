@@ -64,6 +64,17 @@ export function simularDisponibilidad(
   });
 
   const disponibles = new Set(disponiblesAlInicio);
+  // Contenedores ya tomados por ALGUNA parada de entrega de esta ruta: no se
+  // pueden ofrecer en ninguna otra parada (el índice único
+  // ux_viajes_activo_por_tipo admite un solo viaje activo por contenedor+tipo).
+  // El `for` de abajo solo saca un contenedor DESPUÉS de su parada, así que sin
+  // esto una parada de orden menor lo seguía viendo disponible y al asignarlo
+  // se creaba una segunda entrega activa para el mismo contenedor.
+  const asignadosAEntrega = new Set(
+    ordenadas
+      .filter((p) => p.tipoParada === 'viaje' && p.viajeTipo !== 'retiro' && p.contenedorNumero)
+      .map((p) => p.contenedorNumero as string),
+  );
   const pendientesDeVaciar = new Set<string>();
   const liberadosPor = new Map<string, number>();
   const porOrden = new Map<number, string[]>();
@@ -118,8 +129,13 @@ export function simularDisponibilidad(
     }
 
     // 'entrega' (o mitad-entrega de un recambio): expone el set actual como
-    // las opciones válidas para ESTA parada, resuelta o no todavía.
-    porOrden.set(parada.orden, [...disponibles]);
+    // las opciones válidas para ESTA parada, resuelta o no todavía — menos los
+    // contenedores ya tomados por otra parada de entrega de la ruta (siempre se
+    // deja el propio, para que el select del panel muestre el valor actual).
+    porOrden.set(
+      parada.orden,
+      [...disponibles].filter((n) => n === parada.contenedorNumero || !asignadosAEntrega.has(n)),
+    );
     if (parada.contenedorNumero) disponibles.delete(parada.contenedorNumero);
   }
 
