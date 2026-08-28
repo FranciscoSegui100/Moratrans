@@ -13,8 +13,9 @@ import { avisarChoferRecambio } from '../viajes/viajes.routes';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
-import { formatearFechaCorta, formatearFechaLarga, medianocheArgentina } from '../../services/diasHabiles.service';
+import { formatearFechaCorta, formatearFechaLarga, medianocheArgentina, sumarDias } from '../../services/diasHabiles.service';
 import { saldoCuentaCorriente } from '../reportes/reportes.service';
+import { DIAS_ALQUILER_ANTES_RETIRO } from '../../config/bot.config';
 
 export const pagosRouter = Router();
 pagosRouter.use(requireAuth);
@@ -528,10 +529,16 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
 
     if (result.contenedor && result.reservado_ahora) {
       if (venceEn) {
-        // El operador pisó a mano la fecha que calculó reservarParaEntrega.
-        // vence_en es TIMESTAMPTZ: bindear la fecha pelada cae a medianoche
-        // UTC, que en Argentina se ve como las 21hs del día anterior.
-        await query('UPDATE contenedores SET vence_en = $1 WHERE numero = $2', [medianocheArgentina(venceEn), result.contenedor]);
+        // El operador pisó a mano la fecha de ENTREGA (mismo campo que
+        // reservarParaEntrega recibiría como `fecha`) — el vencimiento real
+        // es esa fecha más los días de alquiler, no la fecha pelada (ver
+        // mismo bug ya corregido en contenedorReserva.service.ts). vence_en
+        // es TIMESTAMPTZ: bindear la fecha pelada cae a medianoche UTC, que
+        // en Argentina se ve como las 21hs del día anterior.
+        await query(
+          'UPDATE contenedores SET vence_en = $1 WHERE numero = $2',
+          [medianocheArgentina(sumarDias(venceEn, DIAS_ALQUILER_ANTES_RETIRO)), result.contenedor],
+        );
       }
     }
 
