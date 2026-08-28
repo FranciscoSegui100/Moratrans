@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
-import { excelClientes, enviarExcelClientePorWhatsApp } from '../reportes/reportes.service';
+import { excelClientes, enviarExcelClientePorWhatsApp, resumenCuentaCorriente } from '../reportes/reportes.service';
 import { motivoErrorWa } from '../whatsapp/graphApi';
 import { normalizarTelefonoAR } from '../../services/telefono.service';
 
@@ -57,6 +57,18 @@ clientesRouter.post(
     }
   },
 );
+
+/**
+ * GET /api/clientes/:telefono/cuenta-corriente — para la tarjeta de resumen
+ * en ClienteDetalle: deuda acumulada, pagos ya acreditados y saldo neto (ver
+ * reportes.service.ts::resumenCuentaCorriente). Solo tiene sentido para
+ * clientes de cuenta corriente, pero no se restringe acá — un cliente
+ * ocasional simplemente da todo en $0.
+ */
+clientesRouter.get('/:telefono/cuenta-corriente', async (req: Request, res: Response) => {
+  const resumen = await resumenCuentaCorriente(req.params.telefono);
+  res.json(resumen);
+});
 
 /** GET /api/clientes/:telefono/viajes?mes=YYYY-MM — detalle de viajes de un cliente. */
 clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {

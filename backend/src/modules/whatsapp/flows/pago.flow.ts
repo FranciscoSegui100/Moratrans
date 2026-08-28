@@ -74,6 +74,16 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     return;
   }
 
+  // Cliente de cuenta corriente aprobada que manda un comprobante sin haber
+  // elegido "Transferencia" para un pedido puntual (sesión.paso ===
+  // 'esperando_comprobante'): lo interpretamos como un abono contra su saldo
+  // acumulado, no como el pago de una cotización específica — la mayoría de
+  // esa deuda (retiros/entregas directas, alargues) ni siquiera tiene un
+  // pedido asociado (ver itemsCuentaCorriente en reportes.service.ts).
+  if (sesion.paso !== 'esperando_comprobante' && (await tieneCuentaCorrienteAprobada(to))) {
+    return registrarAbonoCuentaCorriente(m);
+  }
+
   try {
     // 0) Sin ningún pedido abierto no hay nada que pagar — antes esto
     // igual registraba un pago 'pendiente' con pedido_id NULL, que le
@@ -339,6 +349,63 @@ async function registrarCuentaCorriente(to: string, pedido: PedidoCandidato | un
       : '📋 Anotado. Tu cuenta corriente todavía tiene que aprobarla un operador — en cuanto la revisen seguimos con tu pedido.\n\n' +
         '_Si en un rato no tenés novedades, escribí *asesor*._',
   );
+}
+
+/**
+ * Cliente de cuenta corriente aprobada mandó un comprobante que no
+ * corresponde a un pedido puntual: es un abono contra su saldo acumulado
+ * (ver reportes.service.ts::itemsCuentaCorriente/saldoCuentaCorriente). El
+ * monto NO se le pide acá al cliente — lo carga el operador al validar,
+ * mirando la transferencia real (ver POST /api/pagos/:id/validar, tipo
+ * 'abono_cc') — acá solo se sube el comprobante y se alerta al panel, igual
+ * que un comprobante normal.
+ */
+async function registrarAbonoCuentaCorriente(m: MensajeEntrante): Promise<void> {
+  const to = m.from;
+  try {
+    const { buffer, mime } = await downloadMedia(m.mediaId!);
+    const ext = mime.includes('pdf') ? 'pdf' : mime.split('/')[1] || 'jpg';
+    const filename = `${to}_${Date.now()}.${ext}`;
+    const rutaStorage = `comprobantes/${filename}`;
+    await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
+    const rutaCifrada = encrypt(rutaStorage);
+
+    const [pago] = await query<{ id: string }>(
+      `INSERT INTO pagos (cliente_telefono, url_comprobante, media_id, estado, es_cuenta_corriente, tipo)
+       VALUES ($1,$2,$3,'pendiente',TRUE,'abono_cc') RETURNING id`,
+      [to, rutaCifrada, m.mediaId ?? null],
+    );
+
+    const [alerta] = await query(
+      `INSERT INTO alertas (tipo, referencia_id, mensaje)
+       VALUES ('pago_pendiente_validacion', $1, $2)
+       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+      [pago.id, `${to} envió un comprobante para su cuenta corriente`],
+    );
+    if (alerta) {
+      emitAlerta({
+        ...alerta,
+        cliente_telefono: to,
+        monto: null,
+        pago_estado: 'pendiente',
+        tiene_comprobante: true,
+        zona: null,
+        precio: null,
+        moneda: null,
+      });
+    }
+
+    await clearSesion(to);
+    await sendText(
+      to,
+      '✅ ¡Recibido! Tu comprobante quedó *pendiente de validación* — en cuanto lo confirmemos, lo descontamos de tu cuenta corriente.\n\n' +
+        '_Si en un rato no tenés novedades, escribí *asesor*._',
+    );
+  } catch (err) {
+    console.error('Error registrando abono de cuenta corriente:', err);
+    await sendText(to, '⚠️ Tuvimos un problema al procesar el comprobante. Probá reenviarlo en unos minutos.');
+  }
 }
 
 /** Maneja la respuesta a "¿Para cuál cotización es este comprobante?". */

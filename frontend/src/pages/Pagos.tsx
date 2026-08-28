@@ -21,7 +21,7 @@ interface Pago {
   adjuntos_count: number;
   titular_transferencia: string | null;
   es_cuenta_corriente: boolean;
-  tipo: 'flete' | 'alargue_retiro';
+  tipo: 'flete' | 'alargue_retiro' | 'abono_cc';
   contenedor_numero: string | null;
 }
 
@@ -53,6 +53,9 @@ export function Pagos() {
   const { show } = useToast();
   const queryClient = useQueryClient();
   const [procesando, setProcesando] = useState<string | null>(null);
+  // Monto que el operador tipea para acreditar un abono de cuenta corriente
+  // (el cliente no lo declara, ver pago.flow.ts) — uno por pago pendiente.
+  const [montosAbono, setMontosAbono] = useState<Record<string, string>>({});
 
   const { data: pagos = [] } = useQuery({
     queryKey: ['pagos', 'pendiente'],
@@ -76,19 +79,22 @@ export function Pagos() {
 
   // La logística (chofer, contenedor) se arma un día antes desde la
   // pestaña Viajes — acá solo se confirma el pago, y de ahí se manda directo.
-  async function validar(id: string) {
+  async function validar(id: string, body: Record<string, unknown> = {}) {
     setProcesando(id);
     try {
-      const { data } = await api.post(`/api/pagos/${id}/validar`, {});
+      const { data } = await api.post(`/api/pagos/${id}/validar`, body);
       show(
         'success',
-        data.tipo === 'alargue_retiro' ? 'Alargue validado' : 'Pago validado',
+        data.tipo === 'alargue_retiro' ? 'Alargue validado' : data.tipo === 'abono_cc' ? 'Abono acreditado' : 'Pago validado',
         data.tipo === 'alargue_retiro'
           ? `Contenedor ${data.contenedor} — nuevo vencimiento ${formatearFecha(data.vence_en)}`
+          : data.tipo === 'abono_cc'
+          ? `Se acreditaron $${Number(data.monto).toLocaleString('es-AR')} a la cuenta corriente`
           : data.reservado_ahora
           ? `Ticket ${data.ticket_id} — contenedor ${data.contenedor}`
           : `Ticket ${data.ticket_id} — contenedor ${data.contenedor} reservado a futuro, todavía está ocupado`,
       );
+      setMontosAbono((prev) => { const { [id]: _, ...resto } = prev; return resto; });
       cargar();
     } catch (e: any) {
       show('error', 'Error al validar', e.response?.data?.error || 'Error desconocido');
@@ -157,6 +163,10 @@ export function Pagos() {
                       {p.monto ? `${p.moneda ?? ''} ${Number(p.monto).toLocaleString('es-AR')}`.trim() : 'Sin monto'} ·{' '}
                       {formatearFechaHora(p.creado_en)}
                     </div>
+                  ) : p.tipo === 'abono_cc' ? (
+                    <div className="pago-detail">
+                      💳 Abono a cuenta corriente · {formatearFechaHora(p.creado_en)}
+                    </div>
                   ) : (
                     <div className="pago-detail">
                       {p.zona ?? 'Sin zona'} ·{' '}
@@ -166,6 +176,23 @@ export function Pagos() {
                   )}
                   {p.titular_transferencia && (
                     <div className="pago-detail">Transferencia a nombre de: <strong>{p.titular_transferencia}</strong></div>
+                  )}
+                  {p.tipo === 'abono_cc' && (
+                    <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                      <div className="pago-detail" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                        <span>Monto a acreditar:</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          className="form-input"
+                          style={{ width: '140px', padding: '4px 8px' }}
+                          placeholder="$"
+                          value={montosAbono[p.id] ?? ''}
+                          onChange={(e) => setMontosAbono((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                        />
+                      </div>
+                    </RoleGate>
                   )}
                   <RoleGate roles={['admin', 'finanzas']}>
                     {p.url_comprobante ? (
@@ -182,9 +209,9 @@ export function Pagos() {
                 <div className="pago-actions">
                   <RoleGate roles={['admin', 'operador', 'finanzas']}>
                     <button
-                      onClick={() => validar(p.id)}
+                      onClick={() => (p.tipo === 'abono_cc' ? validar(p.id, { monto: Number(montosAbono[p.id]) }) : validar(p.id))}
                       className="btn btn-success btn-sm"
-                      disabled={procesando === p.id}
+                      disabled={procesando === p.id || (p.tipo === 'abono_cc' && !(Number(montosAbono[p.id]) > 0))}
                     >
                       <Check strokeWidth={2} /> Validar
                     </button>

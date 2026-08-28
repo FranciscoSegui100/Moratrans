@@ -67,8 +67,12 @@ CREATE TYPE tipo_alerta AS ENUM (
 -- 'flete' = pago normal (ligado a un pedido). 'alargue_retiro' = paga un
 -- costo fijo (bot.config.ts::COSTO_ALARGUE_FIJO) para sumar 5 días al
 -- vencimiento de un contenedor que ya tiene — no crea ticket ni reserva nada
--- (ver alargarRetiro.flow.ts y POST /api/pagos/:id/validar).
-CREATE TYPE tipo_pago AS ENUM ('flete', 'alargue_retiro');
+-- (ver alargarRetiro.flow.ts y POST /api/pagos/:id/validar). 'abono_cc' = un
+-- cliente de cuenta corriente aprobada paga (parcial o totalmente) su saldo
+-- acumulado, sin pedido_id — el monto lo carga el operador al validar,
+-- mirando la transferencia real (ver pago.flow.ts::registrarAbonoCuentaCorriente
+-- y reportes.service.ts::saldoCuentaCorriente).
+CREATE TYPE tipo_pago AS ENUM ('flete', 'alargue_retiro', 'abono_cc');
 
 -- Cuenta corriente: clientes que pagan a fin de mes o cuando se juntan
 -- varios retiros, en vez de transferir antes de cada uno (ver pago.flow.ts).
