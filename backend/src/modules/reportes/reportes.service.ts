@@ -3,7 +3,19 @@ import PDFDocument from 'pdfkit';
 import { query } from '../../config/db';
 import { uploadMedia, sendDocument } from '../whatsapp/graphApi';
 import { formatearFechaCorta } from '../../services/diasHabiles.service';
-import { AZUL, AZUL_CLARO, ROJO, GRIS_MUTED, LOGO_PATH } from '../../services/pdf.service';
+import {
+  AZUL,
+  AZUL_CLARO,
+  ROJO,
+  GRIS_MUTED,
+  LOGO_PATH,
+  MARGEN,
+  dibujarEncabezado,
+  dibujarTituloSeccion,
+  dibujarFila,
+  dibujarMontoDestacado,
+  dibujarPiePagina,
+} from '../../services/pdf.service';
 
 /** Hex de marca (ej. '#152B54') al ARGB de 8 dígitos que espera ExcelJS. */
 function argb(hex: string): string {
@@ -194,6 +206,11 @@ interface ItemCuentaCorriente {
   monto: string | null;
 }
 
+interface AbonoCuentaCorriente {
+  fecha: string;
+  monto: string | null;
+}
+
 /**
  * Deuda de cuenta corriente de un cliente: cuenta corriente es débito
  * diferido, así que TODO lo entregado a través de ese circuito cuenta como
@@ -227,6 +244,48 @@ async function itemsCuentaCorriente(telefono: string): Promise<ItemCuentaCorrien
   );
 }
 
+/**
+ * Abonos ya validados contra el saldo de cuenta corriente (ver
+ * registrarAbonoCuentaCorriente en pago.flow.ts): comprobantes que el
+ * cliente mandó SIN atarlos a un pedido puntual, porque están pagando su
+ * saldo acumulado en vez de un flete específico. El monto lo carga el
+ * operador al validar (POST /api/pagos/:id/validar), no el cliente.
+ */
+async function abonosCuentaCorriente(telefono: string): Promise<AbonoCuentaCorriente[]> {
+  return query<AbonoCuentaCorriente>(
+    `SELECT creado_en::text AS fecha, monto::text AS monto
+       FROM pagos
+      WHERE cliente_telefono = $1 AND tipo = 'abono_cc' AND estado = 'validado'
+      ORDER BY creado_en`,
+    [telefono],
+  );
+}
+
+function sumarMontos(items: { monto: string | null }[]): number {
+  return items.reduce((acc, it) => acc + (it.monto ? Number(it.monto) : 0), 0);
+}
+
+/**
+ * Resumen de cuenta corriente de un cliente: cargos (deuda acumulada, ver
+ * itemsCuentaCorriente), abonos ya validados, y el saldo neto = cargos -
+ * abonos. Es el "ledger simple" elegido para este circuito: un abono
+ * descuenta del total, sin imputarse a qué pedido/viaje puntual cubre (ver
+ * comentario de itemsCuentaCorriente). Lo usa tanto el PDF que se manda por
+ * WhatsApp (pdfResumenCuentaCorriente) como el resumen del panel (ver
+ * GET /api/clientes/:telefono/cuenta-corriente).
+ */
+export async function resumenCuentaCorriente(telefono: string) {
+  const [cargos, abonos] = await Promise.all([itemsCuentaCorriente(telefono), abonosCuentaCorriente(telefono)]);
+  const totalCargos = sumarMontos(cargos);
+  const totalAbonos = sumarMontos(abonos);
+  return { cargos, abonos, totalCargos, totalAbonos, saldo: totalCargos - totalAbonos };
+}
+
+/** Solo el número de saldo (ver resumenCuentaCorriente) — para avisos por WhatsApp. */
+export async function saldoCuentaCorriente(telefono: string): Promise<number> {
+  return (await resumenCuentaCorriente(telefono)).saldo;
+}
+
 /** Nombre de archivo seguro: solo letras/números/espacios/guiones, sin extensión. */
 function nombreArchivoSeguro(base: string): string {
   return base
@@ -237,42 +296,69 @@ function nombreArchivoSeguro(base: string): string {
 }
 
 /**
- * PDF de "Resumen de cuenta" para un cliente de cuenta corriente: cada
- * pedido/entrega con zona y precio, y el total al pie — es lo que el
- * cliente pide desde el menú de WhatsApp (ver movimientos.flow.ts). Para
- * pagar, se lo redirige a "Enviar comprobante" (ese flujo sí concilia el
- * pago con un operador; este PDF es solo informativo).
+ * PDF de "Resumen de cuenta" para un cliente de cuenta corriente: mismo
+ * encabezado/colores/logo que el ticket de validación de pago (ver
+ * dibujarEncabezado en pdf.service.ts) para que ambos documentos se sientan
+ * parte de la misma marca. Lista cada pedido/entrega aún no pagado, los
+ * abonos ya acreditados, y cierra con el SALDO NETO (deuda - abonos) en un
+ * recuadro más grande que el del ticket — es el número que más le importa
+ * ver al cliente. Es lo que se pide desde el menú de WhatsApp (ver
+ * movimientos.flow.ts). Para pagar, se lo redirige a "Enviar comprobante"
+ * (ese flujo sí concilia el pago con un operador; este PDF es solo
+ * informativo).
  */
-export function pdfResumenCuentaCorriente(clienteNombre: string, items: ItemCuentaCorriente[]): Promise<Buffer> {
+export function pdfResumenCuentaCorriente(
+  clienteNombre: string,
+  clienteTelefono: string,
+  items: ItemCuentaCorriente[],
+  abonos: AbonoCuentaCorriente[],
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    const doc = new PDFDocument({ size: 'A4', margin: 0 });
     const chunks: Buffer[] = [];
     doc.on('data', (c) => chunks.push(c));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    doc.fontSize(18).text('MORATRANS — Cuenta corriente', { align: 'center' });
-    doc.fontSize(13).fillColor('#333').text(clienteNombre, { align: 'center' });
-    doc.moveDown(0.5);
-    doc.fontSize(9).fillColor('#777').text(`Generado: ${new Date().toLocaleString('es-AR')}`, { align: 'center' });
-    doc.moveDown();
+    let y = dibujarEncabezado(doc, 'RESUMEN DE CUENTA', [new Date().toLocaleString('es-AR')]);
+    y += 25;
 
-    doc.fillColor('#000').fontSize(11);
-    let total = 0;
+    y = dibujarTituloSeccion(doc, y, 'Datos del cliente');
+    y = dibujarFila(doc, y, 'Nombre', clienteNombre);
+    y = dibujarFila(doc, y, 'Teléfono', clienteTelefono);
+    y += 15;
+
+    y = dibujarTituloSeccion(doc, y, 'Pedidos pendientes de pago');
+    const totalCargos = sumarMontos(items);
     if (items.length === 0) {
-      doc.text('No hay pedidos pendientes.');
+      y = dibujarFila(doc, y, 'Estado', 'No hay pedidos pendientes.');
     } else {
       items.forEach((it) => {
         const monto = it.monto ? Number(it.monto) : 0;
-        total += monto;
-        doc.text(
-          `${formatearFechaCorta(it.fecha)}  ·  ${it.zona ?? 'Sin zona'}  ·  ` +
-            `${it.monto ? '$' + monto.toLocaleString('es-AR') : 's/monto'}`,
-        );
+        y = dibujarFila(doc, y, formatearFechaCorta(it.fecha), `${it.zona ?? 'Sin zona'}  —  ${it.monto ? '$' + monto.toLocaleString('es-AR') : 's/monto'}`);
       });
-      doc.moveDown();
-      doc.fontSize(13).text(`Total: $${total.toLocaleString('es-AR')}`, { align: 'right' });
     }
+    y += 15;
+
+    y = dibujarTituloSeccion(doc, y, 'Pagos realizados');
+    const totalAbonos = sumarMontos(abonos);
+    if (abonos.length === 0) {
+      y = dibujarFila(doc, y, 'Estado', 'Todavía no registramos ningún pago tuyo.');
+    } else {
+      abonos.forEach((ab) => {
+        const monto = ab.monto ? Number(ab.monto) : 0;
+        y = dibujarFila(doc, y, formatearFechaCorta(ab.fecha), `$${monto.toLocaleString('es-AR')}`);
+      });
+    }
+    y += 10;
+
+    dibujarMontoDestacado(doc, y, `$${(totalCargos - totalAbonos).toLocaleString('es-AR')}`, {
+      etiqueta: 'SALDO TOTAL',
+      fontSize: 28,
+      alto: 64,
+    });
+    dibujarPiePagina(doc, 'Este resumen es informativo. Para pagar, escribí "Enviar comprobante" en el menú.');
+
     doc.end();
   });
 }
@@ -283,9 +369,9 @@ export function pdfResumenCuentaCorriente(clienteNombre: string, items: ItemCuen
  * menú "📊 Resumen de cuenta" (movimientos.flow.ts).
  */
 export async function enviarResumenCuentaCorrientePorWhatsApp(telefono: string, clienteNombre: string | null): Promise<void> {
-  const items = await itemsCuentaCorriente(telefono);
+  const { cargos, abonos } = await resumenCuentaCorriente(telefono);
   const nombre = clienteNombre ?? 'Cliente';
-  const buf = await pdfResumenCuentaCorriente(nombre, items);
+  const buf = await pdfResumenCuentaCorriente(nombre, telefono, cargos, abonos);
   const nombreArchivo = `MORATRANS CUENTA CORRIENTE - ${nombreArchivoSeguro(nombre)}.pdf`;
   const mediaId = await uploadMedia(buf, 'application/pdf', nombreArchivo);
   await sendDocument(

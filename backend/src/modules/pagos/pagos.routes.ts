@@ -14,6 +14,7 @@ import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { formatearFechaCorta, formatearFechaLarga, medianocheArgentina } from '../../services/diasHabiles.service';
+import { saldoCuentaCorriente } from '../reportes/reportes.service';
 
 export const pagosRouter = Router();
 pagosRouter.use(requireAuth);
@@ -258,6 +259,62 @@ function mensajeAlargueValidado(contenedor: string, venceEn: Date): string {
   return `✅ ¡Listo! Extendimos *${DIAS_ALARGUE} días* el retiro de tu contenedor *${contenedor}* — ahora vence el ${formatearFechaCorta(venceEn)}.`;
 }
 
+const abonoSchema = z.object({
+  // El cliente no declara el monto (ver pago.flow.ts::registrarAbonoCuentaCorriente) —
+  // lo carga acá el operador, mirando la transferencia real.
+  monto: z.coerce.number().positive('Indicá el monto transferido para poder acreditarlo.'),
+});
+
+/**
+ * Un pago 'abono_cc' no está atado a ningún pedido/ticket/contenedor: es
+ * simplemente plata que el cliente transfirió contra su saldo de cuenta
+ * corriente acumulado (ver reportes.service.ts::saldoCuentaCorriente). Se
+ * resuelve aparte de fn_validar_pago por la misma razón que validarAlargue:
+ * esa función asume que siempre hay un pedido detrás.
+ */
+async function validarAbonoCC(req: Request, res: Response, pagoId: string): Promise<void> {
+  const parsed = abonoSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Monto inválido' });
+    return;
+  }
+  const { monto } = parsed.data;
+
+  const [pago] = await query<{ cliente_telefono: string }>(
+    `UPDATE pagos SET estado = 'validado', validado_por = $2, monto = $3
+      WHERE id = $1 AND estado = 'pendiente' AND tipo = 'abono_cc'
+      RETURNING cliente_telefono`,
+    [pagoId, req.user!.id, monto],
+  );
+  if (!pago) {
+    res.status(409).json({ error: 'Pago inexistente o no está pendiente' });
+    return;
+  }
+
+  await query(`UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'pago_pendiente_validacion' AND referencia_id = $1`, [pagoId]);
+  emitAlertaActualizada({ tipo: 'pago_pendiente_validacion', referencia_id: pagoId, estado: 'resuelta' });
+  emitRecursoActualizado('pagos');
+
+  // Igual que validarAlargue: lo ya grabado (pago validado) no debe
+  // reportarse como error al operador si solo falla el aviso de WhatsApp.
+  try {
+    const saldo = await saldoCuentaCorriente(pago.cliente_telefono);
+    await sendText(
+      pago.cliente_telefono,
+      `✅ ¡Gracias! Acreditamos *$${monto.toLocaleString('es-AR')}* a tu cuenta corriente.\n\n` +
+        `Tu nuevo saldo es *$${saldo.toLocaleString('es-AR')}*.`,
+    );
+  } catch (e) {
+    const motivo = motivoErrorWa(e);
+    console.error('Error avisando abono de cuenta corriente validado:', motivo);
+    await notificarEnvioFallido(pagoId, pago.cliente_telefono, 'aviso de abono a cuenta corriente validado', motivo).catch((e2) =>
+      console.error('Error registrando alerta de envío fallido:', e2),
+    );
+  }
+
+  res.json({ ok: true, tipo: 'abono_cc', monto });
+}
+
 /**
  * Reenvía el aviso de "pago validado" a mano — para el caso borde en que ya
  * quedó todo grabado (pago validado, ticket creado o vence_en corrido) pero
@@ -345,6 +402,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
   const [pagoTipo] = await query<{ tipo: string }>('SELECT tipo FROM pagos WHERE id = $1', [pagoId]);
   if (!pagoTipo) return res.status(404).json({ error: 'Pago inexistente' });
   if (pagoTipo.tipo === 'alargue_retiro') return validarAlargue(req, res, pagoId);
+  if (pagoTipo.tipo === 'abono_cc') return validarAbonoCC(req, res, pagoId);
 
   const parsed = validarSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
@@ -569,9 +627,15 @@ pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), a
 
   // Comparte referencia_id (= pago.id) con la alerta de transferencia, pero
   // es un tipo distinto (ver migración 0013) — hay que resolver la que
-  // corresponda según cómo se pidió pagar.
+  // corresponda según cómo se pidió pagar. 'abono_cc' también tiene
+  // es_cuenta_corriente=TRUE (es plata de/para la cuenta corriente) pero usa
+  // la alerta genérica de comprobante, no 'cuenta_corriente_solicitada' (esa
+  // es solo para "quiero pagar ESTE pedido a cuenta corriente", ver
+  // registrarCuentaCorriente) — por eso se chequea el tipo antes que el flag.
   const tipoAlerta = pago.tipo === 'alargue_retiro'
     ? 'alargue_solicitado'
+    : pago.tipo === 'abono_cc'
+    ? 'pago_pendiente_validacion'
     : pago.es_cuenta_corriente ? 'cuenta_corriente_solicitada' : 'pago_pendiente_validacion';
   await query(`UPDATE alertas SET estado = 'resuelta'
                WHERE tipo = $2 AND referencia_id = $1`, [req.params.id, tipoAlerta]);

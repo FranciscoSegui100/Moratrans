@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Download, Send, Pencil, X } from 'lucide-react';
+import { ArrowLeft, Download, Send, Pencil, X, Wallet, Receipt, CircleDollarSign } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -27,6 +27,25 @@ interface Cliente {
   telefono: string;
   cuenta_corriente_estado: 'sin_pedir' | 'pendiente' | 'aprobada' | 'rechazada';
   numero_plan: number | null;
+}
+
+interface ItemCuentaCorriente {
+  fecha: string;
+  zona: string | null;
+  monto: string | null;
+}
+
+interface AbonoCuentaCorriente {
+  fecha: string;
+  monto: string | null;
+}
+
+interface ResumenCuentaCorriente {
+  cargos: ItemCuentaCorriente[];
+  abonos: AbonoCuentaCorriente[];
+  totalCargos: number;
+  totalAbonos: number;
+  saldo: number;
 }
 
 interface ViajeCliente {
@@ -164,6 +183,12 @@ export function ClienteDetalle() {
   // TEMPORAL: si todavía no tiene viajes reales, se muestran de ejemplo
   // para previsualizar cómo queda la tabla con datos. BORRAR cuando ya no haga falta.
   const esCC = cliente?.cuenta_corriente_estado === 'aprobada' || cliente?.cuenta_corriente_estado === 'pendiente';
+
+  const { data: cuentaCorriente } = useQuery({
+    queryKey: ['clientes', telefono, 'cuenta-corriente'],
+    queryFn: () => api.get<ResumenCuentaCorriente>(`/api/clientes/${encodeURIComponent(telefono)}/cuenta-corriente`).then((r) => r.data),
+    enabled: !!telefono && esCC,
+  });
   const usandoDemo = viajesReales.length === 0;
   const viajes = usandoDemo ? viajesDeEjemplo() : viajesReales;
 
@@ -208,6 +233,54 @@ export function ClienteDetalle() {
           </button>
         </RoleGate>
       </div>
+
+      {esCC && cuentaCorriente && (
+        <div style={{ marginTop: '20px' }}>
+          <div className="section-title">Cuenta corriente</div>
+          <div className="kpi-grid">
+            <div className="kpi-card">
+              <div className="kpi-icon"><Receipt strokeWidth={1.75} /></div>
+              <div className="kpi-value">${cuentaCorriente.totalCargos.toLocaleString('es-AR')}</div>
+              <div className="kpi-label">Deuda acumulada</div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-icon"><Wallet strokeWidth={1.75} /></div>
+              <div className="kpi-value">${cuentaCorriente.totalAbonos.toLocaleString('es-AR')}</div>
+              <div className="kpi-label">Pagado</div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-icon"><CircleDollarSign strokeWidth={1.75} /></div>
+              <div className="kpi-value">${cuentaCorriente.saldo.toLocaleString('es-AR')}</div>
+              <div className="kpi-label">Saldo pendiente</div>
+            </div>
+          </div>
+
+          {(cuentaCorriente.cargos.length > 0 || cuentaCorriente.abonos.length > 0) && (
+            <div className="table-wrapper" style={{ marginTop: '12px' }}>
+              <table className="data-table">
+                <thead>
+                  <tr><th>FECHA</th><th>MOVIMIENTO</th><th>MONTO</th></tr>
+                </thead>
+                <tbody>
+                  {[
+                    ...cuentaCorriente.cargos.map((c) => ({ fecha: c.fecha, texto: c.zona ?? 'Sin zona', monto: c.monto ? Number(c.monto) : 0, signo: 1 })),
+                    ...cuentaCorriente.abonos.map((a) => ({ fecha: a.fecha, texto: 'Pago acreditado', monto: a.monto ? Number(a.monto) : 0, signo: -1 })),
+                  ]
+                    .sort((a, b) => a.fecha.localeCompare(b.fecha))
+                    .reverse()
+                    .map((m, i) => (
+                      <tr key={i}>
+                        <td style={{ whiteSpace: 'nowrap' }}>{formatearFecha(m.fecha)}</td>
+                        <td>{m.signo > 0 ? m.texto : <span style={{ color: 'var(--color-success, #16a34a)' }}>{m.texto}</span>}</td>
+                        <td>{m.signo > 0 ? '' : '− '}${m.monto.toLocaleString('es-AR')}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {grupos.length === 0 ? (
         <div className="card">

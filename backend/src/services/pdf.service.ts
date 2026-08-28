@@ -13,7 +13,7 @@ export const GRIS_TEXTO = '#374151';
 export const GRIS_MUTED = '#6B7280';
 
 export const LOGO_PATH = path.join(__dirname, '..', 'assets', 'logo.jpg');
-const MARGEN = 50;
+export const MARGEN = 50;
 
 export interface DatosTicket {
   ticketId: string;
@@ -33,7 +33,7 @@ export interface DatosTicket {
   fecha: Date;
 }
 
-function formatearMonto(precio: number | string | null | undefined, moneda: string | null | undefined): string {
+export function formatearMonto(precio: number | string | null | undefined, moneda: string | null | undefined): string {
   if (precio == null) return '—';
   return `${moneda ?? ''} ${Number(precio).toLocaleString('es-AR', { minimumFractionDigits: 2 })}`.trim();
 }
@@ -43,12 +43,18 @@ function formatearMonto(precio: number | string | null | undefined, moneda: stri
  * emoji — sin esto, textos como "🌅 Mañana (8-12hs)" (ver
  * horarioPreferido.flow.ts) salían con caracteres corruptos en el PDF.
  */
-function limpiarTexto(s: string): string {
+export function limpiarTexto(s: string): string {
   return s.replace(/[\u{1F000}-\u{1FFFF}\u{2190}-\u{2BFF}\u{FE0F}\u{200D}]/gu, '').trim();
 }
 
-/** Encabezado: logo + nombre de la empresa a la izquierda, título del comprobante a la derecha. */
-function dibujarEncabezado(doc: PDFKit.PDFDocument, d: DatosTicket): number {
+/**
+ * Encabezado genérico: logo + nombre de la empresa a la izquierda, título del
+ * documento a la derecha con las líneas que se le pasen debajo (N° de ticket,
+ * fecha, etc). Lo reusa tanto el comprobante de pago como el resumen de
+ * cuenta corriente (ver pdfResumenCuentaCorriente en reportes.service.ts) para
+ * que ambos documentos compartan la misma identidad visual.
+ */
+export function dibujarEncabezado(doc: PDFKit.PDFDocument, tituloDerecha: string, lineasDerecha: string[]): number {
   const anchoUtil = doc.page.width - MARGEN * 2;
   let y = MARGEN;
 
@@ -73,13 +79,14 @@ function dibujarEncabezado(doc: PDFKit.PDFDocument, d: DatosTicket): number {
     .fillColor(ROJO)
     .font('Helvetica-Bold')
     .fontSize(14)
-    .text('COMPROBANTE DE PAGO', MARGEN, y + 4, { width: anchoUtil, align: 'right' });
-  doc
-    .fillColor(GRIS_MUTED)
-    .font('Helvetica')
-    .fontSize(9)
-    .text(`N° ${d.ticketId}`, MARGEN, y + 24, { width: anchoUtil, align: 'right' })
-    .text(d.fecha.toLocaleString('es-AR'), MARGEN, y + 37, { width: anchoUtil, align: 'right' });
+    .text(tituloDerecha, MARGEN, y + 4, { width: anchoUtil, align: 'right' });
+  lineasDerecha.forEach((linea, i) => {
+    doc
+      .fillColor(GRIS_MUTED)
+      .font('Helvetica')
+      .fontSize(9)
+      .text(linea, MARGEN, y + 24 + i * 13, { width: anchoUtil, align: 'right' });
+  });
 
   y += 70;
   doc.rect(0, y, doc.page.width, 5).fill(AZUL);
@@ -88,7 +95,7 @@ function dibujarEncabezado(doc: PDFKit.PDFDocument, d: DatosTicket): number {
 }
 
 /** Título de sección: barra clara con texto en azul. */
-function dibujarTituloSeccion(doc: PDFKit.PDFDocument, y: number, titulo: string): number {
+export function dibujarTituloSeccion(doc: PDFKit.PDFDocument, y: number, titulo: string): number {
   const anchoUtil = doc.page.width - MARGEN * 2;
   doc.rect(MARGEN, y, anchoUtil, 22).fill(AZUL_CLARO);
   doc
@@ -100,7 +107,7 @@ function dibujarTituloSeccion(doc: PDFKit.PDFDocument, y: number, titulo: string
 }
 
 /** Una fila etiqueta/valor dentro de una sección. */
-function dibujarFila(doc: PDFKit.PDFDocument, y: number, etiqueta: string, valorCrudo: string): number {
+export function dibujarFila(doc: PDFKit.PDFDocument, y: number, etiqueta: string, valorCrudo: string): number {
   const anchoUtil = doc.page.width - MARGEN * 2;
   const valor = limpiarTexto(valorCrudo);
   doc
@@ -117,25 +124,31 @@ function dibujarFila(doc: PDFKit.PDFDocument, y: number, etiqueta: string, valor
   return y + Math.max(16, alturaValor + 4);
 }
 
-/** Recuadro destacado con el monto total pagado. */
-function dibujarMontoDestacado(doc: PDFKit.PDFDocument, y: number, texto: string): number {
+/** Recuadro destacado con un monto (total pagado, saldo, etc). */
+export function dibujarMontoDestacado(
+  doc: PDFKit.PDFDocument,
+  y: number,
+  texto: string,
+  opts: { etiqueta?: string; fontSize?: number; alto?: number } = {},
+): number {
   const anchoUtil = doc.page.width - MARGEN * 2;
-  const alto = 46;
+  const alto = opts.alto ?? 46;
+  const fontSize = opts.fontSize ?? 18;
   doc.rect(MARGEN, y, anchoUtil, alto).fill(AZUL);
   doc
     .fillColor('#FFFFFF')
     .font('Helvetica')
     .fontSize(10)
-    .text('TOTAL PAGADO', MARGEN + 16, y + 10);
+    .text(opts.etiqueta ?? 'TOTAL PAGADO', MARGEN + 16, y + 10);
   doc
     .fillColor('#FFFFFF')
     .font('Helvetica-Bold')
-    .fontSize(18)
-    .text(texto, MARGEN, y + 8, { width: anchoUtil - 16, align: 'right' });
+    .fontSize(fontSize)
+    .text(texto, MARGEN, y + (alto - fontSize) / 2, { width: anchoUtil - 16, align: 'right' });
   return y + alto + 20;
 }
 
-function dibujarPiePagina(doc: PDFKit.PDFDocument): void {
+export function dibujarPiePagina(doc: PDFKit.PDFDocument, mensaje?: string): void {
   const y = doc.page.height - 70;
   doc.rect(0, y, doc.page.width * 0.7, 4).fill(AZUL);
   doc.rect(doc.page.width * 0.7, y, doc.page.width * 0.3, 4).fill(ROJO);
@@ -145,7 +158,7 @@ function dibujarPiePagina(doc: PDFKit.PDFDocument): void {
     .fontSize(9)
     .text('¡Gracias por confiar en MoraTrans!', 0, y + 16, { width: doc.page.width, align: 'center' })
     .fontSize(8)
-    .text('Este comprobante certifica la validación del pago y la reserva de tu pedido.', 0, y + 30, {
+    .text(mensaje ?? 'Este comprobante certifica la validación del pago y la reserva de tu pedido.', 0, y + 30, {
       width: doc.page.width,
       align: 'center',
     });
@@ -160,7 +173,7 @@ function generarTicketPDF(d: DatosTicket): Promise<Buffer> {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    let y = dibujarEncabezado(doc, d);
+    let y = dibujarEncabezado(doc, 'COMPROBANTE DE PAGO', [`N° ${d.ticketId}`, d.fecha.toLocaleString('es-AR')]);
     y += 25;
 
     y = dibujarTituloSeccion(doc, y, 'Datos del cliente');
