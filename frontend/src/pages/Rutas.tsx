@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowUp, ArrowDown, Plus, X, RefreshCw, CheckCircle2, Truck } from 'lucide-react';
+import { AlertTriangle, ArrowUp, ArrowDown, Plus, X, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -19,7 +19,6 @@ interface Ruta {
   creado_en: string;
 }
 interface Chofer { id: string; nombre: string; activo: boolean; }
-interface Contenedor { numero: string; estado: string; }
 interface Ubicacion { id: string; tipo: 'deposito' | 'vaciadero'; nombre: string; activo: boolean; }
 
 interface ViajePendiente {
@@ -216,7 +215,14 @@ type Parada = ParadaViaje | ParadaVaciado;
 
 interface Advertencia { orden: number; tipo: 'lleno_sin_vaciar' | 'vacios_exceso'; mensaje: string; }
 
-interface RutaData extends Ruta { paradas: Parada[]; advertencias: Advertencia[]; }
+interface RutaData extends Ruta {
+  paradas: Parada[];
+  advertencias: Advertencia[];
+  /** Stock que el backend usa como punto de partida de la simulación: contenedores
+   * 'disponible' NO comprometidos con ningún viaje activo ajeno a esta ruta.
+   * Es la misma lista contra la que se validan los selects de cada parada. */
+  stock_deposito: string[];
+}
 
 /** Agrupa las paradas (ya ordenadas por el backend) en "visitas": un recambio son dos filas de `viajes` que comparten `orden` y se muestran como una sola. */
 interface Visita {
@@ -239,11 +245,9 @@ function agruparVisitas(paradas: Parada[]): Visita[] {
   return [...porOrden.values()].sort((a, b) => a.orden - b.orden);
 }
 
-function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDia, choferes, onCambio }: {
+function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio }: {
   rutaId: string;
-  contenedoresDisponibles: Contenedor[];
   rutasDelDia: Ruta[];
-  viajesDelDia: ViajePendiente[];
   choferes: Chofer[];
   onCambio: () => void;
 }) {
@@ -257,6 +261,9 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
   const { data: ruta } = useQuery({
     queryKey: ['rutas', rutaId],
     queryFn: () => api.get<RutaData>(`/api/rutas/${rutaId}`).then((r) => r.data),
+    // Refresca los disponibles por parada (simulación del backend) cada 15 s
+    // para que los selects de contenedor muestren siempre el stock real.
+    refetchInterval: 15000,
   });
   const { data: ubicaciones = [] } = useQuery({
     queryKey: ['ubicaciones'],
@@ -272,21 +279,13 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
   const visitas = ruta ? agruparVisitas(ruta.paradas) : [];
   const editable = ruta?.estado === 'planificada' || ruta?.estado === 'en_curso';
 
-  // Los contenedores asignados a OTRAS rutas del día no están disponibles para esta ruta
-  const asignadosAOtrasRutas = new Set<string>();
-  for (const v of viajesDelDia) {
-    if (v.ruta_id && v.ruta_id !== rutaId && v.contenedor_numero) {
-      asignadosAOtrasRutas.add(v.contenedor_numero);
-    }
-  }
-
-  // Stock real en depósito (estado 'disponible' = no está con ningún
-  // cliente ni en tránsito), descontando lo que ya está comprometido con
-  // otra ruta del mismo día. No es una simulación de "qué tiene este
-  // camión encima" — es el depósito real, en vivo.
-  const stockDeposito = contenedoresDisponibles
-    .map((c) => c.numero)
-    .filter((num) => !asignadosAOtrasRutas.has(num));
+  // Stock real que la simulación del backend usa como punto de partida:
+  // contenedores 'disponible' que NO están comprometidos con ningún viaje
+  // activo ajeno a esta ruta (otra ruta, o todavía sin rutear — bolsa, alta
+  // manual, validación de pago). Es la MISMA lista contra la que se validan
+  // los selects de contenedor de cada parada, así que el número de arriba no
+  // puede quedar inflado con contenedores que después no se pueden asignar.
+  const stockDeposito = ruta?.stock_deposito ?? [];
 
   async function agregarVaciado(e: React.FormEvent) {
     e.preventDefault();
@@ -725,10 +724,6 @@ export function Rutas() {
     queryKey: ['viajes', 'del-dia', fecha],
     queryFn: () => api.get<ViajePendiente[]>(`/api/viajes?fecha=${fecha}&estado=programado`).then((r) => r.data),
   });
-  const { data: contenedoresDisponibles = [] } = useQuery({
-    queryKey: ['contenedores', 'disponibles'],
-    queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data.filter((c) => c.estado === 'disponible')),
-  });
   // Rutas 'en_curso' de días anteriores al elegido: si nadie las cerró (ej.
   // camión roto, tareas que quedaron sin reasignar), el corte manual del día
   // (ver punto 8.1) no alcanza si nadie nota que la ruta vieja sigue abierta.
@@ -860,20 +855,69 @@ export function Rutas() {
         rollbackViajesDelDia = () => queryClient.setQueryData(['viajes', 'del-dia', fecha], previoViajesDelDia);
       }
 
+      // Optimista: agrega la parada directamente en la caché del detalle de la
+      // ruta destino — sin esto, el viaje no aparece en el panel del chofer
+      // hasta que vuelve el prefetchQuery (una ida y vuelta entera al servidor).
+      const rutaId = ruta.id;
+      const previoDetalle = queryClient.getQueryData<RutaData>(['rutas', rutaId]);
+      if (previoDetalle) {
+        const ordenProvisorio = (Math.max(0, ...previoDetalle.paradas.map((p) => p.orden)) + 1);
+        const paradasNuevas: Parada[] = [];
+        if (visita.entrega) {
+          paradasNuevas.push({
+            tipo_parada: 'viaje',
+            id: visita.entrega.id,
+            orden: ordenProvisorio,
+            viaje_tipo: 'entrega',
+            contenedor_numero: visita.entrega.contenedor_numero,
+            destino_direccion: visita.entrega.destino_direccion,
+            destino_lat: visita.entrega.destino_lat,
+            destino_lng: visita.entrega.destino_lng,
+            horario_preferido: visita.entrega.horario_preferido,
+            hora_estimada: visita.entrega.hora_estimada ?? null,
+            zona: visita.zona,
+            cliente_telefono: visita.cliente_telefono,
+            grupo_id: visita.entrega.grupo_id,
+            estado: 'programado',
+            notas: null,
+          });
+        }
+        if (visita.retiro) {
+          paradasNuevas.push({
+            tipo_parada: 'viaje',
+            id: visita.retiro.id,
+            orden: ordenProvisorio,
+            viaje_tipo: 'retiro',
+            contenedor_numero: visita.retiro.contenedor_numero,
+            destino_direccion: visita.retiro.destino_direccion,
+            destino_lat: visita.retiro.destino_lat,
+            destino_lng: visita.retiro.destino_lng,
+            horario_preferido: visita.retiro.horario_preferido,
+            hora_estimada: visita.retiro.hora_estimada ?? null,
+            zona: visita.zona,
+            cliente_telefono: visita.cliente_telefono,
+            grupo_id: visita.retiro.grupo_id,
+            estado: 'programado',
+            notas: null,
+          });
+        }
+        if (paradasNuevas.length > 0) {
+          queryClient.setQueryData<RutaData>(['rutas', rutaId], {
+            ...previoDetalle,
+            paradas: [...previoDetalle.paradas, ...paradasNuevas],
+          });
+        }
+      }
+
       const viajeId = visita.entrega?.id ?? visita.retiro?.id ?? visita.id;
-      await api.post(`/api/rutas/${ruta.id}/paradas`, { viaje_id: viajeId });
+      await api.post(`/api/rutas/${rutaId}/paradas`, { viaje_id: viajeId });
       const nombreChofer = choferes.find((c) => c.id === choferId)?.nombre ?? 'chofer';
       show('success', 'Pedido asignado', `Asignado a la ruta de ${nombreChofer}.`);
-      setRutaSeleccionada(ruta.id);
+      setRutaSeleccionada(rutaId);
       recargarListas();
-      // Precalienta el detalle del chofer destino (mismo criterio que
-      // moverParadaA): sin esto, la demora "del otro lado" es la primera
-      // carga en frío de esa pestaña recién al hacer clic en ella.
-      const rutaId = ruta.id;
-      queryClient.prefetchQuery({
-        queryKey: ['rutas', rutaId],
-        queryFn: () => api.get<RutaData>(`/api/rutas/${rutaId}`).then((r) => r.data),
-      });
+      // Refresca el detalle para traer el orden real del backend (el provisorio
+      // era negativo, un placeholder) y los disponibles calculados por parada.
+      queryClient.invalidateQueries({ queryKey: ['rutas', rutaId] });
     } catch (err: any) {
       if (previoCola) queryClient.setQueryData(['rutas', 'bolsa'], previoCola);
       rollbackViajesDelDia?.();
@@ -1090,9 +1134,7 @@ export function Rutas() {
               </div>
               <DetalleRuta
                 rutaId={rutaSeleccionada}
-                contenedoresDisponibles={contenedoresDisponibles}
                 rutasDelDia={rutas}
-                viajesDelDia={viajesDelDia}
                 choferes={choferes}
                 onCambio={recargarListas}
               />

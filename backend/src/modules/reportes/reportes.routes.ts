@@ -15,7 +15,7 @@ reportesRouter.get('/contenedores.xlsx', async (_req: Request, res: Response) =>
 });
 
 /** GET /api/reportes/pagos.pdf — respeta el mismo criterio de acceso del panel. */
-reportesRouter.get('/pagos.pdf', async (req: Request, res: Response) => {
+reportesRouter.get('/pagos.pdf', async (_req: Request, res: Response) => {
   // El reporte no incluye la URL del comprobante; solo metadatos del pago.
   const pagos = await query(
     'SELECT cliente_telefono, estado, monto, creado_en FROM pagos ORDER BY creado_en DESC LIMIT 500',

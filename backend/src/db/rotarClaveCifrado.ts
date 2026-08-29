@@ -113,7 +113,6 @@ async function rotarArchivoStorage(
 }
 
 async function migrarTabla<T extends { id: string }>(
-  pool: Pool,
   nombre: string,
   filas: T[],
   migrarFila: (fila: T) => Promise<void>,
@@ -167,7 +166,7 @@ async function main() {
   const choferes = await pool.query<{ id: string; dni_enc: string }>(
     'SELECT id, dni_enc FROM choferes WHERE dni_enc IS NOT NULL',
   );
-  await migrarTabla(pool, 'choferes', choferes.rows, async (c) => {
+  await migrarTabla('choferes', choferes.rows, async (c) => {
     const dni = decryptWith(oldKey, c.dni_enc);
     await pool.query('UPDATE choferes SET dni_enc = $1, dni_hash = $2 WHERE id = $3', [
       encryptWith(newKey, dni),
@@ -183,7 +182,7 @@ async function main() {
   // 1) Contenido binario en el storage: hace falta la ruta con la clave
   //    VIEJA (p.url_comprobante tal como está en `pagos.rows`, sin tocar) —
   //    por eso corre antes de re-cifrar las referencias en la DB.
-  await migrarTabla(pool, 'pagos (binario en storage)', pagos.rows, async (p) => {
+  await migrarTabla('pagos (binario en storage)', pagos.rows, async (p) => {
     if (!supabase) throw new Error('Falta configurar Supabase Storage (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)');
     if (p.url_comprobante) {
       await rotarArchivoStorage(supabase, bucket, decryptWith(oldKey, p.url_comprobante), 'comprobantes', oldKey, newKey);
@@ -194,7 +193,7 @@ async function main() {
   }, confirmar);
 
   // 2) Referencia (ruta cifrada) en la DB.
-  await migrarTabla(pool, 'pagos (referencias)', pagos.rows, async (p) => {
+  await migrarTabla('pagos (referencias)', pagos.rows, async (p) => {
     const nuevoComprobante = p.url_comprobante ? encryptWith(newKey, decryptWith(oldKey, p.url_comprobante)) : null;
     const nuevaFactura = p.factura_url ? encryptWith(newKey, decryptWith(oldKey, p.factura_url)) : null;
     await pool.query('UPDATE pagos SET url_comprobante = $1, factura_url = $2 WHERE id = $3', [
@@ -210,11 +209,11 @@ async function main() {
   const adjuntos = await pool.query<{ id: string; url_comprobante: string }>(
     'SELECT id, url_comprobante FROM pagos_adjuntos WHERE url_comprobante IS NOT NULL',
   );
-  await migrarTabla(pool, 'pagos_adjuntos (binario en storage)', adjuntos.rows, async (a) => {
+  await migrarTabla('pagos_adjuntos (binario en storage)', adjuntos.rows, async (a) => {
     if (!supabase) throw new Error('Falta configurar Supabase Storage (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)');
     await rotarArchivoStorage(supabase, bucket, decryptWith(oldKey, a.url_comprobante), 'comprobantes', oldKey, newKey);
   }, confirmar);
-  await migrarTabla(pool, 'pagos_adjuntos (referencias)', adjuntos.rows, async (a) => {
+  await migrarTabla('pagos_adjuntos (referencias)', adjuntos.rows, async (a) => {
     await pool.query('UPDATE pagos_adjuntos SET url_comprobante = $1 WHERE id = $2', [
       encryptWith(newKey, decryptWith(oldKey, a.url_comprobante)),
       a.id,
@@ -224,7 +223,7 @@ async function main() {
   const usuarios = await pool.query<{ id: string; mfa_secret_enc: string }>(
     'SELECT id, mfa_secret_enc FROM usuarios WHERE mfa_secret_enc IS NOT NULL',
   );
-  await migrarTabla(pool, 'usuarios (MFA)', usuarios.rows, async (u) => {
+  await migrarTabla('usuarios (MFA)', usuarios.rows, async (u) => {
     const secreto = decryptWith(oldKey, u.mfa_secret_enc);
     await pool.query('UPDATE usuarios SET mfa_secret_enc = $1 WHERE id = $2', [encryptWith(newKey, secreto), u.id]);
   }, confirmar);

@@ -21,28 +21,10 @@ function puntoEnPoligono(lat: number, lng: number, anillo: Anillo): boolean {
 }
 
 /**
- * ¿El punto compartido por el cliente cae dentro del polígono del
- * departamento que cotizó? `null` = ese departamento no tiene polígono
- * cargado todavía — no hay nada que validar, no bloquea el flujo.
- */
-export async function estaDentroDeDepartamento(
-  lat: number,
-  lng: number,
-  departamento: string,
-): Promise<boolean | null> {
-  const [fila] = await query<{ limite_geografico: Anillo | null }>(
-    'SELECT limite_geografico FROM tarifas_departamento WHERE departamento = $1',
-    [departamento],
-  );
-  if (!fila?.limite_geografico) return null;
-  return puntoEnPoligono(lat, lng, fila.limite_geografico);
-}
-
-/**
  * ¿A cuál de los departamentos con polígono cargado pertenece este punto?
- * Se usa cuando `estaDentroDeDepartamento` da `false`, para poder ofrecerle
- * al cliente el departamento correcto en vez de solo avisar que algo no
- * coincide. `null` = no cae dentro de ninguno de los que tenemos mapeados.
+ * Se usa para ubicar al cliente en el departamento correcto a partir de su
+ * ubicación compartida. `null` = no cae dentro de ninguno de los que tenemos
+ * mapeados.
  */
 export async function detectarDepartamento(lat: number, lng: number): Promise<string | null> {
   const filas = await query<{ departamento: string; limite_geografico: Anillo }>(

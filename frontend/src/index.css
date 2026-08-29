@@ -238,6 +238,49 @@ body {
   padding: 26px 32px 40px;
   min-height: 100vh;
   max-width: 1440px;
+  transition: margin-left var(--transition), max-width var(--transition), padding-left var(--transition);
+}
+
+/* ===== OCULTAR / MOSTRAR SIDEBAR ===== */
+/* Botón siempre visible: pegado al borde derecho del sidebar cuando está
+   abierto (zona libre del header), arriba a la izquierda cuando está oculto. */
+.sidebar-toggle {
+  position: fixed;
+  top: 18px;
+  left: 176px;
+  z-index: 150;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: left var(--transition), color var(--transition), border-color var(--transition);
+}
+.sidebar-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+.sidebar-toggle svg { width: 16px; height: 16px; }
+
+.sidebar { transition: transform var(--transition); }
+
+.layout.sidebar-hidden .sidebar {
+  transform: translateX(-100%);
+}
+.layout.sidebar-hidden .sidebar-toggle {
+  top: 12px;
+  left: 12px;
+}
+.layout.sidebar-hidden .main-content {
+  margin-left: 0;
+  max-width: none;
+  padding-left: 54px; /* deja pasar el botón flotante sin taparse con el título */
 }
 
 /* ===== PAGE HEADER ===== */
@@ -402,7 +445,7 @@ body {
   background: var(--bg-surface);
 }
 .data-table th {
-  padding: 9px 14px;
+  padding: 8px 9px;
   font-size: 0.68rem;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -412,15 +455,15 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .data-table td {
-  padding: 9px 14px;
-  font-size: 0.83rem;
+  padding: 6px 9px;
+  font-size: 0.8rem;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table tr:hover td { background: var(--bg-card-hover); }
-.data-table .mono { font-family: var(--font-mono); font-size: 0.79rem; color: var(--text-primary); }
+.data-table .mono { font-family: var(--font-mono); font-size: 0.76rem; color: var(--text-primary); }
 .data-table .strong { color: var(--text-primary); font-weight: 600; }
 
 /* ===== STATUS BADGES ===== */

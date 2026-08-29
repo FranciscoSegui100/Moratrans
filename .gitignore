@@ -4,3 +4,4 @@ dist/
 storage/
 *.tsbuildinfo
 backend/public/
+vite.config.*.timestamp-*

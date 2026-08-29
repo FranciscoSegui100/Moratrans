@@ -52,7 +52,11 @@ interface Tarifa { departamento: string; activo: boolean; }
 interface Chofer { id: string; nombre: string; activo: boolean; }
 interface Ubicacion { id: string; tipo: 'deposito' | 'vaciadero'; nombre: string; direccion: string; activo: boolean; }
 
-const estados = ['programado', 'en_curso', 'completado', 'cancelado'];
+// Mismas franjas que OPCIONES_HORARIO en horarioPreferido.flow.ts — el bot
+// guarda exactamente estos textos en viajes.horario_preferido, así que un
+// viaje armado a mano tiene que usar los mismos para que la columna
+// "Horario sugerido" se vea consistente.
+const OPCIONES_HORARIO_SUGERIDO = ['🌅 Mañana (8-12hs)', '🕐 Tarde (12-15hs)'];
 
 const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
   disponible: 'Disponible',
@@ -63,7 +67,7 @@ const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
 };
 
 const formInicial = {
-  tipo: 'entrega', fecha: '', zona: '', contenedor_numero: '', contenedor_numero_entrega: '',
+  tipo: 'entrega', fecha: '', horario_preferido: '', zona: '', contenedor_numero: '', contenedor_numero_entrega: '',
   destino_direccion: '', importe: '', ubicacion_id: '',
 };
 
@@ -131,6 +135,7 @@ export function Viajes() {
         destino_direccion: form.destino_direccion || undefined,
         importe: form.importe || undefined,
         ubicacion_id: form.ubicacion_id || undefined,
+        horario_preferido: form.horario_preferido || undefined,
       });
       setForm(formInicial);
       cargar();
@@ -139,15 +144,6 @@ export function Viajes() {
       show('error', 'Error al programar', err.response?.data?.error || 'Error desconocido');
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function cambiarEstado(id: string, estado: string) {
-    try {
-      await api.patch(`/api/viajes/${id}`, { estado });
-      cargar();
-    } catch {
-      show('error', 'No se pudo cambiar el estado');
     }
   }
 
@@ -194,16 +190,6 @@ export function Viajes() {
     }
   }
 
-  async function borrar(id: string) {
-    if (!confirm('¿Seguro que deseas eliminar este viaje?')) return;
-    try {
-      await api.delete(`/api/viajes/${id}`);
-      cargar();
-      show('info', 'Viaje eliminado');
-    } catch (err: any) {
-      show('error', 'No se puede eliminar', err.response?.data?.error);
-    }
-  }
 
   const viajesActivos = viajes.filter((v) => v.estado === 'programado' || v.estado === 'en_curso');
   const viajesHistorial = viajes.filter((v) => v.estado === 'completado' || v.estado === 'cancelado');
@@ -254,6 +240,17 @@ export function Viajes() {
                 onChange={(e) => setForm({ ...form, fecha: e.target.value })}
                 required
               />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Horario sugerido</label>
+              <select
+                className="form-select"
+                value={form.horario_preferido}
+                onChange={(e) => setForm({ ...form, horario_preferido: e.target.value })}
+              >
+                <option value="">— Sin preferencia —</option>
+                {OPCIONES_HORARIO_SUGERIDO.map((h) => <option key={h} value={h}>{h}</option>)}
+              </select>
             </div>
             <div className="form-group">
               <label className="form-label">Zona</label>
@@ -363,8 +360,6 @@ export function Viajes() {
               <th>Nº remito</th>
               <th>Importe</th>
               <th>Comprobantes</th>
-              <th>Estado</th>
-              <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -373,7 +368,8 @@ export function Viajes() {
                 <td className="strong" style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {v.horario_preferido ? (
-                    <span title="Horario solicitado por el cliente">🕐 {v.horario_preferido}</span>
+                    // El texto ya trae su propio emoji (🌅/🕐), no anteponer otro.
+                    <span title="Franja horaria preferida (la pidió el cliente por WhatsApp o la cargó el operador)">{v.horario_preferido}</span>
                   ) : (
                     <span className="text-muted">—</span>
                   )}
@@ -517,35 +513,11 @@ export function Viajes() {
                     );
                   })()}
                 </td>
-                <td>
-                  <RoleGate roles={['admin', 'operador']}>
-                    <select
-                      className="form-select"
-                      style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                      value={v.estado}
-                      onChange={(e) => cambiarEstado(v.id, e.target.value)}
-                    >
-                      {estados.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </RoleGate>
-                  <RoleGate roles={['finanzas', 'lectura']}>
-                    <span className={`badge ${v.estado}`}>{v.estado}</span>
-                  </RoleGate>
-                </td>
-                <td>
-                  <RoleGate roles={['admin']}>
-                    {v.estado === 'completado' && (
-                      <button onClick={() => borrar(v.id)} className="btn btn-danger btn-sm">
-                        Eliminar
-                      </button>
-                    )}
-                  </RoleGate>
-                </td>
               </tr>
             ))}
             {viajesAMostrar.length === 0 && (
               <tr>
-                <td colSpan={15} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={13} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   {pestana === 'activos' ? 'No hay viajes activos o programados' : 'No hay viajes en el historial'}
                 </td>
               </tr>

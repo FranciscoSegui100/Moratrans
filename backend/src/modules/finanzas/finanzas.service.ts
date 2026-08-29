@@ -16,7 +16,10 @@ export interface MovimientoIngreso {
   zona: string | null;
   categoria: 'Entrega' | 'Recambio' | 'Alargue de retiro';
   medio_pago: 'Transferencia' | 'Cuenta corriente';
-  importe: number;
+  // pg devuelve las columnas `numeric` de Postgres como string (y `pagos.monto`
+  // puede ser NULL). Coercionar con Number() antes de operar — mismo criterio
+  // que reportes.service.ts::sumarMontos.
+  importe: string | null;
 }
 
 /**
@@ -100,10 +103,11 @@ export async function resumenMensual(anio: number): Promise<{ anio: number; mese
     const mes = mv.fecha.slice(0, 7);
     const acc = porMes.get(mes);
     if (!acc) continue; // no debería pasar (ya se filtró por año en SQL)
-    if (mv.categoria === 'Alargue de retiro') acc.alargues += mv.importe;
-    else if (mv.categoria === 'Recambio') acc.recambios += mv.importe;
-    else acc.entregas += mv.importe;
-    acc.total += mv.importe;
+    const importe = mv.importe ? Number(mv.importe) : 0;
+    if (mv.categoria === 'Alargue de retiro') acc.alargues += importe;
+    else if (mv.categoria === 'Recambio') acc.recambios += importe;
+    else acc.entregas += importe;
+    acc.total += importe;
     acc.cantidad += 1;
   }
   const meses = [...porMes.values()];
@@ -179,7 +183,11 @@ export async function excelFinanzas(anio: number): Promise<Buffer> {
   wsDetalle.views = [{ state: 'frozen', ySplit: 5 }];
 
   movimientos.forEach((mv, i) => {
-    const fila = wsDetalle.addRow({ ...mv, fecha: formatearFechaCortaLocal(mv.fecha) });
+    const fila = wsDetalle.addRow({
+      ...mv,
+      fecha: formatearFechaCortaLocal(mv.fecha),
+      importe: mv.importe ? Number(mv.importe) : 0, // celda numérica real, si no numFmt no aplica
+    });
     if (i % 2 === 1) fila.eachCell((c) => (c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(AZUL_CLARO) } }));
   });
   wsDetalle.getColumn('importe').numFmt = '"$"#,##0.00';

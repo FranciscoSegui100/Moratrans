@@ -110,7 +110,7 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   // contenedor (lista), y las dos acciones self-service nuevas (vaciado y
   // autoasignación del vacío de un recambio).
   if (m.tipo === 'interactive_button' && m.seleccionId?.startsWith('estado:')) {
-    return elegirContenedor(to, chofer[0].id, m.seleccionId.replace('estado:', ''), sesion);
+    return elegirContenedor(to, chofer[0].id, m.seleccionId.replace('estado:', ''));
   }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('cont:')) {
     const raw = m.seleccionId.replace('cont:', '');
@@ -139,10 +139,10 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   // Soporte para respuestas por texto libre o si el cliente no usa botones interactivos
   const txt = (m.texto ?? '').toLowerCase().trim();
   if (txt.includes('retir')) {
-    return elegirContenedor(to, chofer[0].id, 'retirado', sesion);
+    return elegirContenedor(to, chofer[0].id, 'retirado');
   }
   if (txt.includes('entreg')) {
-    return elegirContenedor(to, chofer[0].id, 'entregado', sesion);
+    return elegirContenedor(to, chofer[0].id, 'entregado');
   }
   if (sesion.paso === 'elegir_contenedor' && m.tipo === 'text' && m.texto) {
     const inputNumero = m.texto.trim();
@@ -442,7 +442,7 @@ async function aplicarVacioRecambio(
 }
 
 /** Tras elegir estado, listar contenedores candidatos. */
-async function elegirContenedor(to: string, choferId: string, estado: string, sesion: Sesion): Promise<void> {
+async function elegirContenedor(to: string, choferId: string, estado: string): Promise<void> {
   if (!ESTADOS_CHOFER.includes(estado as any)) {
     await sendText(to, 'Esa acción no está disponible para choferes.');
     return menuChofer(to);
