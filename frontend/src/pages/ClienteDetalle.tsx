@@ -18,6 +18,8 @@ interface Comprobante {
   es_cuenta_corriente: boolean;
   tiene_comprobante: boolean;
   titular: string | null;
+  medio_pago: 'transferencia' | 'efectivo';
+  efectivo_cobrado: boolean;
   creado_en: string;
 }
 
@@ -156,6 +158,17 @@ export function ClienteDetalle() {
       show('success', 'Pago eliminado');
     } catch (err: any) {
       show('error', 'No se pudo eliminar', err.response?.data?.error);
+    }
+  }
+
+  /** Marca a mano si un pago en efectivo ya fue cobrado (por el chofer al entregar) o no. */
+  async function marcarCobrado(pagoId: string, cobrado: boolean) {
+    try {
+      await api.patch(`/api/pagos/${pagoId}/cobrado`, { cobrado });
+      queryClient.invalidateQueries({ queryKey: ['clientes', telefono, 'viajes'] });
+      show('success', cobrado ? 'Marcado como pagado' : 'Marcado como no pagado');
+    } catch (err: any) {
+      show('error', 'No se pudo actualizar', err.response?.data?.error);
     }
   }
 
@@ -435,9 +448,23 @@ export function ClienteDetalle() {
                             return <span className="text-muted">—</span>;
                           }
                           return (
-                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
                               {esCC ? (
                                 <span className="badge pendiente">📋 Cuenta corriente</span>
+                              ) : inicial?.medio_pago === 'efectivo' ? (
+                                <>
+                                  <span className="badge pendiente">💵 Efectivo</span>
+                                  <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                                    <button
+                                      className={`badge ${inicial.efectivo_cobrado ? 'disponible' : 'rechazado'}`}
+                                      style={{ border: 'none', cursor: 'pointer' }}
+                                      onClick={() => marcarCobrado(inicial.id, !inicial.efectivo_cobrado)}
+                                      title="Click para cambiar"
+                                    >
+                                      {inicial.efectivo_cobrado ? '✅ Pagado' : '❌ No pagado'}
+                                    </button>
+                                  </RoleGate>
+                                </>
                               ) : inicial && (
                                 <RoleGate roles={['admin', 'operador', 'finanzas']}>
                                   <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
@@ -501,6 +528,20 @@ export function ClienteDetalle() {
                 {c.titular && <p className="text-muted" style={{ margin: '0 0 6px' }}>Titular: {c.titular}</p>}
                 {c.tiene_comprobante ? (
                   <ComprobanteViewer pagoId={c.id} />
+                ) : c.medio_pago === 'efectivo' ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="text-muted">💵 Paga en efectivo — sin archivo adjunto</span>
+                    <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                      <button
+                        className={`badge ${c.efectivo_cobrado ? 'disponible' : 'rechazado'}`}
+                        style={{ border: 'none', cursor: 'pointer' }}
+                        onClick={() => marcarCobrado(c.id, !c.efectivo_cobrado)}
+                        title="Click para cambiar"
+                      >
+                        {c.efectivo_cobrado ? '✅ Pagado' : '❌ No pagado'}
+                      </button>
+                    </RoleGate>
+                  </div>
                 ) : (
                   <span className="text-muted">Sin archivo adjunto (cuenta corriente)</span>
                 )}

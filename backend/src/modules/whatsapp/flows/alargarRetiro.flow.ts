@@ -29,6 +29,7 @@ export async function handleAlargarRetiro(m: MensajeEntrante, sesion: Sesion): P
 
   if (sesion.paso === 'elegir_contenedor_alargue') return manejarEleccionContenedor(m, sesion);
   if (sesion.paso === 'confirmar_alargue') return manejarConfirmacion(m, sesion);
+  if (sesion.paso === 'elegir_metodo_pago_alargue') return manejarMetodoPago(m, sesion);
   if (sesion.paso === 'esperando_comprobante_alargue') return manejarComprobante(m, sesion);
 
   const conts = await contenedoresDelCliente(to);
@@ -141,19 +142,42 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
 
-  // Cuenta corriente aprobada: se confirma solo, sin pedir comprobante — se
-  // aplica el vencimiento nuevo al toque y se suma a la deuda.
+  // Cuenta corriente aprobada: se confirma solo, sin pedir comprobante ni
+  // método de pago — se aplica el vencimiento nuevo al toque y se suma a la deuda.
   if (await tieneCuentaCorrienteAprobada(to)) {
     return registrarAlargueCC(to, sesion);
   }
 
-  await setSesion({ ...sesion, paso: 'esperando_comprobante_alargue' });
-  await sendText(
-    to,
-    `${datosBancarios()}\n\n` +
-      '💸 Transferí y mandame por acá la *foto o PDF* del comprobante.\n\n' +
-      '_Escribí *menú* si te arrepentiste y querés volver al inicio._',
-  );
+  await sendButtons(to, '💳 ¿Cómo vas a pagar la extensión?', OPCIONES_METODO_PAGO_ALARGUE);
+  await setSesion({ ...sesion, paso: 'elegir_metodo_pago_alargue' });
+}
+
+const OPCIONES_METODO_PAGO_ALARGUE = [
+  { id: 'metodo_transferencia', title: '💸 Transferencia' },
+  { id: 'metodo_efectivo', title: '💵 Efectivo' },
+];
+
+/** Maneja la respuesta a "¿Cómo vas a pagar la extensión?". */
+async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+
+  if (m.seleccionId === 'metodo_efectivo') {
+    await registrarAlargue(to, sesion, { medioPago: 'efectivo' });
+    return;
+  }
+
+  if (m.seleccionId === 'metodo_transferencia') {
+    await setSesion({ ...sesion, paso: 'esperando_comprobante_alargue' });
+    await sendText(
+      to,
+      `${datosBancarios()}\n\n` +
+        '💸 Transferí y mandame por acá la *foto o PDF* del comprobante.\n\n' +
+        '_Escribí *menú* si te arrepentiste y querés volver al inicio._',
+    );
+    return;
+  }
+
+  await sendButtons(to, 'Por favor, elegí una de las siguientes opciones. 👇', OPCIONES_METODO_PAGO_ALARGUE);
 }
 
 async function manejarComprobante(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -180,16 +204,17 @@ async function manejarComprobante(m: MensajeEntrante, sesion: Sesion): Promise<v
 async function registrarAlargue(
   to: string,
   sesion: Sesion,
-  pago: { rutaCifrada?: string; mediaId?: string | null },
+  pago: { rutaCifrada?: string; mediaId?: string | null; medioPago?: 'transferencia' | 'efectivo' },
 ): Promise<void> {
   const numero = sesion.contexto.numero as string;
   const costo = sesion.contexto.costo as number;
+  const medioPago = pago.medioPago ?? 'transferencia';
 
   const [row] = await query<{ id: string }>(
-    `INSERT INTO pagos (cliente_telefono, tipo, contenedor_numero, monto, url_comprobante, media_id, estado)
-     VALUES ($1, 'alargue_retiro', $2, $3, $4, $5, 'pendiente')
+    `INSERT INTO pagos (cliente_telefono, tipo, contenedor_numero, monto, url_comprobante, media_id, estado, medio_pago)
+     VALUES ($1, 'alargue_retiro', $2, $3, $4, $5, 'pendiente', $6)
      RETURNING id`,
-    [to, numero, costo, pago.rutaCifrada ?? null, pago.mediaId ?? null],
+    [to, numero, costo, pago.rutaCifrada ?? null, pago.mediaId ?? null, medioPago],
   );
 
   const [alerta] = await query(
@@ -197,7 +222,9 @@ async function registrarAlargue(
      VALUES ('alargue_solicitado', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [row.id, `${to} pidió alargar ${DIAS_ALARGUE} días el contenedor ${numero} (ARS ${costo})`],
+    [row.id, medioPago === 'efectivo'
+      ? `${to} pidió alargar ${DIAS_ALARGUE} días el contenedor ${numero} en EFECTIVO (ARS ${costo})`
+      : `${to} pidió alargar ${DIAS_ALARGUE} días el contenedor ${numero} (ARS ${costo})`],
   );
   if (alerta) {
     emitAlerta({
@@ -206,6 +233,7 @@ async function registrarAlargue(
       monto: costo,
       pago_estado: 'pendiente',
       tiene_comprobante: !!pago.rutaCifrada,
+      medio_pago: medioPago,
     });
   }
   emitRecursoActualizado('pagos');
@@ -213,8 +241,11 @@ async function registrarAlargue(
   await clearSesion(to);
   await sendText(
     to,
-    '✅ ¡Recibido! Tu pedido para alargar el retiro quedó *pendiente de validación* por un operador.\n\n' +
-      '_Si en un rato no tenés novedades, escribí *asesor*._',
+    medioPago === 'efectivo'
+      ? '✅ ¡Anotado! Tu extensión de retiro quedó registrada — se paga en *efectivo*. Un operador la va a confirmar en breve.\n\n' +
+        '_Si en un rato no tenés novedades, escribí *asesor*._'
+      : '✅ ¡Recibido! Tu pedido para alargar el retiro quedó *pendiente de validación* por un operador.\n\n' +
+        '_Si en un rato no tenés novedades, escribí *asesor*._',
   );
 }
 

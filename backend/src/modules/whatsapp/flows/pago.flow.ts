@@ -58,6 +58,11 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     return manejarEleccionPedidoCC(m, sesion);
   }
 
+  // Respuesta a "¿Para cuál cotización es este pago en efectivo?"
+  if (sesion.paso === 'elegir_pedido_efectivo') {
+    return manejarEleccionPedidoEfectivo(m, sesion);
+  }
+
   // Si el usuario escribió "Ya pagué" (o "pago"/"pagar"/etc, ver messageRouter)
   // sin adjuntar nada aún: antes de pedirle el comprobante, preguntamos cómo
   // va a pagar — pero "Cuenta corriente" solo se ofrece a quien ya la tiene
@@ -170,7 +175,10 @@ export async function tieneCuentaCorrienteAprobada(telefono: string): Promise<bo
 
 /** Botones de "¿Cómo vas a pagar?" — Cuenta corriente solo si ya está aprobada. */
 export async function opcionesMetodoPago(telefono: string): Promise<{ id: string; title: string }[]> {
-  const opciones = [{ id: 'metodo_transferencia', title: '💸 Transferencia' }];
+  const opciones = [
+    { id: 'metodo_transferencia', title: '💸 Transferencia' },
+    { id: 'metodo_efectivo', title: '💵 Efectivo' },
+  ];
   if (await tieneCuentaCorrienteAprobada(telefono)) {
     opciones.push({ id: 'metodo_cuenta_corriente', title: '📋 Cuenta corriente' });
   }
@@ -228,6 +236,10 @@ async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<vo
       return;
     }
     return iniciarCuentaCorriente(m);
+  }
+
+  if (m.seleccionId === 'metodo_efectivo') {
+    return iniciarPagoEfectivo(m);
   }
 
   if (m.seleccionId === 'metodo_transferencia') {
@@ -345,6 +357,94 @@ async function registrarCuentaCorriente(to: string, pedido: PedidoCandidato | un
       ? '✅ ¡Listo! Quedó registrado a tu cuenta corriente. En cuanto lo confirmemos te mandamos el *ticket* con el contenedor asignado. 📦'
       : '📋 Anotado. Tu cuenta corriente todavía tiene que aprobarla un operador — en cuanto la revisen seguimos con tu pedido.\n\n' +
         '_Si en un rato no tenés novedades, escribí *asesor*._',
+  );
+}
+
+/**
+ * El cliente eligió pagar en efectivo (contra entrega): no hay comprobante
+ * que subir, así que se registra directo. Igual que con cuenta corriente, si
+ * tiene más de una cotización abierta se le pregunta a cuál corresponde. La
+ * confirmación real del pedido queda en manos de un operador (mismo botón
+ * "Validar" que un comprobante — ver POST /api/pagos/:id/validar), que
+ * además le avisa al chofer que ese pedido se cobra en efectivo.
+ */
+async function iniciarPagoEfectivo(m: MensajeEntrante): Promise<void> {
+  const to = m.from;
+  const pedidos = await pedidosAbiertos(to);
+  if (pedidos.length > 1) {
+    await setSesion({ telefono: to, flujo: 'pago', paso: 'elegir_pedido_efectivo', contexto: {} });
+    await sendList(
+      to,
+      '¿Para cuál es este pedido en efectivo?',
+      'Tenés más de una cotización activa — decime a cuál corresponde:',
+      'Ver cotizaciones',
+      pedidos.map((p) => ({
+        id: `pedido:${p.id}`,
+        title: p.zona,
+        description: `ARS ${Number(p.precio).toLocaleString('es-AR')}`,
+      })),
+    );
+    return;
+  }
+  await registrarPagoEfectivo(to, pedidos[0]);
+}
+
+/** Maneja la respuesta a "¿Para cuál es este pedido en efectivo?". */
+async function manejarEleccionPedidoEfectivo(m: MensajeEntrante, _sesion: Sesion): Promise<void> {
+  const to = m.from;
+  if (m.tipo !== 'interactive_list' || !m.seleccionId?.startsWith('pedido:')) {
+    await manejarRespuestaInvalida(m, 'Por favor, elegí una de las cotizaciones de la lista de arriba. 👆\n\n_Escribí *menú* para volver al inicio._');
+    return;
+  }
+  const pedidoId = m.seleccionId.replace('pedido:', '');
+  const [pedido] = await query<PedidoCandidato>(
+    `SELECT pe.id, pe.zona, pe.precio
+       FROM pedidos pe
+      WHERE pe.id = $1 AND pe.cliente_telefono = $2`,
+    [pedidoId, to],
+  );
+  if (!pedido) {
+    await clearSesion(to);
+    await sendText(to, '🙁 Esa cotización ya no está disponible. Escribí *menú* para volver a empezar.');
+    return;
+  }
+  await registrarPagoEfectivo(to, pedido);
+}
+
+/** Registra el pago en efectivo (sin comprobante) y alerta al panel para que un operador confirme el pedido. */
+async function registrarPagoEfectivo(to: string, pedido: PedidoCandidato | undefined): Promise<void> {
+  const [pago] = await query<{ id: string }>(
+    `INSERT INTO pagos (cliente_telefono, pedido_id, estado, medio_pago)
+     VALUES ($1,$2,'pendiente','efectivo') RETURNING id`,
+    [to, pedido?.id ?? null],
+  );
+
+  const [alerta] = await query(
+    `INSERT INTO alertas (tipo, referencia_id, mensaje)
+     VALUES ('pago_pendiente_validacion', $1, $2)
+     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+    [pago.id, `${to} eligió pagar en EFECTIVO — confirmar pedido`],
+  );
+  if (alerta) {
+    emitAlerta({
+      ...alerta,
+      cliente_telefono: to,
+      monto: null,
+      pago_estado: 'pendiente',
+      tiene_comprobante: false,
+      medio_pago: 'efectivo',
+      zona: pedido?.zona ?? null,
+      precio: pedido?.precio ?? null,
+    });
+  }
+
+  await clearSesion(to);
+  await sendText(
+    to,
+    '💵 ¡Anotado! Vas a pagar en *efectivo* al momento de la entrega.\n\n' +
+      'Un agente va a confirmar tu pedido en breve — en cuanto lo hagamos, te mandamos el *ticket*. 📦\n\n' +
+      '_Si en un rato no tenés novedades, escribí *asesor*._',
   );
 }
 

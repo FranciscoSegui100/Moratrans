@@ -115,6 +115,8 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
                 'es_cuenta_corriente', p.es_cuenta_corriente,
                 'tiene_comprobante', (p.url_comprobante IS NOT NULL),
                 'titular', p.titular_transferencia,
+                'medio_pago', p.medio_pago,
+                'efectivo_cobrado', p.efectivo_cobrado,
                 'creado_en', p.creado_en
               ) ORDER BY p.creado_en ASC)
               FROM pagos p

@@ -22,6 +22,8 @@ interface Pago {
   es_cuenta_corriente: boolean;
   tipo: 'flete' | 'alargue_retiro' | 'abono_cc';
   contenedor_numero: string | null;
+  medio_pago: 'transferencia' | 'efectivo';
+  efectivo_cobrado: boolean;
 }
 
 interface Adjunto { id: string; creado_en: string; }
@@ -200,6 +202,8 @@ export function Pagos() {
                   <RoleGate roles={['admin', 'operador', 'finanzas']}>
                     {p.url_comprobante ? (
                       <ComprobanteViewer pagoId={p.id} />
+                    ) : p.medio_pago === 'efectivo' ? (
+                      <span className="badge pendiente">💵 Efectivo — pendiente de cobro</span>
                     ) : p.es_cuenta_corriente ? (
                       <span className="badge pendiente">📋 Cuenta corriente — sin comprobante</span>
                     ) : (

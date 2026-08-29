@@ -25,6 +25,7 @@ export interface Alerta {
   tiene_comprobante?: boolean | null;
   zona?: string | null;
   precio?: string | null;
+  medio_pago?: 'transferencia' | 'efectivo' | null;
 }
 
 const ALERTAS_KEY = ['alertas'];

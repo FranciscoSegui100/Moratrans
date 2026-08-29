@@ -1,9 +1,12 @@
 import { query } from '../../../config/db';
 import { sendText, sendList, sendButtons, sendLocationRequest } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
-import { datosBancarios } from './pago.flow';
+import { opcionesMetodoPago, tieneCuentaCorrienteAprobada } from './pago.flow';
 import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
 import { reverseGeocode } from '../../../services/geocoding.service';
+import { resolverUbicacion } from '../../../services/ubicaciones.service';
+import { enviarTicketPorWhatsApp } from '../../../services/pdf.service';
+import { emitRecursoActualizado } from '../../../config/socket';
 import {
   pedirDepartamento,
   departamentoElegido,
@@ -607,12 +610,12 @@ async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion): 
     fechaRetiroEstimada: string;
   };
 
-  const [pedido] = await query<{ numero_pedido: number }>(
+  const [pedido] = await query<{ id: string; numero_pedido: number }>(
     `INSERT INTO pedidos (
        cliente_telefono, cliente_nombre, zona, precio, estado, destino_lat, destino_lng, destino_direccion,
        direccion_verificada, horario_preferido, tipo_lugar, fecha_entrega, fecha_retiro_estimada
      ) VALUES ($1,$2,$3,$4,'cotizado',$5,$6,$7,$8,$9,$10,$11,$12)
-     RETURNING numero_pedido`,
+     RETURNING id, numero_pedido`,
     [
       to, m.nombrePerfil ?? null, departamento, precio, destinoLat, destinoLng, destinoDireccion,
       direccionVerificada, horarioTitle, tipoLugar ?? null, fechaEntrega, fechaRetiroEstimada,
@@ -621,14 +624,95 @@ async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion): 
   // El cliente ya quedó dado de alta en `clientes` antes de llegar acá (ver
   // necesitaNombre/manejarNombrePedido más arriba) — no hace falta repetirlo.
 
+  // Cuenta corriente ya aprobada: se confía en el cliente (misma lógica que
+  // "Pedir contenedor", ver pedirEntrega.flow.ts) — no se le pregunta cómo
+  // pagar, el pedido queda aprobado de una sin esperar a que un operador
+  // valide nada.
+  if (await tieneCuentaCorrienteAprobada(to)) {
+    await finalizarPedidoCuentaCorriente(to, pedido, { departamento, destinoLat, destinoLng, destinoDireccion, precio, fechaEntrega, horarioTitle });
+    return;
+  }
+
+  await sendButtons(
+    to,
+    `✅ *Pedido #${pedido.numero_pedido} confirmado*\n\n¿Cómo vas a pagar?`,
+    await opcionesMetodoPago(to),
+  );
+  // Reusa la misma máquina de estados de pago.flow.ts (elegir_metodo_pago):
+  // así "transferencia"/"efectivo" se manejan en un solo lugar, sea que el
+  // cliente elija acá recién confirmado el pedido o más tarde escribiendo
+  // "Ya pagué".
+  await setSesion({ telefono: to, flujo: 'pago', paso: 'elegir_metodo_pago', contexto: {} });
+}
+
+/**
+ * Aprobación automática para cuenta corriente ya aprobada: reusa
+ * fn_validar_pago (misma función atómica que usa un operador al validar un
+ * comprobante) pero disparada al toque por el sistema, sin pago 'pendiente'
+ * esperando revisión — no se pasa contenedor explícito, así que queda en la
+ * bolsa sin rutear (mismo criterio que un flete validado sin contenedor
+ * elegido a mano), para asignarle contenedor y chofer desde Rutas.
+ */
+async function finalizarPedidoCuentaCorriente(
+  to: string,
+  pedido: { id: string; numero_pedido: number },
+  datos: {
+    departamento: string;
+    destinoLat: number | null;
+    destinoLng: number | null;
+    destinoDireccion: string | null;
+    precio: string;
+    fechaEntrega: string;
+    horarioTitle: string;
+  },
+): Promise<void> {
+  const [pago] = await query<{ id: string }>(
+    `INSERT INTO pagos (cliente_telefono, pedido_id, estado, es_cuenta_corriente)
+     VALUES ($1,$2,'pendiente',TRUE) RETURNING id`,
+    [to, pedido.id],
+  );
+
+  const [result] = await query<{ ticket_id: string; contenedor: string | null; reservado_ahora: boolean }>(
+    'SELECT * FROM fn_validar_pago($1, NULL, NULL)',
+    [pago.id],
+  );
+
+  const ubicacion = await resolverUbicacion('deposito');
+  await query(
+    `INSERT INTO viajes (
+       tipo, fecha, contenedor_numero, cliente_telefono, zona, importe, estado, notas,
+       ubicacion_id, ubicacion_direccion, destino_direccion, destino_lat, destino_lng,
+       horario_preferido, pago_id, es_cuenta_corriente
+     ) VALUES ('entrega', $1, $2, $3, $4, $5, 'programado', $6, $7, $8, $9, $10, $11, $12, $13, TRUE)`,
+    [
+      datos.fechaEntrega, result.contenedor, to, datos.departamento, datos.precio,
+      'Creado al validar el pago (cuenta corriente, en bolsa sin rutear)',
+      ubicacion?.id ?? null, ubicacion?.direccion ?? null, datos.destinoDireccion, datos.destinoLat, datos.destinoLng,
+      datos.horarioTitle, pago.id,
+    ],
+  );
+
+  emitRecursoActualizado('pagos');
+  emitRecursoActualizado('viajes');
+
+  enviarTicketPorWhatsApp({
+    ticketId: result.ticket_id,
+    numeroPedido: pedido.numero_pedido,
+    contenedor: result.contenedor,
+    zona: datos.departamento,
+    destinoDireccion: datos.destinoDireccion,
+    fechaEntrega: formatearFechaLarga(datos.fechaEntrega),
+    horarioPreferido: datos.horarioTitle,
+    precio: datos.precio,
+    clienteTelefono: to,
+    medioPago: 'cuenta_corriente',
+    fecha: new Date(),
+  }).catch((e) => console.error('Error enviando ticket (cuenta corriente):', e));
+
+  await clearSesion(to);
   await sendText(
     to,
-    `✅ *Pedido #${pedido.numero_pedido} confirmado*\n\n` +
-      `Para reservarlo, hacé el pago con estos datos:\n\n` +
-      `${datosBancarios()}\n\n` +
-      `Y enviános el comprobante por este chat 📎\n` +
-      `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +
-      `_Escribí *menú* para volver al inicio en cualquier momento._`,
+    `✅ ¡Listo! Tu pedido #${pedido.numero_pedido} quedó *confirmado* por cuenta corriente — en breve te asignamos contenedor y chofer.\n\n` +
+      '_Para ver el detalle y el total pendiente de tu cuenta, escribí *Resumen de cuenta* en el menú._',
   );
-  await clearSesion(to);
 }

@@ -9,6 +9,7 @@ import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { reservarParaEntrega } from '../../services/contenedorReserva.service';
 import { emitRecursoActualizado } from '../../config/socket';
+import { avisoEfectivoChofer } from '../whatsapp/avisoEfectivo';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -186,6 +187,8 @@ export async function avisarChoferRecambio(
   destinoDireccion: string | null,
   clienteTelefono: string | null = null,
   horaEstimada: string | null = null,
+  medioPago: string | null = null,
+  precio: string | null = null,
 ): Promise<void> {
   const [chofer] = await query<{ telefono: string | null; nombre: string }>(
     'SELECT telefono, nombre FROM choferes WHERE id = $1',
@@ -216,7 +219,8 @@ export async function avisarChoferRecambio(
       (cliente ? `Cliente: *${cliente}*\n` : '') +
       (hora ? `Horario estimado: *${hora} hs*\n` : '') +
       `📍 Dirección:\n${destino}\n\n` +
-      'Cuando lo completes, marcalo desde el menú del chofer.',
+      'Cuando lo completes, marcalo desde el menú del chofer.' +
+      avisoEfectivoChofer(medioPago, precio),
   );
   await menuChofer(chofer.telefono, chofer.nombre);
 }

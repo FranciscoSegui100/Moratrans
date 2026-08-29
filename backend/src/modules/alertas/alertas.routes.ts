@@ -18,11 +18,12 @@ const SELECT_ALERTAS = `
          p.cliente_telefono,
          p.monto,
          p.estado AS pago_estado,
+         p.medio_pago,
          (p.url_comprobante IS NOT NULL) AS tiene_comprobante,
          pe.zona,
          pe.precio
     FROM alertas a
-    LEFT JOIN pagos p    ON a.tipo = 'pago_pendiente_validacion' AND p.id::text = a.referencia_id
+    LEFT JOIN pagos p    ON a.tipo IN ('pago_pendiente_validacion', 'alargue_solicitado') AND p.id::text = a.referencia_id
     LEFT JOIN pedidos pe ON pe.id = p.pedido_id
 `;
 alertasRouter.get('/', async (req: Request, res: Response) => {

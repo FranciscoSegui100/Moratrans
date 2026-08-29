@@ -10,6 +10,7 @@ import { subirArchivo, descargarArchivo } from '../../services/storage.service';
 import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { avisarChoferRecambio } from '../viajes/viajes.routes';
+import { avisoEfectivoChofer } from '../whatsapp/avisoEfectivo';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
@@ -35,6 +36,7 @@ pagosRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query(
     `SELECT p.id, p.cliente_telefono, p.monto, p.url_comprobante, p.estado, p.creado_en,
             p.titular_transferencia, p.es_cuenta_corriente, p.tipo, p.contenedor_numero,
+            p.medio_pago, p.efectivo_cobrado,
             pe.zona, pe.precio,
             (SELECT COUNT(*) FROM pagos_adjuntos pa WHERE pa.pago_id = p.id)::int AS adjuntos_count
        FROM pagos p
@@ -137,6 +139,8 @@ async function avisarChoferAsignacion(
     destino_lat: string | null;
     destino_lng: string | null;
     destino_direccion: string | null;
+    medio_pago?: string | null;
+    precio?: string | null;
   } | undefined,
 ): Promise<void> {
   const [chofer] = await query<{ telefono: string | null; nombre: string }>(
@@ -158,7 +162,8 @@ async function avisarChoferAsignacion(
       `📦 Contenedor: *${contenedor}*\n` +
       `👤 Cliente: ${info?.cliente_nombre ?? 'Sin nombre registrado'}\n` +
       `📞 Teléfono: ${info?.cliente_telefono ?? '—'}\n` +
-      `📍 Destino:\n${destino}`,
+      `📍 Destino:\n${destino}` +
+      avisoEfectivoChofer(info?.medio_pago, info?.precio),
   );
   // El menú (botones) sale abajo del aviso: un solo toque para avisar
   // "voy en camino" apenas arranca, sin tener que escribir nada.
@@ -172,13 +177,20 @@ async function avisarChoferAsignacion(
  * reservada para más adelante, pero recién puede actuar cuando el
  * contenedor vuelva (ahí se le vuelve a avisar, ver confirmar-retiro).
  */
-async function avisarChoferReservaFutura(choferId: string, contenedor: string, fechaEntrega: string): Promise<void> {
+async function avisarChoferReservaFutura(
+  choferId: string,
+  contenedor: string,
+  fechaEntrega: string,
+  medioPago?: string | null,
+  precio?: string | null,
+): Promise<void> {
   const [chofer] = await query<{ telefono: string | null }>('SELECT telefono FROM choferes WHERE id = $1', [choferId]);
   if (!chofer?.telefono) return;
   await sendText(
     chofer.telefono,
     `📦 Te quedó reservada una entrega del contenedor *${contenedor}*, pero todavía está con otro cliente.\n` +
-      `Prevista para el ${formatearFechaCorta(fechaEntrega)} — te avisamos apenas esté listo para salir.`,
+      `Prevista para el ${formatearFechaCorta(fechaEntrega)} — te avisamos apenas esté listo para salir.` +
+      avisoEfectivoChofer(medioPago, precio),
   );
 }
 
@@ -400,13 +412,14 @@ pagosRouter.post('/:id/reenviar-aviso', requireRol('admin', 'operador', 'finanza
         destino_direccion: string | null;
         horario_preferido: string | null;
         es_cuenta_corriente: boolean;
+        medio_pago: string;
         fecha_entrega: string | null;
         numero_pedido: number | null;
         fecha_retiro_estimada: string | null;
         titular_transferencia: string | null;
       }>(
         `SELECT p.cliente_telefono, COALESCE(c.nombre, pe.cliente_nombre) AS cliente_nombre, pe.zona, pe.precio,
-                pe.destino_direccion, pe.horario_preferido, p.es_cuenta_corriente,
+                pe.destino_direccion, pe.horario_preferido, p.es_cuenta_corriente, p.medio_pago,
                 pe.fecha_entrega, pe.numero_pedido, pe.fecha_retiro_estimada, p.titular_transferencia
            FROM pagos p
            LEFT JOIN pedidos pe ON pe.id = p.pedido_id
@@ -428,7 +441,7 @@ pagosRouter.post('/:id/reenviar-aviso', requireRol('admin', 'operador', 'finanza
         precio: info.precio,
         clienteNombre: info.cliente_nombre,
         clienteTelefono: info.cliente_telefono,
-        medioPago: info.es_cuenta_corriente ? 'cuenta_corriente' : 'transferencia',
+        medioPago: info.es_cuenta_corriente ? 'cuenta_corriente' : info.medio_pago === 'efectivo' ? 'efectivo' : 'transferencia',
         titularTransferencia: info.titular_transferencia,
         fecha: new Date(),
       });
@@ -497,6 +510,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       destino_direccion: string | null;
       horario_preferido: string | null;
       es_cuenta_corriente: boolean;
+      medio_pago: string;
       pedido_tipo: string | null;
       contenedor_recambio_numero: string | null;
       fecha_entrega: string | null;
@@ -506,6 +520,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
     }>(
       `SELECT p.cliente_telefono, COALESCE(c.nombre, pe.cliente_nombre) AS cliente_nombre, pe.zona, pe.precio,
               pe.destino_lat, pe.destino_lng, pe.destino_direccion, pe.horario_preferido, p.es_cuenta_corriente,
+              p.medio_pago,
               pe.tipo AS pedido_tipo, pe.contenedor_recambio_numero, pe.fecha_entrega,
               pe.numero_pedido, pe.fecha_retiro_estimada, p.titular_transferencia
          FROM pagos p
@@ -568,7 +583,10 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       );
 
       if (choferId && result.contenedor) {
-        avisarChoferRecambio(choferId, info!.contenedor_recambio_numero!, result.contenedor, ubicacion?.id ?? null, info?.destino_direccion ?? null).catch((e) => {
+        avisarChoferRecambio(
+          choferId, info!.contenedor_recambio_numero!, result.contenedor, ubicacion?.id ?? null, info?.destino_direccion ?? null,
+          null, null, info?.medio_pago, info?.precio,
+        ).catch((e) => {
           const motivo = motivoErrorWa(e);
           console.error('Error avisando al chofer el recambio:', motivo);
           notificarEnvioFallido(result.contenedor, `chofer del recambio ${info!.contenedor_recambio_numero}`, 'aviso de recambio asignado', motivo).catch(
@@ -604,7 +622,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
             );
           });
         } else if (fechaEntrega) {
-          avisarChoferReservaFutura(choferId, result.contenedor, fechaEntrega).catch((e) =>
+          avisarChoferReservaFutura(choferId, result.contenedor, fechaEntrega, info?.medio_pago, info?.precio).catch((e) =>
             console.error('Error avisando reserva futura al chofer:', motivoErrorWa(e)),
           );
         }
@@ -631,7 +649,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       precio: info?.precio,
       clienteNombre: info?.cliente_nombre ?? null,
       clienteTelefono: info.cliente_telefono,
-      medioPago: info?.es_cuenta_corriente ? 'cuenta_corriente' : 'transferencia',
+      medioPago: info?.es_cuenta_corriente ? 'cuenta_corriente' : info?.medio_pago === 'efectivo' ? 'efectivo' : 'transferencia',
       titularTransferencia: info?.titular_transferencia ?? null,
       fecha: new Date(),
     }).catch((e) => {
@@ -703,6 +721,24 @@ pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), a
   ).catch((e) => console.error('Error avisando rechazo de pago:', motivoErrorWa(e)));
 
   res.json({ ok: true });
+});
+
+/**
+ * PATCH /api/pagos/:id/cobrado — marca a mano si un pago en efectivo ya fue
+ * cobrado o no. Independiente de `estado` (que significa "pedido confirmado
+ * y contenedor reservado", no "plata recibida" — ver migración 0042): el
+ * chofer cobra en el momento de la entrega y recién ahí un operador lo marca
+ * acá, típicamente desde la ficha del cliente.
+ */
+pagosRouter.patch('/:id/cobrado', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+  const cobrado = req.body?.cobrado !== false;
+  const [pago] = await query<{ id: string }>(
+    `UPDATE pagos SET efectivo_cobrado = $2 WHERE id = $1 AND medio_pago = 'efectivo' RETURNING id`,
+    [req.params.id, cobrado],
+  );
+  if (!pago) return res.status(409).json({ error: 'Ese pago no es en efectivo' });
+  emitRecursoActualizado('pagos');
+  res.json({ ok: true, cobrado });
 });
 
 /**

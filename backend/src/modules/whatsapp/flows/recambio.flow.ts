@@ -6,7 +6,7 @@ import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
-import { datosBancarios, tieneCuentaCorrienteAprobada, pedidosAbiertos, mensajePedidoPendiente } from './pago.flow';
+import { opcionesMetodoPago, tieneCuentaCorrienteAprobada, pedidosAbiertos, mensajePedidoPendiente } from './pago.flow';
 import { reverseGeocode } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
@@ -538,16 +538,15 @@ async function finalizarRecambioPago(m: MensajeEntrante, sesion: Sesion): Promis
     [to, m.nombrePerfil ?? null, zona, precio, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, numero],
   );
 
-  await clearSesion(to);
-  await sendText(
+  await sendButtons(
     to,
-    `✅ *Recambio confirmado — contenedor ${numero}*\n\n` +
-      `Para reservarlo, hacé el pago con estos datos:\n\n` +
-      `${datosBancarios()}\n\n` +
-      `Y enviános el comprobante por este chat 📎\n` +
-      `(escribí *Ya pagué* o adjuntá directamente la foto/PDF).\n\n` +
-      `_Escribí *menú* para volver al inicio en cualquier momento._`,
+    `✅ *Recambio confirmado — contenedor ${numero}*\n\n¿Cómo vas a pagar?`,
+    await opcionesMetodoPago(to),
   );
+  // Reusa la misma máquina de estados de pago.flow.ts (elegir_metodo_pago) —
+  // pedidosAbiertos() ya encuentra este pedido tipo='recambio' igual que
+  // cualquier otro (ver cotizacion.flow.ts, mismo criterio).
+  await setSesion({ telefono: to, flujo: 'pago', paso: 'elegir_metodo_pago', contexto: {} });
 }
 
 /**

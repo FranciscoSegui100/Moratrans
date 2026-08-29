@@ -27,7 +27,7 @@ export interface DatosTicket {
   precio?: number | string | null;
   clienteNombre?: string | null;
   clienteTelefono: string;
-  medioPago: 'transferencia' | 'cuenta_corriente';
+  medioPago: 'transferencia' | 'cuenta_corriente' | 'efectivo';
   titularTransferencia?: string | null;
   fecha: Date;
 }
@@ -192,7 +192,12 @@ function generarTicketPDF(d: DatosTicket): Promise<Buffer> {
     y += 15;
 
     y = dibujarTituloSeccion(doc, y, 'Datos del pago');
-    y = dibujarFila(doc, y, 'Medio de pago', d.medioPago === 'cuenta_corriente' ? 'Cuenta corriente' : 'Transferencia bancaria');
+    y = dibujarFila(
+      doc,
+      y,
+      'Medio de pago',
+      d.medioPago === 'cuenta_corriente' ? 'Cuenta corriente' : d.medioPago === 'efectivo' ? 'Efectivo contra entrega' : 'Transferencia bancaria',
+    );
     if (d.titularTransferencia) y = dibujarFila(doc, y, 'Titular de la transferencia', d.titularTransferencia);
     y += 10;
 

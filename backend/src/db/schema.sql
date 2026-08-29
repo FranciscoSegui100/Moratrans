@@ -257,6 +257,13 @@ CREATE TABLE pagos (
   tipo             tipo_pago   NOT NULL DEFAULT 'flete',
   -- Solo se usa cuando tipo = 'alargue_retiro': qué contenedor extender.
   contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL ON UPDATE CASCADE,
+  -- Cómo va a pagar un cliente ocasional (transferencia o efectivo contra
+  -- entrega) — independiente de es_cuenta_corriente. Ver migración 0042.
+  medio_pago       TEXT NOT NULL DEFAULT 'transferencia' CHECK (medio_pago IN ('transferencia', 'efectivo')),
+  -- Solo aplica a medio_pago = 'efectivo': el pago puede quedar 'validado'
+  -- (pedido confirmado, contenedor reservado) sin que la plata todavía haya
+  -- sido cobrada en mano — un operador lo marca a mano cuando ocurre.
+  efectivo_cobrado BOOLEAN NOT NULL DEFAULT FALSE,
   estado           estado_pago NOT NULL DEFAULT 'pendiente',
   validado_por     UUID REFERENCES usuarios(id) ON DELETE SET NULL,
   motivo_rechazo   TEXT,

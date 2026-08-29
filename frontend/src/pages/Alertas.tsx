@@ -149,6 +149,8 @@ export function Alertas() {
                       <RoleGate roles={['admin', 'operador', 'finanzas']}>
                         {a.tiene_comprobante ? (
                           <ComprobanteViewer pagoId={a.referencia_id} />
+                        ) : a.medio_pago === 'efectivo' ? (
+                          <span className="text-muted">💵 Paga en efectivo — sin comprobante</span>
                         ) : a.tipo === 'cuenta_corriente_solicitada' ? (
                           <span className="text-muted">📋 Pago a cuenta corriente — sin comprobante</span>
                         ) : (
@@ -164,23 +166,25 @@ export function Alertas() {
                           className="btn btn-success btn-sm"
                           disabled={procesando === a.referencia_id}
                         >
-                          <Check strokeWidth={2} /> Impactó — Validar
+                          <Check strokeWidth={2} /> {a.medio_pago === 'efectivo' ? 'Confirmar pedido' : 'Impactó — Validar'}
                         </button>
                         <button
                           onClick={() => onRechazar(a.referencia_id)}
                           className="btn btn-danger btn-sm"
                           disabled={procesando === a.referencia_id}
                         >
-                          <X strokeWidth={2} /> No impactó — Rechazar
+                          <X strokeWidth={2} /> {a.medio_pago === 'efectivo' ? 'Rechazar pedido' : 'No impactó — Rechazar'}
                         </button>
-                        <button
-                          onClick={() => onPedirDeNuevo(a.referencia_id)}
-                          className="btn btn-ghost btn-sm"
-                          disabled={procesando === a.referencia_id}
-                          title="El comprobante no se lee bien: le pedimos al cliente que lo reenvíe"
-                        >
-                          <RotateCcw strokeWidth={1.75} /> Pedir de nuevo
-                        </button>
+                        {a.medio_pago !== 'efectivo' && (
+                          <button
+                            onClick={() => onPedirDeNuevo(a.referencia_id)}
+                            className="btn btn-ghost btn-sm"
+                            disabled={procesando === a.referencia_id}
+                            title="El comprobante no se lee bien: le pedimos al cliente que lo reenvíe"
+                          >
+                            <RotateCcw strokeWidth={1.75} /> Pedir de nuevo
+                          </button>
+                        )}
                       </div>
                     </RoleGate>
                   </div>
