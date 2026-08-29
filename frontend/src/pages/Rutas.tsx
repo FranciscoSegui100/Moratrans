@@ -257,6 +257,9 @@ function DetalleRuta({ rutaId, contenedoresDisponibles, rutasDelDia, viajesDelDi
   const { data: ruta } = useQuery({
     queryKey: ['rutas', rutaId],
     queryFn: () => api.get<RutaData>(`/api/rutas/${rutaId}`).then((r) => r.data),
+    // Refresca los disponibles por parada (simulación del backend) cada 15 s
+    // para que los selects de contenedor muestren siempre el stock real.
+    refetchInterval: 15000,
   });
   const { data: ubicaciones = [] } = useQuery({
     queryKey: ['ubicaciones'],
@@ -728,6 +731,9 @@ export function Rutas() {
   const { data: contenedoresDisponibles = [] } = useQuery({
     queryKey: ['contenedores', 'disponibles'],
     queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data.filter((c) => c.estado === 'disponible')),
+    // Refresca el stock de depósito cada 15 s: puede cambiar cuando otro
+    // operador mueve contenedores en paralelo.
+    refetchInterval: 15000,
   });
   // Rutas 'en_curso' de días anteriores al elegido: si nadie las cerró (ej.
   // camión roto, tareas que quedaron sin reasignar), el corte manual del día
