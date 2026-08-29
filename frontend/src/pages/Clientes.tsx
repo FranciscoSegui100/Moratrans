@@ -224,6 +224,7 @@ export function Clientes() {
               <th>Nº plan</th>
               <th>Viajes</th>
               <th>Último viaje</th>
+              <th>Pago efectivo</th>
               <th>Acciones</th>
               <th></th>
             </tr>
@@ -260,6 +261,27 @@ export function Clientes() {
                   </td>
                   <td>{c.cantidad_viajes}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>{c.ultimo_viaje ? formatearFecha(c.ultimo_viaje) : <span className="text-muted">—</span>}</td>
+                  <td>
+                    {c.efectivo_pendiente_id ? (
+                      puedeEditarPlan ? (
+                        <button
+                          className="badge rechazado"
+                          style={{ border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                          onClick={() => marcarCobrado(c.efectivo_pendiente_id!)}
+                          title="Click para marcar como pagado"
+                        >
+                          <Banknote size={11} strokeWidth={1.75} />
+                          No pagado{c.efectivo_pendiente_monto ? ` · $${Number(c.efectivo_pendiente_monto).toLocaleString('es-AR')}` : ''}
+                        </button>
+                      ) : (
+                        <span className="badge rechazado">
+                          ❌ No pagado{c.efectivo_pendiente_monto ? ` · $${Number(c.efectivo_pendiente_monto).toLocaleString('es-AR')}` : ''}
+                        </span>
+                      )
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
                   <td>
                     <RoleGate roles={['admin', 'operador', 'finanzas']}>
                       {c.cuenta_corriente_estado === 'pendiente' && (
@@ -323,7 +345,7 @@ export function Clientes() {
             })}
             {clientes.length === 0 && (
               <tr>
-                <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   {todosLosClientes.length === 0
                     ? 'Todavía no hay clientes registrados (aparecen solos cuando cotizan por WhatsApp).'
                     : pestana === 'cuenta_corriente'
