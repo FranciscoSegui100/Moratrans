@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Check, X, Download, Pencil, ArrowRight, Send, Plus, Trash2 } from 'lucide-react';
+import { Check, X, Download, Pencil, ArrowRight, Send, Plus, Trash2, Banknote } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -16,6 +16,8 @@ interface Cliente {
   numero_plan: number | null;
   cantidad_viajes: number;
   ultimo_viaje: string | null;
+  efectivo_pendiente_id: string | null;
+  efectivo_pendiente_monto: string | null;
 }
 
 type Pestana = 'cuenta_corriente' | 'ocasionales';
@@ -57,6 +59,17 @@ export function Clientes() {
       show('success', estado === 'aprobada' ? 'Cuenta corriente aprobada' : 'Cuenta corriente rechazada');
     } catch {
       show('error', 'No se pudo actualizar la cuenta corriente');
+    }
+  }
+
+  /** Marca cobrado el pago en efectivo más reciente de este cliente que todavía no lo estaba (ver PATCH /api/pagos/:id/cobrado). */
+  async function marcarCobrado(pagoId: string) {
+    try {
+      await api.patch(`/api/pagos/${pagoId}/cobrado`, { cobrado: true });
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      show('success', 'Marcado como pagado');
+    } catch (err: any) {
+      show('error', 'No se pudo actualizar', err.response?.data?.error);
     }
   }
 

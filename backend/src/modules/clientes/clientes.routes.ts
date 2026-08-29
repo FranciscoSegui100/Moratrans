@@ -9,14 +9,28 @@ import { normalizarTelefonoAR } from '../../services/telefono.service';
 export const clientesRouter = Router();
 clientesRouter.use(requireAuth);
 
-/** GET /api/clientes — listado con totales de viajes (join por teléfono, ver clientes.service.ts). */
+/**
+ * GET /api/clientes — listado con totales de viajes (join por teléfono, ver
+ * clientes.service.ts). Suma el pago en efectivo más reciente que todavía no
+ * se marcó cobrado (si tiene alguno) para poder mostrar/tildar "Pagado" de
+ * un vistazo en la tabla, sin tener que entrar al perfil de cada cliente
+ * (ver migración 0043 y PATCH /api/pagos/:id/cobrado).
+ */
 clientesRouter.get('/', async (_req: Request, res: Response) => {
   const rows = await query(
     `SELECT cl.id, cl.nombre, cl.telefono, cl.cuenta_corriente_estado, cl.numero_plan, cl.creado_en,
-            COUNT(v.id)::int AS cantidad_viajes, MAX(v.fecha) AS ultimo_viaje
+            COUNT(v.id)::int AS cantidad_viajes, MAX(v.fecha) AS ultimo_viaje,
+            ep.id AS efectivo_pendiente_id, ep.monto AS efectivo_pendiente_monto
        FROM clientes cl
        LEFT JOIN viajes v ON v.cliente_telefono = cl.telefono
-      GROUP BY cl.id
+       LEFT JOIN LATERAL (
+         SELECT p.id, COALESCE(p.monto, pe.precio) AS monto
+           FROM pagos p
+           LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+          WHERE p.cliente_telefono = cl.telefono AND p.medio_pago = 'efectivo' AND p.efectivo_cobrado = FALSE
+          ORDER BY p.creado_en DESC LIMIT 1
+       ) ep ON true
+      GROUP BY cl.id, ep.id, ep.monto
       ORDER BY cl.nombre`,
   );
   res.json(rows);
