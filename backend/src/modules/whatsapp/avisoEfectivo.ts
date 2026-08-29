@@ -1,6 +1,6 @@
 /**
  * Línea extra para avisarle al chofer, en cualquier mensaje de asignación,
- * que el pedido se cobra en efectivo contra entrega (ver migración 0042).
+ * que el pedido se cobra en efectivo contra entrega (ver migración 0043).
  * Compartido entre pagos.routes.ts (entrega/recambio) para evitar un import
  * circular entre esos dos módulos de rutas.
  */

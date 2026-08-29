@@ -726,7 +726,7 @@ pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), a
 /**
  * PATCH /api/pagos/:id/cobrado — marca a mano si un pago en efectivo ya fue
  * cobrado o no. Independiente de `estado` (que significa "pedido confirmado
- * y contenedor reservado", no "plata recibida" — ver migración 0042): el
+ * y contenedor reservado", no "plata recibida" — ver migración 0043): el
  * chofer cobra en el momento de la entrega y recién ahí un operador lo marca
  * acá, típicamente desde la ficha del cliente.
  */

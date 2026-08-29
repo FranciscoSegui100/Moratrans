@@ -1,4 +1,4 @@
--- 0042_pago_efectivo.sql
+-- 0043_pago_efectivo.sql
 -- Agrega la opción de pago en efectivo para clientes ocasionales (antes solo
 -- existía transferencia, o cuenta corriente para quien ya la tuviera
 -- aprobada). `medio_pago` distingue cómo se va a cobrar; `efectivo_cobrado`
