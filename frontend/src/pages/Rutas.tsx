@@ -860,20 +860,69 @@ export function Rutas() {
         rollbackViajesDelDia = () => queryClient.setQueryData(['viajes', 'del-dia', fecha], previoViajesDelDia);
       }
 
+      // Optimista: agrega la parada directamente en la caché del detalle de la
+      // ruta destino — sin esto, el viaje no aparece en el panel del chofer
+      // hasta que vuelve el prefetchQuery (una ida y vuelta entera al servidor).
+      const rutaId = ruta.id;
+      const previoDetalle = queryClient.getQueryData<RutaData>(['rutas', rutaId]);
+      if (previoDetalle) {
+        const ordenProvisorio = (Math.max(0, ...previoDetalle.paradas.map((p) => p.orden)) + 1);
+        const paradasNuevas: Parada[] = [];
+        if (visita.entrega) {
+          paradasNuevas.push({
+            tipo_parada: 'viaje',
+            id: visita.entrega.id,
+            orden: ordenProvisorio,
+            viaje_tipo: 'entrega',
+            contenedor_numero: visita.entrega.contenedor_numero,
+            destino_direccion: visita.entrega.destino_direccion,
+            destino_lat: visita.entrega.destino_lat,
+            destino_lng: visita.entrega.destino_lng,
+            horario_preferido: visita.entrega.horario_preferido,
+            hora_estimada: visita.entrega.hora_estimada ?? null,
+            zona: visita.zona,
+            cliente_telefono: visita.cliente_telefono,
+            grupo_id: visita.entrega.grupo_id,
+            estado: 'programado',
+            notas: null,
+          });
+        }
+        if (visita.retiro) {
+          paradasNuevas.push({
+            tipo_parada: 'viaje',
+            id: visita.retiro.id,
+            orden: ordenProvisorio,
+            viaje_tipo: 'retiro',
+            contenedor_numero: visita.retiro.contenedor_numero,
+            destino_direccion: visita.retiro.destino_direccion,
+            destino_lat: visita.retiro.destino_lat,
+            destino_lng: visita.retiro.destino_lng,
+            horario_preferido: visita.retiro.horario_preferido,
+            hora_estimada: visita.retiro.hora_estimada ?? null,
+            zona: visita.zona,
+            cliente_telefono: visita.cliente_telefono,
+            grupo_id: visita.retiro.grupo_id,
+            estado: 'programado',
+            notas: null,
+          });
+        }
+        if (paradasNuevas.length > 0) {
+          queryClient.setQueryData<RutaData>(['rutas', rutaId], {
+            ...previoDetalle,
+            paradas: [...previoDetalle.paradas, ...paradasNuevas],
+          });
+        }
+      }
+
       const viajeId = visita.entrega?.id ?? visita.retiro?.id ?? visita.id;
-      await api.post(`/api/rutas/${ruta.id}/paradas`, { viaje_id: viajeId });
+      await api.post(`/api/rutas/${rutaId}/paradas`, { viaje_id: viajeId });
       const nombreChofer = choferes.find((c) => c.id === choferId)?.nombre ?? 'chofer';
       show('success', 'Pedido asignado', `Asignado a la ruta de ${nombreChofer}.`);
-      setRutaSeleccionada(ruta.id);
+      setRutaSeleccionada(rutaId);
       recargarListas();
-      // Precalienta el detalle del chofer destino (mismo criterio que
-      // moverParadaA): sin esto, la demora "del otro lado" es la primera
-      // carga en frío de esa pestaña recién al hacer clic en ella.
-      const rutaId = ruta.id;
-      queryClient.prefetchQuery({
-        queryKey: ['rutas', rutaId],
-        queryFn: () => api.get<RutaData>(`/api/rutas/${rutaId}`).then((r) => r.data),
-      });
+      // Refresca el detalle para traer el orden real del backend (el provisorio
+      // era negativo, un placeholder) y los disponibles calculados por parada.
+      queryClient.invalidateQueries({ queryKey: ['rutas', rutaId] });
     } catch (err: any) {
       if (previoCola) queryClient.setQueryData(['rutas', 'bolsa'], previoCola);
       rollbackViajesDelDia?.();
