@@ -119,7 +119,7 @@ async function calcularDisponibilidadRuta(
   ];
   const { porOrden, liberadosPor, advertencias } = simularDisponibilidad(paradasSimuladas, disponiblesAlInicio, capacidad);
 
-  return { viajes, vaciados, porOrden, liberadosPor, advertencias };
+  return { viajes, vaciados, porOrden, liberadosPor, advertencias, disponiblesAlInicio };
 }
 
 /** Prioridad de tie-break cuando dos paradas comparten `orden` (recambio): entrega antes que retiro. */
@@ -257,7 +257,7 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
   ]);
   if (!ruta) return res.status(404).json({ error: 'Ruta no encontrada.' });
 
-  const { viajes, vaciados, porOrden, advertencias } = disponibilidad;
+  const { viajes, vaciados, porOrden, advertencias, disponiblesAlInicio } = disponibilidad;
 
   const paradas = [
     ...viajes.map((v) => ({
@@ -295,7 +295,13 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
     return prioridadParada(a.tipo_parada, (a as any).viaje_tipo) - prioridadParada(b.tipo_parada, (b as any).viaje_tipo);
   });
 
-  res.json({ ...ruta, paradas, advertencias });
+  // Stock real que la simulación usa como punto de partida: contenedores
+  // 'disponible' que NO están comprometidos con ningún viaje activo ajeno a
+  // esta ruta (otra ruta, o sin rutear todavía). Es la MISMA lista contra la
+  // que se validan los selects de cada parada — el panel del frontend la usa
+  // tal cual para no inflar el número con contenedores que no va a poder
+  // asignar.
+  res.json({ ...ruta, paradas, advertencias, stock_deposito: disponiblesAlInicio });
 });
 
 const nuevaParadaSchema = z.object({ viaje_id: z.string().uuid() });
