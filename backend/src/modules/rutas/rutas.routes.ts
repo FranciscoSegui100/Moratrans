@@ -235,8 +235,11 @@ rutasRouter.get('/bolsa', async (req: Request, res: Response) => {
     `SELECT v.id, v.tipo, v.fecha, v.zona, v.contenedor_numero, v.destino_direccion,
             v.destino_lat, v.destino_lng, v.horario_preferido, v.hora_estimada,
             v.cliente_telefono, v.grupo_id, v.notas, v.creado_en,
+            v.remito, v.importe, v.es_cuenta_corriente, v.ubicacion_direccion, v.direccion_verificada,
+            NULLIF(cl.nombre, 'Sin nombre') AS cliente_nombre,
             (v.tipo = 'entrega') AS planificable
        FROM viajes v
+       LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
       WHERE ${conds.join(' AND ')}
       ORDER BY v.zona NULLS LAST, v.fecha, v.creado_en`,
     params,

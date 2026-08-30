@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
+import { PedidoDetalleModal } from '../components/PedidoDetalleModal';
 import { formatearFecha } from '../lib/fechas';
 
 interface Ruta {
@@ -38,6 +39,15 @@ interface ViajePendiente {
   orden?: number | null;
   grupo_id: string | null;
   planificable?: boolean;
+  // Datos extra para el detalle del pedido (GET /api/rutas/bolsa).
+  cliente_nombre?: string | null;
+  notas?: string | null;
+  remito?: string | null;
+  importe?: string | null;
+  es_cuenta_corriente?: boolean;
+  ubicacion_direccion?: string | null;
+  direccion_verificada?: boolean;
+  creado_en?: string;
 }
 /** Un recambio son dos filas (retiro+entrega) que comparten grupo_id — se muestran como una sola visita. */
 interface VisitaPendiente {
@@ -761,6 +771,8 @@ export function Rutas() {
   // La bolsa también es zona de drop: soltar ahí una parada arrastrada desde
   // el detalle de una ruta la saca de esa ruta (vuelve a pedidos sin rutear).
   const [dropBolsa, setDropBolsa] = useState(false);
+  // Pedido abierto en la ficha de detalle (al tocar una tarjeta de la bolsa).
+  const [pedidoDetalle, setPedidoDetalle] = useState<VisitaPendiente | null>(null);
 
   const { data: choferes = [] } = useQuery({
     queryKey: ['choferes', 'activos'],
@@ -1098,7 +1110,7 @@ export function Rutas() {
           </div>
 
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
-            Arrastrá un pedido sobre un chofer para asignarlo. Para sacar una parada de una ruta, arrastrala de vuelta acá.
+            Tocá un pedido para ver el detalle. Arrastralo sobre un chofer para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
           </div>
 
           {visitasPendientes.length === 0 ? (
@@ -1140,12 +1152,27 @@ export function Rutas() {
                     const dias = diasEspera(visita.fecha);
                     const espera = dias > DIAS_ALERTA_COLA;
                     const esFutura = dias < 0;
+                    const detalleBase = visita.entrega ?? visita.retiro;
+                    const nombrePedido = detalleBase?.cliente_nombre;
+                    const importePedido = detalleBase?.importe != null && detalleBase.importe !== ''
+                      ? Number(detalleBase.importe) : null;
 
                     return (
                       <div
                         key={visita.id}
                         className={`qrow${dragVisita?.id === visita.id ? ' dragging' : ''}`}
                         draggable
+                        role="button"
+                        tabIndex={0}
+                        title="Tocá para ver el detalle · arrastrá para asignar"
+                        onClick={(e) => {
+                          // No abrir la ficha al tocar el link de Google Maps.
+                          if ((e.target as HTMLElement).closest('a')) return;
+                          setPedidoDetalle(visita);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPedidoDetalle(visita); }
+                        }}
                         onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDragVisita(visita); }}
                         onDragEnd={() => { setDragVisita(null); setDropChofer(null); setDropDetalle(false); }}
                         style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px', cursor: 'grab' }}
@@ -1159,8 +1186,10 @@ export function Rutas() {
                             </div>
                             <div className="sub" style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '3px' }}>
                               {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
+                              {nombrePedido ? ` · ${nombrePedido}` : ''}
                               {visita.cliente_telefono ? ` · 📞 ${visita.cliente_telefono}` : ''}
                               {horarioPedido ? ` · 🕐 ${horarioPedido}` : ''}
+                              {importePedido != null ? ` · $${importePedido.toLocaleString('es-AR')}` : ''}
                               {' · '}
                               <span style={{
                                 color: espera ? 'var(--danger)' : esFutura ? 'var(--text-muted)' : 'inherit',
@@ -1284,6 +1313,16 @@ export function Rutas() {
         </div>
 
       </div>
+
+      {pedidoDetalle && (
+        <PedidoDetalleModal
+          visita={pedidoDetalle}
+          choferes={choferes}
+          esperaLabel={etiquetaEspera(diasEspera(pedidoDetalle.fecha), pedidoDetalle.fecha)}
+          onAsignar={(choferId) => { asignarAChofer(pedidoDetalle, choferId); setPedidoDetalle(null); }}
+          onClose={() => setPedidoDetalle(null)}
+        />
+      )}
     </div>
   );
 }

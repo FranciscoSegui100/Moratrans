@@ -1308,6 +1308,22 @@ body {
 .detalle-drop-activo { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: var(--radius-lg); }
 .bolsa-drop-activo { outline: 2px dashed var(--accent); outline-offset: -1px; background: var(--accent-tint) !important; }
 
+/* Tarjeta de pedido: clicable (abre la ficha) además de arrastrable */
+.qrow[role="button"] { transition: border-color var(--transition), box-shadow var(--transition); }
+.qrow[role="button"]:hover { border-color: var(--border-light); box-shadow: var(--shadow-sm); }
+.qrow[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Ficha de detalle del pedido (PedidoDetalleModal) */
+.pd-grid { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 10px; }
+.pd-row { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+.pd-row:last-child { border-bottom: none; }
+.pd-label { color: var(--text-muted); font-size: 0.78rem; font-weight: 600; }
+.pd-value { color: var(--text-primary); line-height: 1.4; word-break: break-word; }
+.pd-choferes { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 520px) {
+  .pd-row { grid-template-columns: 1fr; gap: 2px; }
+}
+
 /* Reordenar paradas de una ruta con drag & drop */
 .stop-grip { display: flex; align-items: center; align-self: stretch; color: var(--text-muted); cursor: grab; margin: -2px 2px -2px -4px; }
 .stop-grip:active { cursor: grabbing; }
