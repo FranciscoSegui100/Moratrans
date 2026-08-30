@@ -565,9 +565,17 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio }: {
                     <span
                       className="stop-grip"
                       draggable={!reordenando}
-                      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDragIdx(idx); }}
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = 'move';
+                        // Payload para soltar en la bolsa (sacar de la ruta); el
+                        // reordenamiento dentro de la ruta usa dragIdx/overIdx.
+                        e.dataTransfer.setData('application/x-mora-parada', JSON.stringify({
+                          rutaId, tipoParada: v.tipoParada, paradaId: v.id,
+                        }));
+                        setDragIdx(idx);
+                      }}
                       onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
-                      title="Arrastrá para reordenar"
+                      title="Arrastrá para reordenar, o soltá en la bolsa para sacarla de la ruta"
                     >
                       <GripVertical size={13} strokeWidth={2} />
                     </span>
@@ -750,6 +758,9 @@ export function Rutas() {
   const [dragVisita, setDragVisita] = useState<VisitaPendiente | null>(null);
   const [dropChofer, setDropChofer] = useState<string | null>(null);
   const [dropDetalle, setDropDetalle] = useState(false);
+  // La bolsa también es zona de drop: soltar ahí una parada arrastrada desde
+  // el detalle de una ruta la saca de esa ruta (vuelve a pedidos sin rutear).
+  const [dropBolsa, setDropBolsa] = useState(false);
 
   const { data: choferes = [] } = useQuery({
     queryKey: ['choferes', 'activos'],
@@ -969,13 +980,30 @@ export function Rutas() {
     }
   }
 
-  /** Suelta la tarjeta arrastrada sobre la ruta de un chofer (mismo efecto que elegirlo en el menú "+ Asignar a chofer"). */
+  /** Suelta la tarjeta arrastrada sobre la ruta de un chofer para asignarla. */
   function soltarEnChofer(choferId: string) {
     const visita = dragVisita;
     setDragVisita(null);
     setDropChofer(null);
     setDropDetalle(false);
     if (visita) asignarAChofer(visita, choferId);
+  }
+
+  /**
+   * Saca una parada de su ruta (vuelve a la bolsa de pedidos sin rutear) — se
+   * dispara al arrastrar una parada del detalle y soltarla sobre la bolsa.
+   * Mismo endpoint que el botón "Quitar de la ruta" del detalle; una vez en
+   * la bolsa se puede arrastrar a otro chofer para reasignarla.
+   */
+  async function quitarParadaDeRuta(p: { rutaId: string; tipoParada: 'viaje' | 'vaciado'; paradaId: string }) {
+    try {
+      await api.delete(`/api/rutas/${p.rutaId}/paradas/${p.tipoParada}/${p.paradaId}`);
+      queryClient.invalidateQueries({ queryKey: ['rutas', p.rutaId] });
+      recargarListas();
+      show('success', 'Pedido devuelto a la bolsa', 'Arrastralo a otro chofer para reasignarlo.');
+    } catch (err: any) {
+      show('error', 'No se pudo quitar de la ruta', err.response?.data?.error || 'Error desconocido');
+    }
   }
 
   /** Handlers de drop reutilizados por las dos variantes de tarjeta de chofer (con y sin ruta armada). */
@@ -1040,8 +1068,28 @@ export function Rutas() {
       {/* Grid principal en 2 columnas: Bolsa (Izquierda) | Choferes y Detalle (Derecha) */}
       <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '20px', alignItems: 'start' }}>
         
-        {/* COLUMNA IZQUIERDA: Bolsa de pedidos sin rutear */}
-        <div className="card" style={{ padding: '16px 18px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+        {/* COLUMNA IZQUIERDA: Bolsa de pedidos sin rutear (también zona de drop para sacar paradas de una ruta) */}
+        <div
+          className={`card${dropBolsa ? ' bolsa-drop-activo' : ''}`}
+          style={{ padding: '16px 18px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes('application/x-mora-parada')) {
+              e.preventDefault();
+              if (!dropBolsa) setDropBolsa(true);
+            }
+          }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropBolsa(false); }}
+          onDrop={(e) => {
+            setDropBolsa(false);
+            const raw = e.dataTransfer.getData('application/x-mora-parada');
+            if (!raw) return;
+            e.preventDefault();
+            try {
+              const p = JSON.parse(raw) as { rutaId: string; tipoParada: 'viaje' | 'vaciado'; paradaId: string };
+              if (p.tipoParada === 'viaje') quitarParadaDeRuta(p);
+            } catch { /* payload inválido: ignorar */ }
+          }}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid var(--border)', paddingBottom: '10px' }}>
             <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span>📦 Pedidos sin rutear</span>
@@ -1049,11 +1097,9 @@ export function Rutas() {
             <span className="badge programado" style={{ fontSize: '0.75rem' }}>{visitasPendientes.length}</span>
           </div>
 
-          {visitasPendientes.length > 0 && (
-            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
-              Arrastrá una tarjeta sobre un chofer para asignarla, o usá el menú de cada una.
-            </div>
-          )}
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
+            Arrastrá un pedido sobre un chofer para asignarlo. Para sacar una parada de una ruta, arrastrala de vuelta acá.
+          </div>
 
           {visitasPendientes.length === 0 ? (
             <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes en la bolsa.</div>
@@ -1131,24 +1177,6 @@ export function Rutas() {
                           </span>
                         </div>
 
-                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '2px' }}>
-                        <select
-                          className="form-select"
-                          style={{ fontSize: '0.76rem', padding: '4px 8px', width: '100%' }}
-                          defaultValue=""
-                          onChange={(e) => {
-                            if (e.target.value) {
-                              asignarAChofer(visita, e.target.value);
-                              e.target.value = '';
-                            }
-                          }}
-                        >
-                          <option value="" disabled>+ Asignar a chofer...</option>
-                          {choferes.map((c) => (
-                            <option key={c.id} value={c.id}>{c.nombre}</option>
-                          ))}
-                        </select>
-                        </div>
                       </div>
                     );
                       })}
