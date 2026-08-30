@@ -706,6 +706,13 @@ export function Rutas() {
   const { show } = useToast();
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
   const [rutaSeleccionada, setRutaSeleccionada] = useState<string | null>(null);
+  // Drag & drop de la bolsa a las rutas: `dragVisita` es la tarjeta que se
+  // está arrastrando; `dropChofer` la tarjeta de chofer sobre la que está
+  // parada ahora (para el resaltado), y `dropDetalle` lo mismo para el panel
+  // de detalle abierto.
+  const [dragVisita, setDragVisita] = useState<VisitaPendiente | null>(null);
+  const [dropChofer, setDropChofer] = useState<string | null>(null);
+  const [dropDetalle, setDropDetalle] = useState(false);
 
   const { data: choferes = [] } = useQuery({
     queryKey: ['choferes', 'activos'],
@@ -925,6 +932,34 @@ export function Rutas() {
     }
   }
 
+  /** Suelta la tarjeta arrastrada sobre la ruta de un chofer (mismo efecto que elegirlo en el menú "+ Asignar a chofer"). */
+  function soltarEnChofer(choferId: string) {
+    const visita = dragVisita;
+    setDragVisita(null);
+    setDropChofer(null);
+    setDropDetalle(false);
+    if (visita) asignarAChofer(visita, choferId);
+  }
+
+  /** Handlers de drop reutilizados por las dos variantes de tarjeta de chofer (con y sin ruta armada). */
+  const propsDropChofer = (choferId: string) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!dragVisita) return;
+      e.preventDefault();
+      if (dropChofer !== choferId) setDropChofer(choferId);
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+        setDropChofer((c) => (c === choferId ? null : c));
+      }
+    },
+    onDrop: (e: React.DragEvent) => {
+      if (!dragVisita) return;
+      e.preventDefault();
+      soltarEnChofer(choferId);
+    },
+  });
+
   return (
     <div>
       <div className="page-header">
@@ -977,6 +1012,12 @@ export function Rutas() {
             <span className="badge programado" style={{ fontSize: '0.75rem' }}>{visitasPendientes.length}</span>
           </div>
 
+          {visitasPendientes.length > 0 && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
+              Arrastrá una tarjeta sobre un chofer para asignarla, o usá el menú de cada una.
+            </div>
+          )}
+
           {visitasPendientes.length === 0 ? (
             <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes en la bolsa.</div>
           ) : (
@@ -1018,7 +1059,14 @@ export function Rutas() {
                     const esFutura = dias < 0;
 
                     return (
-                      <div key={visita.id} className="qrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px' }}>
+                      <div
+                        key={visita.id}
+                        className={`qrow${dragVisita?.id === visita.id ? ' dragging' : ''}`}
+                        draggable
+                        onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDragVisita(visita); }}
+                        onDragEnd={() => { setDragVisita(null); setDropChofer(null); setDropDetalle(false); }}
+                        style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px', cursor: 'grab' }}
+                      >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                           <div>
                             <div className="cli" style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: '1.25' }}>
@@ -1086,7 +1134,12 @@ export function Rutas() {
                 const ruta = rutas.find((r) => r.chofer_id === chofer.id);
                 if (!ruta) {
                   return (
-                    <button key={chofer.id} className="route-card" onClick={() => armarRuta(chofer.id)}>
+                    <button
+                      key={chofer.id}
+                      className={`route-card${dropChofer === chofer.id ? ' drop-activo' : ''}`}
+                      onClick={() => armarRuta(chofer.id)}
+                      {...propsDropChofer(chofer.id)}
+                    >
                       <div className="rc-head">
                         <div className="rc-av">{iniciales(chofer.nombre)}</div>
                         <div><div className="rc-nm">{chofer.nombre}</div><div className="rc-pat">—</div></div>
@@ -1105,8 +1158,9 @@ export function Rutas() {
                 return (
                   <button
                     key={chofer.id}
-                    className={`route-card${sel ? ' sel' : ''}${stats.warn ? ' warn' : ''}`}
+                    className={`route-card${sel ? ' sel' : ''}${stats.warn ? ' warn' : ''}${dropChofer === chofer.id ? ' drop-activo' : ''}`}
                     onClick={() => setRutaSeleccionada(ruta.id)}
+                    {...propsDropChofer(chofer.id)}
                   >
                     <div className="rc-head">
                       <div className="rc-av">{iniciales(chofer.nombre)}</div>
@@ -1128,7 +1182,24 @@ export function Rutas() {
           </div>
 
           {rutaSeleccionada ? (
-            <div>
+            <div
+              className={dropDetalle ? 'detalle-drop-activo' : undefined}
+              onDragOver={(e) => {
+                const choferSel = rutas.find((r) => r.id === rutaSeleccionada)?.chofer_id;
+                if (!dragVisita || !choferSel) return;
+                e.preventDefault();
+                if (!dropDetalle) setDropDetalle(true);
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropDetalle(false);
+              }}
+              onDrop={(e) => {
+                const choferSel = rutas.find((r) => r.id === rutaSeleccionada)?.chofer_id;
+                if (!dragVisita || !choferSel) return;
+                e.preventDefault();
+                soltarEnChofer(choferSel);
+              }}
+            >
               <div className="section-title" style={{ marginBottom: '10px', fontSize: '0.9rem', fontWeight: 700 }}>
                 Detalle y Armado de Ruta
               </div>

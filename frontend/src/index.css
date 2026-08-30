@@ -1301,3 +1301,8 @@ body {
 }
 .vcard-menu-item:hover { background: var(--bg-card-hover); }
 .vcard-menu-empty { padding: 6px 8px; font-size: 0.75rem; color: var(--text-muted); font-style: italic; }
+
+/* ===== RUTAS: drag & drop de la bolsa a las rutas ===== */
+.qrow.dragging { opacity: 0.4; }
+.route-card.drop-activo { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-tint); background: var(--accent-tint); }
+.detalle-drop-activo { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: var(--radius-lg); }
