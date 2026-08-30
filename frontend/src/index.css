@@ -1306,3 +1306,10 @@ body {
 .qrow.dragging { opacity: 0.4; }
 .route-card.drop-activo { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-tint); background: var(--accent-tint); }
 .detalle-drop-activo { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: var(--radius-lg); }
+
+/* Reordenar paradas de una ruta con drag & drop */
+.stop-grip { display: flex; align-items: center; align-self: stretch; color: var(--text-muted); cursor: grab; margin: -2px 2px -2px -4px; }
+.stop-grip:active { cursor: grabbing; }
+.stop-grip:hover { color: var(--text-primary); }
+.stop.dragging { opacity: 0.4; }
+.stop.drop-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-tint); }

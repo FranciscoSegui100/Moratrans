@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowUp, ArrowDown, Plus, X, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, ArrowUp, ArrowDown, Plus, X, RefreshCw, CheckCircle2, GripVertical } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -257,6 +257,10 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio }: {
   const [vaciadoForm, setVaciadoForm] = useState({ ubicacion_id: '', notas: '' });
   const [confirmando, setConfirmando] = useState(false);
   const [reordenando, setReordenando] = useState(false);
+  // Reordenar paradas con drag & drop: `dragIdx` es la parada que se arrastra,
+  // `overIdx` sobre cuál está parada ahora (para el resaltado).
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [overIdx, setOverIdx] = useState<number | null>(null);
 
   const { data: ruta } = useQuery({
     queryKey: ['rutas', rutaId],
@@ -414,12 +418,19 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio }: {
     setReordenando(false);
   }
 
-  function mover(idx: number, direccion: -1 | 1) {
+  /** Saca la parada `from` y la reinserta en la posición `to` (drag & drop y flechas ↑/↓ pasan por acá). */
+  function moverA(from: number, to: number) {
+    if (from === to || reordenando) return;
     const nuevo = [...visitas];
-    const j = idx + direccion;
-    if (j < 0 || j >= nuevo.length) return;
-    [nuevo[idx], nuevo[j]] = [nuevo[j], nuevo[idx]];
+    const [item] = nuevo.splice(from, 1);
+    nuevo.splice(to, 0, item);
     reordenar(nuevo);
+  }
+
+  function mover(idx: number, direccion: -1 | 1) {
+    const j = idx + direccion;
+    if (j < 0 || j >= visitas.length) return;
+    moverA(idx, j);
   }
 
   async function asignarContenedor(viajeId: string, contenedorNumero: string) {
@@ -534,7 +545,33 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio }: {
               const sinAsignar = necesitaContenedor && !v.entrega!.contenedor_numero;
               const invalido = necesitaContenedor && !!v.entrega!.contenedor_numero && !disponibles.includes(v.entrega!.contenedor_numero!);
               return (
-                <div key={`${v.tipoParada}-${v.id}`} className="stop">
+                <div
+                  key={`${v.tipoParada}-${v.id}`}
+                  className={`stop${dragIdx === idx ? ' dragging' : ''}${overIdx === idx && dragIdx !== null && dragIdx !== idx ? ' drop-target' : ''}`}
+                  onDragOver={(e) => {
+                    if (dragIdx === null) return;
+                    e.preventDefault();
+                    if (overIdx !== idx) setOverIdx(idx);
+                  }}
+                  onDrop={(e) => {
+                    if (dragIdx === null) return;
+                    e.preventDefault();
+                    moverA(dragIdx, idx);
+                    setDragIdx(null);
+                    setOverIdx(null);
+                  }}
+                >
+                  {editable && (
+                    <span
+                      className="stop-grip"
+                      draggable={!reordenando}
+                      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDragIdx(idx); }}
+                      onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
+                      title="Arrastrá para reordenar"
+                    >
+                      <GripVertical size={13} strokeWidth={2} />
+                    </span>
+                  )}
                   <div className="stop-ord">{idx + 1}</div>
                   <div className="stop-body">
                     {v.vaciado && (
