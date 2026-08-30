@@ -1330,3 +1330,13 @@ body {
 .stop-grip:hover { color: var(--text-primary); }
 .stop.dragging { opacity: 0.4; }
 .stop.drop-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-tint); }
+/* Línea de inserción al arrastrar un pedido de la bolsa entre dos paradas */
+.stop.insert-antes { position: relative; }
+.stop.insert-antes::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: -6px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}

@@ -307,14 +307,20 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
   res.json({ ...ruta, paradas, advertencias, stock_deposito: disponiblesAlInicio });
 });
 
-const nuevaParadaSchema = z.object({ viaje_id: z.string().uuid() });
+const nuevaParadaSchema = z.object({
+  viaje_id: z.string().uuid(),
+  // Posición (valor de `orden`) donde insertar la parada. Si se omite, va al
+  // final. Si cae en el medio, se corre una posición para atrás todo lo que
+  // esté en esa posición o después (mismo criterio que insertarVaciadoAutomatico).
+  orden: z.number().int().positive().optional(),
+});
 
 /** POST /api/rutas/:id/paradas — adjunta un viaje YA EXISTENTE (de la cola sin rutear) a la ruta. Funciona con la ruta abierta (planificada o en curso): el 80% del trabajo entra durante el día. */
 rutasRouter.post('/:id/paradas', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const { id: rutaId } = req.params;
   const parsed = nuevaParadaSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const { viaje_id } = parsed.data;
+  const { viaje_id, orden: ordenPedido } = parsed.data;
 
   try {
     const resultado = await withTx(async (c) => {
@@ -335,7 +341,21 @@ rutasRouter.post('/:id/paradas', requireRol('admin', 'operador'), async (req: Re
          ) t`,
         [rutaId],
       );
-      const nuevoOrden = (ordenRows[0]?.max ?? 0) + 1;
+      const maxOrden = ordenRows[0]?.max ?? 0;
+      // Posición destino: la pedida (acotada a [1, maxOrden+1]) o el final.
+      const nuevoOrden = ordenPedido != null
+        ? Math.min(Math.max(1, ordenPedido), maxOrden + 1)
+        : maxOrden + 1;
+
+      // Si se inserta en el medio, correr una posición para atrás todo lo que
+      // esté en esa posición o después. Fase temporal negativa para no chocar
+      // contra las constraints UNIQUE de orden (igual que insertarVaciadoAutomatico).
+      if (nuevoOrden <= maxOrden) {
+        await c.query(`UPDATE viajes SET orden = -(orden + 1) WHERE ruta_id = $1 AND orden >= $2`, [rutaId, nuevoOrden]);
+        await c.query(`UPDATE ruta_vaciados SET orden = -(orden + 1) WHERE ruta_id = $1 AND orden >= $2`, [rutaId, nuevoOrden]);
+        await c.query(`UPDATE viajes SET orden = -orden WHERE ruta_id = $1 AND orden < 0`, [rutaId]);
+        await c.query(`UPDATE ruta_vaciados SET orden = -orden WHERE ruta_id = $1 AND orden < 0`, [rutaId]);
+      }
 
       const { rows: viajeRows } = await c.query<{ id: string; grupo_id: string | null; tipo: string }>(
         `UPDATE viajes SET ruta_id = $1, orden = $2, chofer_id = $3, patente = $4, fecha = $5, origen = $6

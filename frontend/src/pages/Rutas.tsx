@@ -255,11 +255,15 @@ function agruparVisitas(paradas: Parada[]): Visita[] {
   return [...porOrden.values()].sort((a, b) => a.orden - b.orden);
 }
 
-function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio }: {
+function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado, onInsertarPedido }: {
   rutaId: string;
   rutasDelDia: Ruta[];
   choferes: Chofer[];
   onCambio: () => void;
+  /** Hay un pedido de la bolsa arrastrándose ahora mismo (habilita soltar entre paradas). */
+  pedidoArrastrado: boolean;
+  /** Se soltó un pedido entre dos paradas: `orden` es la posición donde insertarlo. */
+  onInsertarPedido: (orden: number) => void;
 }) {
   const { show } = useToast();
   const queryClient = useQueryClient();
@@ -267,6 +271,9 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio }: {
   const [vaciadoForm, setVaciadoForm] = useState({ ubicacion_id: '', notas: '' });
   const [confirmando, setConfirmando] = useState(false);
   const [reordenando, setReordenando] = useState(false);
+  // Índice de la parada sobre cuyo borde superior caería un pedido arrastrado desde la bolsa.
+  const [insertIdx, setInsertIdx] = useState<number | null>(null);
+  useEffect(() => { if (!pedidoArrastrado) setInsertIdx(null); }, [pedidoArrastrado]);
   // Reordenar paradas con drag & drop: `dragIdx` es la parada que se arrastra,
   // `overIdx` sobre cuál está parada ahora (para el resaltado).
   const [dragIdx, setDragIdx] = useState<number | null>(null);
@@ -557,18 +564,35 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio }: {
               return (
                 <div
                   key={`${v.tipoParada}-${v.id}`}
-                  className={`stop${dragIdx === idx ? ' dragging' : ''}${overIdx === idx && dragIdx !== null && dragIdx !== idx ? ' drop-target' : ''}`}
+                  className={`stop${dragIdx === idx ? ' dragging' : ''}${overIdx === idx && dragIdx !== null && dragIdx !== idx ? ' drop-target' : ''}${insertIdx === idx ? ' insert-antes' : ''}`}
                   onDragOver={(e) => {
-                    if (dragIdx === null) return;
-                    e.preventDefault();
-                    if (overIdx !== idx) setOverIdx(idx);
+                    if (dragIdx !== null) {
+                      e.preventDefault();
+                      if (overIdx !== idx) setOverIdx(idx);
+                    } else if (pedidoArrastrado) {
+                      // Soltar un pedido de la bolsa acá lo inserta ANTES de esta parada.
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (insertIdx !== idx) setInsertIdx(idx);
+                    }
+                  }}
+                  onDragLeave={(e) => {
+                    if (pedidoArrastrado && !e.currentTarget.contains(e.relatedTarget as Node)) {
+                      setInsertIdx((i) => (i === idx ? null : i));
+                    }
                   }}
                   onDrop={(e) => {
-                    if (dragIdx === null) return;
-                    e.preventDefault();
-                    moverA(dragIdx, idx);
-                    setDragIdx(null);
-                    setOverIdx(null);
+                    if (dragIdx !== null) {
+                      e.preventDefault();
+                      moverA(dragIdx, idx);
+                      setDragIdx(null);
+                      setOverIdx(null);
+                    } else if (pedidoArrastrado) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onInsertarPedido(v.orden);
+                      setInsertIdx(null);
+                    }
                   }}
                 >
                   {editable && (
@@ -862,7 +886,8 @@ export function Rutas() {
     }
   }
 
-  async function asignarAChofer(visita: VisitaPendiente, choferId: string) {
+  /** `ordenDestino` = posición (valor de `orden`) donde insertar la parada; sin él, va al final. */
+  async function asignarAChofer(visita: VisitaPendiente, choferId: string, ordenDestino?: number) {
     if (!choferId) return;
 
     // Asignar pisa la fecha del viaje con la de la ruta destino (ver backend,
@@ -928,7 +953,12 @@ export function Rutas() {
       const rutaId = ruta.id;
       const previoDetalle = queryClient.getQueryData<RutaData>(['rutas', rutaId]);
       if (previoDetalle) {
-        const ordenProvisorio = (Math.max(0, ...previoDetalle.paradas.map((p) => p.orden)) + 1);
+        // Si se pidió una posición, un orden fraccionario (x.5) hace que la
+        // parada nueva caiga justo antes de la que está en `x` mientras
+        // vuelve el refetch con el orden entero real; si no, va al final.
+        const ordenProvisorio = ordenDestino != null
+          ? ordenDestino - 0.5
+          : (Math.max(0, ...previoDetalle.paradas.map((p) => p.orden)) + 1);
         const paradasNuevas: Parada[] = [];
         if (visita.entrega) {
           paradasNuevas.push({
@@ -977,7 +1007,7 @@ export function Rutas() {
       }
 
       const viajeId = visita.entrega?.id ?? visita.retiro?.id ?? visita.id;
-      await api.post(`/api/rutas/${rutaId}/paradas`, { viaje_id: viajeId });
+      await api.post(`/api/rutas/${rutaId}/paradas`, { viaje_id: viajeId, orden: ordenDestino });
       const nombreChofer = choferes.find((c) => c.id === choferId)?.nombre ?? 'chofer';
       show('success', 'Pedido asignado', `Asignado a la ruta de ${nombreChofer}.`);
       setRutaSeleccionada(rutaId);
@@ -1302,6 +1332,15 @@ export function Rutas() {
                 rutasDelDia={rutas}
                 choferes={choferes}
                 onCambio={recargarListas}
+                pedidoArrastrado={!!dragVisita}
+                onInsertarPedido={(orden) => {
+                  const v = dragVisita;
+                  const choferSel = rutas.find((r) => r.id === rutaSeleccionada)?.chofer_id;
+                  setDragVisita(null);
+                  setDropChofer(null);
+                  setDropDetalle(false);
+                  if (v && choferSel) asignarAChofer(v, choferSel, orden);
+                }}
               />
             </div>
           ) : (
