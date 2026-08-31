@@ -9,6 +9,7 @@ interface Kpis {
   contenedores_activos: number;
   contenedores_disponibles: number;
   cobros_pendientes: number;
+  cobros_pendientes_monto: string;
   viajes_hoy: number;
 }
 
@@ -130,6 +131,11 @@ export function Dashboard() {
                 {kpis ? (kpis as any)[c.key] : '—'}
               </div>
               <div className="kpi-label">{c.label}</div>
+              {c.key === 'cobros_pendientes' && kpis && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  ${Number(kpis.cobros_pendientes_monto).toLocaleString('es-AR')} adeudado
+                </div>
+              )}
             </div>
           );
         })}
