@@ -24,17 +24,17 @@ interface EstadoBot {
 }
 
 const kpiConfig = [
-  { key: 'contenedores_activos',    label: 'Contenedores activos', icon: Package },
-  { key: 'contenedores_disponibles',label: 'Disponibles',          icon: CircleCheck },
-  { key: 'cobros_pendientes',       label: 'Cobros pendientes',    icon: CircleDollarSign },
-  { key: 'viajes_hoy',              label: 'Viajes de hoy',        icon: Truck },
+  { key: 'contenedores_activos',    label: 'Contenedores activos', icon: Package,          tint: 'var(--accent-tint)',  fg: 'var(--accent-dark)' },
+  { key: 'contenedores_disponibles',label: 'Disponibles',          icon: CircleCheck,       tint: 'var(--success-bg)',   fg: 'var(--success)' },
+  { key: 'cobros_pendientes',       label: 'Cobros pendientes',    icon: CircleDollarSign,  tint: 'var(--warning-bg)',   fg: 'var(--warning)' },
+  { key: 'viajes_hoy',              label: 'Viajes de hoy',        icon: Truck,             tint: 'var(--purple-bg)',    fg: 'var(--purple)' },
 ] as const;
 
 const estadoColors: Record<string, string> = {
   disponible:     'var(--success)',
   reservado:      'var(--accent)',
   entregado:      'var(--purple)',
-  retirado:       '#94a3b8',
+  retirado:       'var(--neutral)',
   mantenimiento:  'var(--danger)',
 };
 
@@ -126,7 +126,7 @@ export function Dashboard() {
           const Icon = c.icon;
           return (
             <div key={c.key} className="kpi-card">
-              <div className="kpi-icon"><Icon strokeWidth={1.75} /></div>
+              <div className="kpi-icon" style={{ background: c.tint, color: c.fg }}><Icon strokeWidth={1.75} /></div>
               <div className="kpi-value">
                 {kpis ? (kpis as any)[c.key] : '—'}
               </div>
