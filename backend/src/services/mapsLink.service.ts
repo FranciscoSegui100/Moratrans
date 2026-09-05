@@ -1,6 +1,79 @@
 import axios from 'axios';
+import dns from 'dns';
+import net from 'net';
 
-const REGEX_LINK_MAPS = /https?:\/\/(?:www\.)?(?:google\.[a-z.]+\/maps|maps\.google\.[a-z.]+|maps\.app\.goo\.gl|goo\.gl\/maps)\S*/i;
+// El TLD queda acotado (2-3 letras, hasta 2 segmentos: "com", "com.ar", "co.uk")
+// y el `(?![\w.-])` de después exige que ahí termine el host. Sin esas dos
+// cosas, "google.attacker.com/maps" o "maps.google.com.attacker.io/x" también
+// matcheaban (el host real termina siendo el de terceros) — cualquiera que le
+// escriba al bot puede mandar el texto que quiera, así que este regex es la
+// única barrera antes de que el backend le pegue a esa URL.
+const REGEX_LINK_MAPS = /https?:\/\/(?:www\.)?(?:google\.[a-z]{2,3}(?:\.[a-z]{2,3})?\/maps|maps\.google\.[a-z]{2,3}(?:\.[a-z]{2,3})?|maps\.app\.goo\.gl|goo\.gl\/maps)(?![\w.-])\S*/i;
+
+// Rangos de IPv4 privados/reservados: si el link (o alguno de sus redirects)
+// resuelve a algo acá adentro, se corta — sin esto alguien podía apuntar el
+// link a un dominio propio que redirige a 169.254.169.254 (metadata de la
+// nube) o a un host interno de la red de Render/Railway.
+const RANGOS_PRIVADOS_IPV4: [string, number][] = [
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['172.16.0.0', 12],
+  ['192.0.0.0', 24],
+  ['192.0.2.0', 24],
+  ['192.168.0.0', 16],
+  ['198.18.0.0', 15],
+  ['198.51.100.0', 24],
+  ['203.0.113.0', 24],
+  ['224.0.0.0', 4],
+  ['240.0.0.0', 4],
+];
+
+function ipv4AEntero(ip: string): number {
+  return ip.split('.').reduce((acc, octeto) => (acc << 8) + Number(octeto), 0) >>> 0;
+}
+
+function enRangoIpv4(ip: string, base: string, bits: number): boolean {
+  const mascara = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+  return (ipv4AEntero(ip) & mascara) === (ipv4AEntero(base) & mascara);
+}
+
+function esIpPrivadaOReservada(ip: string): boolean {
+  if (net.isIPv4(ip)) return RANGOS_PRIVADOS_IPV4.some(([base, bits]) => enRangoIpv4(ip, base, bits));
+  if (net.isIPv6(ip)) {
+    const normalizada = ip.toLowerCase();
+    if (normalizada === '::1' || normalizada === '::') return true;
+    if (normalizada.startsWith('fe80:') || normalizada.startsWith('fc') || normalizada.startsWith('fd')) return true;
+    const mapeada = normalizada.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapeada) return esIpPrivadaOReservada(mapeada[1]);
+    return false;
+  }
+  return true; // No se pudo determinar el tipo de IP: por las dudas, se bloquea.
+}
+
+/**
+ * DNS lookup custom para axios (ver `resolverUrlFinal`): valida la IP resuelta
+ * antes de dejar que se conecte. axios/follow-redirects vuelve a invocar esto
+ * en cada salto de redirect (no solo en la URL inicial), así que también
+ * corta un 302 que apunte a una IP interna después de una primera resolución
+ * "limpia".
+ */
+function lookupSeguro(
+  hostname: string,
+  options: object,
+  callback: (err: Error | null, address: any, family?: any) => void,
+): void {
+  dns.lookup(hostname, options as dns.LookupOptions, (err, address: any, family: any) => {
+    if (err) return callback(err, address, family);
+    const direcciones: string[] = Array.isArray(address) ? address.map((a: any) => a.address) : [address];
+    if (direcciones.some(esIpPrivadaOReservada)) {
+      return callback(new Error(`Resolución bloqueada: "${hostname}" apunta a una dirección IP privada/reservada`), address, family);
+    }
+    callback(null, address, family);
+  });
+}
 
 // Gran Mendoza: los 6 departamentos que cubre la empresa (ver seed.sql).
 const VIEWBOX_MENDOZA = { minLon: -69.3, minLat: -33.3, maxLon: -68.4, maxLat: -32.4 };
@@ -55,6 +128,7 @@ async function resolverUrlFinal(url: string): Promise<string> {
     timeout: 5000,
     validateStatus: () => true,
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MoraTrans-Logistica)' },
+    lookup: lookupSeguro,
   });
   // axios (vía follow-redirects) deja la URL final resuelta acá después de seguir los 30x.
   const responseUrl = (res.request as { res?: { responseUrl?: string } })?.res?.responseUrl;

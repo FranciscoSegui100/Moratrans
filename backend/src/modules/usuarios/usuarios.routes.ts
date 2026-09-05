@@ -90,7 +90,7 @@ usuariosRouter.patch('/:id', async (req: Request, res: Response) => {
     sets.push(`${k} = $${params.length}`);
   }
   if (password) {
-    params.push(await bcrypt.hash(password, 10));
+    params.push(await bcrypt.hash(password, 12));
     sets.push(`password_hash = $${params.length}`);
   }
   // Revoca cualquier sesión activa si cambia algo que afecta el acceso: el

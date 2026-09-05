@@ -211,7 +211,9 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="main-content">{children}</main>
+      <main className="main-content">
+        <div key={loc.pathname} className="page-enter">{children}</div>
+      </main>
     </div>
   );
 }

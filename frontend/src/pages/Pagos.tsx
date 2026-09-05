@@ -11,6 +11,7 @@ import { formatearFecha, formatearFechaHora } from '../lib/fechas';
 interface Pago {
   id: string;
   cliente_telefono: string;
+  cliente_nombre: string | null;
   monto: string | null;
   url_comprobante: string | null;
   estado: string;
@@ -161,7 +162,13 @@ export function Pagos() {
                 <div className="pago-avatar"><CreditCard strokeWidth={1.75} /></div>
 
                 <div className="pago-info">
-                  <div className="pago-phone">{p.cliente_telefono}</div>
+                  <div className="pago-phone">
+                    {p.cliente_nombre && p.cliente_nombre !== 'Sin nombre' ? (
+                      <>{p.cliente_nombre} <span className="text-muted">· {p.cliente_telefono}</span></>
+                    ) : (
+                      p.cliente_telefono
+                    )}
+                  </div>
                   {p.tipo === 'alargue_retiro' ? (
                     <div className="pago-detail">
                        ⏳ Alargue de retiro — contenedor <strong>{p.contenedor_numero ?? '—'}</strong> ·{' '}

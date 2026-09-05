@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowUp, ArrowDown, Plus, X, RefreshCw, CheckCircle2, GripVertical } from 'lucide-react';
+import { AlertTriangle, ArrowUp, ArrowDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -20,6 +20,18 @@ interface Ruta {
 }
 interface Chofer { id: string; nombre: string; activo: boolean; }
 interface Ubicacion { id: string; tipo: 'deposito' | 'vaciadero'; nombre: string; activo: boolean; }
+interface Tarifa { departamento: string; activo: boolean; }
+
+// Mismas franjas que OPCIONES_HORARIO en horarioPreferido.flow.ts — el bot
+// guarda exactamente estos textos en viajes.horario_preferido, así que un
+// viaje armado a mano tiene que usar los mismos para que la columna
+// "Horario sugerido" de Viajes se vea consistente.
+const OPCIONES_HORARIO_SUGERIDO = ['🌅 Mañana (8-12hs)', '🕐 Tarde (12-15hs)'];
+
+const formViajeInicial = {
+  tipo: 'entrega', fecha: '', horario_preferido: '', zona: '',
+  destino_direccion: '', importe: '', ubicacion_id: '',
+};
 
 interface ViajePendiente {
   id: string;
@@ -821,9 +833,22 @@ export function Rutas() {
   // Pedido abierto en la ficha de detalle (al tocar una tarjeta de la bolsa).
   const [pedidoDetalle, setPedidoDetalle] = useState<VisitaPendiente | null>(null);
 
+  // Form "Programar nuevo viaje" (antes vivía en Viajes.tsx).
+  const [formViaje, setFormViaje] = useState(formViajeInicial);
+  const [mostrarFormViaje, setMostrarFormViaje] = useState(false);
+  const [creandoViaje, setCreandoViaje] = useState(false);
+
   const { data: choferes = [] } = useQuery({
     queryKey: ['choferes', 'activos'],
     queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data.filter((c) => c.activo)),
+  });
+  const { data: zonasTarifas = [] } = useQuery({
+    queryKey: ['tarifas', 'activas'],
+    queryFn: () => api.get<Tarifa[]>('/api/tarifas').then((r) => r.data.filter((t) => t.activo)),
+  });
+  const { data: ubicacionesViaje = [] } = useQuery({
+    queryKey: ['ubicaciones'],
+    queryFn: () => api.get<Ubicacion[]>('/api/ubicaciones').then((r) => r.data.filter((u) => u.activo)),
   });
   const { data: rutas = [] } = useQuery({
     queryKey: ['rutas', fecha],
@@ -890,6 +915,36 @@ export function Rutas() {
     queryClient.invalidateQueries({ queryKey: ['rutas', 'bolsa'] });
     queryClient.invalidateQueries({ queryKey: ['viajes', 'del-dia', fecha] });
   };
+
+  // Depósito para una entrega, vaciadero para un retiro. Si hay una sola
+  // activa de ese tipo no hace falta elegir: el backend la autoasigna sola.
+  const tipoUbicacionViaje = formViaje.tipo === 'entrega' ? 'deposito' : 'vaciadero';
+  const ubicacionesElegiblesViaje = ubicacionesViaje.filter((u) => u.tipo === tipoUbicacionViaje);
+
+  /** Programa un viaje (o recambio) nuevo — cae directo a la bolsa sin rutear. */
+  async function crearViaje(e: React.FormEvent) {
+    e.preventDefault();
+    if (!formViaje.fecha) return;
+    setCreandoViaje(true);
+    try {
+      await api.post('/api/viajes', {
+        ...formViaje,
+        zona: formViaje.zona || undefined,
+        destino_direccion: formViaje.destino_direccion || undefined,
+        importe: formViaje.importe || undefined,
+        ubicacion_id: formViaje.ubicacion_id || undefined,
+        horario_preferido: formViaje.horario_preferido || undefined,
+      });
+      setFormViaje(formViajeInicial);
+      recargarListas();
+      queryClient.invalidateQueries({ queryKey: ['viajes'] });
+      show('success', formViaje.tipo === 'recambio' ? 'Recambio programado correctamente' : 'Viaje programado correctamente');
+    } catch (err: any) {
+      show('error', 'Error al programar', err.response?.data?.error || 'Error desconocido');
+    } finally {
+      setCreandoViaje(false);
+    }
+  }
 
   /** Agrega/confirma una ruta en la caché de la lista del día sin esperar el refetch de recargarListas(). */
   function agregarRutaOptimista(r: Ruta) {
@@ -1104,6 +1159,106 @@ export function Rutas() {
         </div>
         <div className="date-pick">Día: <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></div>
       </div>
+
+      <RoleGate roles={['admin', 'operador']}>
+        <div className="form-card">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            onClick={() => setMostrarFormViaje((v) => !v)}
+          >
+            <Plus size={15} strokeWidth={2} /> Programar nuevo viaje
+            <ChevronDown size={14} strokeWidth={2} style={{ transform: mostrarFormViaje ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+          </button>
+          {mostrarFormViaje && (
+          <form onSubmit={crearViaje} className="form-row" style={{ marginTop: '14px' }}>
+            <div className="form-group">
+              <label className="form-label">Tipo</label>
+              <select
+                className="form-select"
+                value={formViaje.tipo}
+                onChange={(e) => setFormViaje({ ...formViaje, tipo: e.target.value, ubicacion_id: '' })}
+              >
+                <option value="entrega">Entrega</option>
+                <option value="retiro">Retiro</option>
+                <option value="recambio">Recambio</option>
+              </select>
+            </div>
+            {ubicacionesElegiblesViaje.length > 1 && (
+              <div className="form-group">
+                <label className="form-label">{formViaje.tipo === 'entrega' ? 'Sale de' : 'Se descarga en'}</label>
+                <select
+                  className="form-select"
+                  value={formViaje.ubicacion_id}
+                  onChange={(e) => setFormViaje({ ...formViaje, ubicacion_id: e.target.value })}
+                >
+                  <option value="">— Elegir —</option>
+                  {ubicacionesElegiblesViaje.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+                </select>
+              </div>
+            )}
+            <div className="form-group">
+              <label className="form-label">Fecha</label>
+              <input
+                type="date"
+                className="form-input"
+                value={formViaje.fecha}
+                onChange={(e) => setFormViaje({ ...formViaje, fecha: e.target.value })}
+                required
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Horario sugerido</label>
+              <select
+                className="form-select"
+                value={formViaje.horario_preferido}
+                onChange={(e) => setFormViaje({ ...formViaje, horario_preferido: e.target.value })}
+              >
+                <option value="">— Sin preferencia —</option>
+                {OPCIONES_HORARIO_SUGERIDO.map((h) => <option key={h} value={h}>{h}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Zona</label>
+              <select
+                className="form-select"
+                value={formViaje.zona}
+                required={formViaje.tipo === 'recambio'}
+                onChange={(e) => setFormViaje({ ...formViaje, zona: e.target.value })}
+              >
+                <option value="">— Elegir zona —</option>
+                {zonasTarifas.map((z) => <option key={z.departamento} value={z.departamento}>{z.departamento}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Dirección de destino</label>
+              <input
+                className="form-input"
+                placeholder="Ej. Av. San Martín 1234, Godoy Cruz"
+                value={formViaje.destino_direccion}
+                required={formViaje.tipo === 'recambio'}
+                onChange={(e) => setFormViaje({ ...formViaje, destino_direccion: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Importe</label>
+              <input
+                type="number"
+                className="form-input"
+                placeholder="Ej. 85000"
+                value={formViaje.importe}
+                required={formViaje.tipo === 'recambio'}
+                onChange={(e) => setFormViaje({ ...formViaje, importe: e.target.value })}
+              />
+            </div>
+            <button type="submit" className="btn btn-primary" disabled={creandoViaje}>
+              {creandoViaje ? 'Guardando...' : 'Programar viaje'}
+            </button>
+          </form>
+          )}
+        </div>
+      </RoleGate>
 
       {rutasAbiertasAnteriores.length > 0 && (
         <div style={{

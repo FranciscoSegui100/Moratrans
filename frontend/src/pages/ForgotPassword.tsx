@@ -25,7 +25,7 @@ export function ForgotPassword() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-logo">
-          <div className="login-logo-mark">MT</div>
+          <img src="/logo.png" alt="MoraTrans" className="login-logo-mark" />
           <h1>Moratrans</h1>
           <p>Restablecer contraseña</p>
         </div>

@@ -7,6 +7,7 @@ import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { proximosDiasHabiles, formatearFechaLarga } from '../../../services/diasHabiles.service';
 import { manejarRespuestaInvalida } from '../estados';
 import { escalarAAsesor } from './asesor.flow';
+import { nombreClienteParaAlerta } from '../../../services/clientes.service';
 import { DIAS_A_OFRECER_RETIRO_ANTICIPADO } from '../../../config/bot.config';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
@@ -107,10 +108,11 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
 
   if (dias.length === 0) {
     const numero = sesion.contexto.numero as string;
+    const identificacion = await nombreClienteParaAlerta(to);
     await escalarAAsesor(
       to,
       sesion,
-      `${to} pidió un retiro anticipado del contenedor ${numero}, pero ya está en la fecha pactada de retiro (${venceEn}) o después`,
+      `${identificacion} pidió un retiro anticipado del contenedor ${numero}, pero ya está en la fecha pactada de retiro (${venceEn}) o después`,
     );
     return;
   }
@@ -166,12 +168,13 @@ async function manejarDia(m: MensajeEntrante, sesion: Sesion): Promise<void> {
        VALUES ('retiro', $1, $2, $3, $4, $5, 'Pedido de retiro por WhatsApp (cliente)', $6, $7)`,
       [fecha, numero, to, zona, destino, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
     );
+    const identificacion = await nombreClienteParaAlerta(to);
     const [alerta] = await query(
       `INSERT INTO alertas (tipo, referencia_id, mensaje)
        VALUES ('retiro_solicitado', $1, $2)
        ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
        RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [numero, `${to} pidió que retiremos el contenedor ${numero} el ${fecha}`],
+      [numero, `${identificacion} pidió que retiremos el contenedor ${numero} el ${fecha}`],
     );
     if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
   }

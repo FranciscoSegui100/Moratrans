@@ -16,6 +16,7 @@ alertasRouter.use(requireAuth);
 const SELECT_ALERTAS = `
   SELECT a.*,
          p.cliente_telefono,
+         c.nombre AS cliente_nombre,
          p.monto,
          p.estado AS pago_estado,
          p.medio_pago,
@@ -23,8 +24,9 @@ const SELECT_ALERTAS = `
          pe.zona,
          pe.precio
     FROM alertas a
-    LEFT JOIN pagos p    ON a.tipo IN ('pago_pendiente_validacion', 'alargue_solicitado') AND p.id::text = a.referencia_id
+    LEFT JOIN pagos p    ON a.tipo IN ('pago_pendiente_validacion', 'alargue_solicitado', 'cuenta_corriente_solicitada') AND p.id::text = a.referencia_id
     LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+    LEFT JOIN clientes c ON c.telefono = p.cliente_telefono
 `;
 alertasRouter.get('/', async (req: Request, res: Response) => {
   const estado = req.query.estado as string | undefined;

@@ -34,13 +34,14 @@ function mimeDeExtension(ext: string): string {
 pagosRouter.get('/', async (req: Request, res: Response) => {
   const estado = (req.query.estado as string) || 'pendiente';
   const rows = await query(
-    `SELECT p.id, p.cliente_telefono, p.monto, p.url_comprobante, p.estado, p.creado_en,
+    `SELECT p.id, p.cliente_telefono, c.nombre AS cliente_nombre, p.monto, p.url_comprobante, p.estado, p.creado_en,
             p.titular_transferencia, p.es_cuenta_corriente, p.tipo, p.contenedor_numero,
             p.medio_pago, p.efectivo_cobrado,
             pe.zona, pe.precio,
             (SELECT COUNT(*) FROM pagos_adjuntos pa WHERE pa.pago_id = p.id)::int AS adjuntos_count
        FROM pagos p
        LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+       LEFT JOIN clientes c ON c.telefono = p.cliente_telefono
       WHERE p.estado = $1 ORDER BY p.creado_en DESC`,
     [estado],
   );

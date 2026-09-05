@@ -18,8 +18,9 @@ export interface Alerta {
   mensaje: string;
   estado: string;
   creado_en: string;
-  // Presentes sólo en alertas de tipo 'pago_pendiente_validacion'.
+  // Presentes sólo en alertas de tipo 'pago_pendiente_validacion' (y afines, ver alertas.routes.ts).
   cliente_telefono?: string | null;
+  cliente_nombre?: string | null;
   monto?: string | null;
   pago_estado?: string | null;
   tiene_comprobante?: boolean | null;

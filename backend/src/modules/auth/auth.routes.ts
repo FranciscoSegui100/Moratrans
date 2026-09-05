@@ -6,7 +6,7 @@ import { query } from '../../config/db';
 import { env } from '../../config/env';
 import { requireAuth } from '../../middleware/rbac';
 import { requireCsrf } from '../../middleware/csrf';
-import { loginLimiter, refreshLimiter, forgotPasswordLimiter, mfaLimiter } from '../../middleware/rateLimit';
+import { loginLimiter, refreshLimiter, forgotPasswordLimiter, mfaLimiter, setPasswordLimiter } from '../../middleware/rateLimit';
 import { registrarEventoAuth } from '../../services/auth-log.service';
 import { crearTokenAccion, consumirTokenAccion } from '../../services/token-accion.service';
 import { enviarResetPassword, enviarPasswordCambiada, enviarAlertaDispositivoNuevo, enviarCodigoMfa } from '../../services/email.service';
@@ -48,7 +48,13 @@ export const authRouter = Router();
 // middleware/rateLimit.ts) — este frena a alguien que reparte los intentos
 // entre varias IPs, algo que un límite por IP no puede ver.
 const MAX_INTENTOS_FALLIDOS = 5;
-const BLOQUEO_MINUTOS = 1; // TEMPORAL para pruebas — volver a 15 cuando terminen de probar
+const BLOQUEO_MINUTOS = 15;
+
+// Hash dummy contra el que comparar cuando el email no existe: sin esto,
+// responder "no existe" es más rápido que responder "contraseña incorrecta"
+// (ese segundo camino sí corre bcrypt.compare), y la diferencia de tiempo
+// deja adivinar qué emails están registrados.
+const HASH_DUMMY_TIMING = bcrypt.hashSync('hash-dummy-solo-para-igualar-tiempos', 12);
 
 interface UsuarioFila {
   id: string;
@@ -128,6 +134,7 @@ authRouter.post('/login', loginLimiter, async (req: Request, res: Response) => {
   const user = rows[0];
 
   if (!user || !user.activo) {
+    await bcrypt.compare(password, HASH_DUMMY_TIMING);
     await registrarEventoAuth({ email, tipo: 'login_fallido', req, detalle: { motivo: user ? 'inactivo' : 'no_existe' } });
     return res.status(401).json({ error: 'Credenciales inválidas' });
   }
@@ -311,7 +318,7 @@ const setPasswordSchema = z.object({
  * con un link de un solo uso": aceptar una invitación de alta y restablecer
  * una olvidada. En ambos casos deja al usuario logueado directamente.
  */
-authRouter.post('/set-password', async (req: Request, res: Response) => {
+authRouter.post('/set-password', setPasswordLimiter, async (req: Request, res: Response) => {
   const parsed = setPasswordSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Datos inválidos' });
   const { token, password } = parsed.data;
@@ -330,7 +337,7 @@ authRouter.post('/set-password', async (req: Request, res: Response) => {
   }
   if (!usuarioId) return res.status(400).json({ error: 'El link es inválido o venció. Pedí uno nuevo.' });
 
-  const hash = await bcrypt.hash(password, 10);
+  const hash = await bcrypt.hash(password, 12);
   const rows = await query<UsuarioFila & { mfa_enabled: boolean; mfa_secret_enc: string | null }>(
     `UPDATE usuarios SET password_hash = $2, token_version = token_version + 1, failed_attempts = 0, locked_until = NULL
      WHERE id = $1 RETURNING id, email, rol, activo, token_version, mfa_enabled, mfa_secret_enc`,
