@@ -470,14 +470,15 @@ async function elegirContenedor(to: string, choferId: string, estado: string): P
   // entregas/retiros el mismo día.
   const conts = await query<{
     numero: string; grupo_id: string | null; tipo: string; pareja_numero: string | null; pareja_tipo: string | null;
-    destino_direccion: string | null; cliente_nombre: string | null;
+    destino_direccion: string | null; cliente_nombre: string | null; medio_pago: string | null;
   }>(
     `SELECT DISTINCT ON (c.numero)
             c.numero, v.grupo_id, v.tipo, pareja.contenedor_numero AS pareja_numero, pareja.tipo AS pareja_tipo,
-            v.destino_direccion, cl.nombre AS cliente_nombre
+            v.destino_direccion, cl.nombre AS cliente_nombre, pg.medio_pago
        FROM contenedores c
        JOIN viajes v ON v.contenedor_numero = c.numero
        LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
+       LEFT JOIN pagos pg ON pg.id = v.pago_id
        LEFT JOIN LATERAL (
          SELECT v2.contenedor_numero, v2.tipo
            FROM viajes v2
@@ -497,10 +498,15 @@ async function elegirContenedor(to: string, choferId: string, estado: string): P
     return menuChofer(to);
   }
   await setSesion({ telefono: to, flujo: 'chofer', paso: 'elegir_contenedor', contexto: { estado } });
+  // Si alguno se cobra en efectivo, se aclara ANTES de que el chofer marque
+  // "Ya entregué" — no alcanza con haberlo avisado una sola vez al asignar
+  // la entrega (puede ser horas antes y quedar olvidado a esta altura).
+  const hayEfectivo = conts.some((c) => c.medio_pago === 'efectivo');
   await sendList(
     to,
     LABEL_ESTADO[estado as keyof typeof LABEL_ESTADO],
-    '¿Cuál contenedor? Fijate el cliente y la dirección para confirmar que es la parada correcta.',
+    '¿Cuál contenedor? Fijate el cliente y la dirección para confirmar que es la parada correcta.' +
+      (hayEfectivo ? '\n\n💵 Las marcadas *EFECTIVO* se cobran en el momento de la entrega.' : ''),
     'Ver contenedores',
     conts.map((c) => {
       const clienteODireccion = [c.cliente_nombre, c.destino_direccion].filter(Boolean).join(' — ') || 'Sin datos del cliente';
@@ -509,10 +515,11 @@ async function elegirContenedor(to: string, choferId: string, estado: string): P
           ? `🔄 Recambio, retira lleno ${c.pareja_numero} · `
           : `🔄 Recambio, entrega vacío ${c.pareja_numero} · `
         : '';
+      const efectivo = c.medio_pago === 'efectivo' ? '💵 EFECTIVO · ' : '';
       return {
         id: `cont:${estado}:${c.numero}`,
         title: c.numero,
-        description: `${recambio}${clienteODireccion}`,
+        description: `${efectivo}${recambio}${clienteODireccion}`,
       };
     }),
   );
