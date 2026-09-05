@@ -6,7 +6,7 @@ import { api } from '../api/client';
 export function Login() {
   const { login, verificarMfa } = useAuth();
   const nav = useNavigate();
-  const [email, setEmail] = useState('admin@empresa.com');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [recordar, setRecordar] = useState(false);
   const [error, setError] = useState('');
@@ -132,7 +132,8 @@ export function Login() {
             <input
               className="form-input"
               type="email"
-              placeholder="admin@empresa.com"
+              placeholder="tu@empresa.com"
+              autoComplete="username"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -145,6 +146,7 @@ export function Login() {
               className="form-input"
               type="password"
               placeholder="••••••••"
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required

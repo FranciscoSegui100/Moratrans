@@ -1,7 +1,12 @@
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
 storage/
 *.tsbuildinfo
 backend/public/
 vite.config.*.timestamp-*
+*.sql.gz
+*.dump
+*.bak

@@ -38,6 +38,17 @@ export const forgotPasswordLimiter = rateLimit({
   message: { error: 'Demasiadas solicitudes. Esperá unos minutos.' },
 });
 
+// Sin este límite, /set-password es un endpoint público y sin sesión que antes
+// de siquiera validar el token corre zxcvbn + una consulta a HaveIBeenPwned:
+// trabajo caro que cualquiera podía disparar sin límite.
+export const setPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas solicitudes. Esperá unos minutos.' },
+});
+
 // Un código TOTP tiene 10^6 combinaciones y una ventana de validez chica,
 // pero igual conviene un límite explícito por IP (además del bloqueo por
 // cuenta en auth.routes.ts).

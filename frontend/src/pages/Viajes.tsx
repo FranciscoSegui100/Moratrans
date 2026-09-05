@@ -205,22 +205,6 @@ export function Viajes() {
     }
   }
 
-  /**
-   * Reasignar chofer en cualquier viaje ya creado — sobre todo para la pata
-   * "retiro" de un recambio pedido por WhatsApp, que se crea sin chofer (ver
-   * recambio.flow.ts): sin esto no había forma de asignárselo desde el panel,
-   * y sin chofer_id el bot nunca le ofrece al chofer completar el recambio.
-   */
-  async function reasignarChofer(id: string, choferId: string) {
-    try {
-      await api.patch(`/api/viajes/${id}`, { chofer_id: choferId || null });
-      cargar();
-      show('success', 'Chofer reasignado');
-    } catch (err: any) {
-      show('error', 'No se pudo reasignar', err.response?.data?.error);
-    }
-  }
-
   async function cambiarRemito(id: string, remito: string) {
     try {
       await api.patch(`/api/viajes/${id}`, { remito: remito.trim() || null });
@@ -445,7 +429,6 @@ export function Viajes() {
                   <th>Destino</th>
                   <th>Contenedor</th>
                   <th>Estado contenedor</th>
-                  <th>Chofer</th>
                   <th>Patente</th>
                   <th>Nº remito</th>
                   <th>Importe</th>
@@ -534,22 +517,6 @@ export function Viajes() {
                         <span className="text-muted">—</span>
                       )}
                     </td>
-                    <td>
-                      <RoleGate roles={['admin', 'operador']}>
-                        <select
-                          className="form-select"
-                          style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                          value={v.chofer_id ?? ''}
-                          onChange={(e) => reasignarChofer(v.id, e.target.value)}
-                        >
-                          <option value="">— Sin asignar —</option>
-                          {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                        </select>
-                      </RoleGate>
-                      <RoleGate roles={['finanzas', 'lectura']}>
-                        {v.chofer_nombre ?? <span className="text-muted">Sin asignar</span>}
-                      </RoleGate>
-                    </td>
                     <td className="mono">{v.patente ?? <span className="text-muted">—</span>}</td>
                     <td className="mono">
                       <RoleGate roles={['admin', 'operador']}>
@@ -609,7 +576,7 @@ export function Viajes() {
                 ))}
                 {viajesAMostrar.length === 0 && (
                   <tr>
-                    <td colSpan={13} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                    <td colSpan={12} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                       {pestana === 'activos' ? 'No hay viajes activos o programados en el rango' : 'No hay viajes en el historial para el rango'}
                     </td>
                   </tr>

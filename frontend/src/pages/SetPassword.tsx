@@ -66,6 +66,7 @@ export function SetPassword({ titulo }: { titulo: string }) {
               className="form-input"
               type="password"
               placeholder="Mínimo 12 caracteres, evitá algo predecible"
+              autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -77,6 +78,7 @@ export function SetPassword({ titulo }: { titulo: string }) {
             <input
               className="form-input"
               type="password"
+              autoComplete="new-password"
               value={confirmar}
               onChange={(e) => setConfirmar(e.target.value)}
               required
