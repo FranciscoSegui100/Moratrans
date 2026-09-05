@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -18,6 +18,8 @@ import {
   TrendingUp,
   PanelLeftClose,
   PanelLeftOpen,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import { useAuth, tieneRol, Rol } from '../context/AuthContext';
 import { api } from '../api/client';
@@ -25,44 +27,84 @@ import { conectarSocket } from '../api/socket';
 import { useToast } from './Toast';
 import { tipoLabel } from '../lib/alertLabels';
 import { armarSonidoAlerta, playAlertSound } from '../lib/notificationSound';
+import { useTheme } from '../hooks/useTheme';
 
 interface AlertaSocket { tipo: string; mensaje: string; cliente_telefono?: string | null }
 
-const nav: { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] }[] = [
-  { to: '/', label: 'Dashboard', icon: LayoutGrid },
-  { to: '/pagos', label: 'Validar pagos', icon: CreditCard },
-  { to: '/comprobantes', label: 'Comprobantes', icon: Receipt },
-  { to: '/viajes', label: 'Viajes', icon: Truck },
-  { to: '/rutas', label: 'Rutas', icon: Route, roles: ['admin', 'operador'] },
-  { to: '/alertas', label: 'Alertas', icon: Bell },
-  { to: '/conversaciones', label: 'Conversaciones', icon: MessageCircle },
-  { to: '/choferes', label: 'Choferes', icon: HardHat },
-  { to: '/clientes', label: 'Clientes', icon: Users },
-  { to: '/contenedores', label: 'Contenedores', icon: Package },
-  { to: '/tarifas', label: 'Tarifas', icon: DollarSign },
-  { to: '/finanzas', label: 'Finanzas', icon: TrendingUp, roles: ['admin', 'finanzas'] },
-  { to: '/usuarios', label: 'Usuarios', icon: ShieldCheck, roles: ['admin'] },
+type NavItem = { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] };
+
+// Sidebar agrupado por área de trabajo (Operación / Recursos / Administración)
+// para que la lista no sea un bloque plano de 13 ítems.
+const grupos: { titulo: string; items: NavItem[] }[] = [
+  {
+    titulo: 'Operación',
+    items: [
+      { to: '/', label: 'Dashboard', icon: LayoutGrid },
+      { to: '/pagos', label: 'Validar pagos', icon: CreditCard },
+      { to: '/comprobantes', label: 'Comprobantes', icon: Receipt },
+      { to: '/viajes', label: 'Viajes', icon: Truck },
+      { to: '/rutas', label: 'Rutas', icon: Route, roles: ['admin', 'operador'] },
+      { to: '/alertas', label: 'Alertas', icon: Bell },
+      { to: '/conversaciones', label: 'Conversaciones', icon: MessageCircle },
+    ],
+  },
+  {
+    titulo: 'Recursos',
+    items: [
+      { to: '/choferes', label: 'Choferes', icon: HardHat },
+      { to: '/clientes', label: 'Clientes', icon: Users },
+      { to: '/contenedores', label: 'Contenedores', icon: Package },
+    ],
+  },
+  {
+    titulo: 'Administración',
+    items: [
+      { to: '/tarifas', label: 'Tarifas', icon: DollarSign },
+      { to: '/finanzas', label: 'Finanzas', icon: TrendingUp, roles: ['admin', 'finanzas'] },
+      { to: '/usuarios', label: 'Usuarios', icon: ShieldCheck, roles: ['admin'] },
+    ],
+  },
 ];
+
+function iniciales(email?: string) {
+  if (!email) return '?';
+  const base = email.split('@')[0].replace(/[._-]+/g, ' ').trim();
+  const partes = base.split(/\s+/).filter(Boolean);
+  return (partes.length >= 2 ? partes[0][0] + partes[1][0] : base.slice(0, 2)).toUpperCase();
+}
 
 export function Layout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const loc = useLocation();
   const { show } = useToast();
   const queryClient = useQueryClient();
+  const { oscuro, toggle: toggleTema } = useTheme();
   const [alertCount, setAlertCount] = useState(0);
   const [conversacionesCount, setConversacionesCount] = useState(0);
   const [pagosCount, setPagosCount] = useState(0);
   const [conectado, setConectado] = useState(true);
+  const [menuAbierto, setMenuAbierto] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   // Ocultar la barra lateral para que las tablas anchas (Viajes, Contenedores…)
   // usen todo el ancho. Se recuerda por navegador.
   const [sidebarOculta, setSidebarOculta] = useState(() => {
     try { return localStorage.getItem('sidebarOculta') === '1'; } catch { return false; }
   });
-  const navVisible = nav.filter((n) => !n.roles || tieneRol(user, ...n.roles));
 
   useEffect(() => {
     try { localStorage.setItem('sidebarOculta', sidebarOculta ? '1' : '0'); } catch { /* modo privado */ }
   }, [sidebarOculta]);
+
+  // Cerrar el menú de usuario al clickear afuera o cambiar de pantalla.
+  useEffect(() => {
+    if (!menuAbierto) return;
+    const onClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuAbierto(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [menuAbierto]);
+  useEffect(() => { setMenuAbierto(false); }, [loc.pathname]);
 
   // Indicador visible de si el socket está conectado, sin depender de que
   // alguien sepa abrir la consola del navegador: si dice "Sin conexión en
@@ -172,25 +214,31 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
 
         <nav className="sidebar-nav">
-          {navVisible.map((n) => {
-            const isActive = loc.pathname === n.to;
-            const isAlertas = n.to === '/alertas';
-            const isConversaciones = n.to === '/conversaciones';
-            const isPagos = n.to === '/pagos';
-            const Icon = n.icon;
-            const badge = isAlertas ? alertCount : isConversaciones ? conversacionesCount : isPagos ? pagosCount : 0;
+          {grupos.map((grupo) => {
+            const items = grupo.items.filter((n) => !n.roles || tieneRol(user, ...n.roles));
+            if (items.length === 0) return null;
             return (
-              <Link
-                key={n.to}
-                to={n.to}
-                className={`nav-item ${isActive ? 'active' : ''}`}
-              >
-                <Icon className="nav-icon" strokeWidth={1.75} />
-                {n.label}
-                {badge > 0 && (
-                  <span className="nav-badge">{badge > 99 ? '99+' : badge}</span>
-                )}
-              </Link>
+              <div key={grupo.titulo} className="nav-group">
+                <div className="nav-group-title">{grupo.titulo}</div>
+                {items.map((n) => {
+                  const isActive = loc.pathname === n.to;
+                  const Icon = n.icon;
+                  const badge = n.to === '/alertas'
+                    ? alertCount
+                    : n.to === '/conversaciones'
+                      ? conversacionesCount
+                      : n.to === '/pagos'
+                        ? pagosCount
+                        : 0;
+                  return (
+                    <Link key={n.to} to={n.to} className={`nav-item ${isActive ? 'active' : ''}`}>
+                      <Icon className="nav-icon" strokeWidth={1.75} />
+                      {n.label}
+                      {badge > 0 && <span className="nav-badge">{badge > 99 ? '99+' : badge}</span>}
+                    </Link>
+                  );
+                })}
+              </div>
             );
           })}
         </nav>
@@ -212,6 +260,49 @@ export function Layout({ children }: { children: ReactNode }) {
       </aside>
 
       <main className="main-content">
+        <header className="topbar">
+          <div className="topbar-spacer" />
+          <div className="topbar-actions">
+            <button
+              className="topbar-btn"
+              onClick={toggleTema}
+              title={oscuro ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+              aria-label={oscuro ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+            >
+              {oscuro ? <Sun strokeWidth={1.75} /> : <Moon strokeWidth={1.75} />}
+            </button>
+
+            <Link to="/alertas" className="topbar-btn" title="Alertas" aria-label="Alertas">
+              <Bell strokeWidth={1.75} />
+              {alertCount > 0 && <span className="topbar-btn-badge" />}
+            </Link>
+
+            <div className="topbar-user" ref={menuRef}>
+              <button
+                className="topbar-avatar"
+                onClick={() => setMenuAbierto((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={menuAbierto}
+                title={user?.email}
+              >
+                {iniciales(user?.email)}
+              </button>
+              {menuAbierto && (
+                <div className="topbar-menu" role="menu">
+                  <div className="topbar-menu-head">
+                    <div className="topbar-menu-email">{user?.email}</div>
+                    <div className="topbar-menu-role">{user?.rol}</div>
+                  </div>
+                  <button className="topbar-menu-item" onClick={logout} role="menuitem">
+                    <LogOut size={14} strokeWidth={1.75} />
+                    Cerrar sesión
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
         <div key={loc.pathname} className="page-enter">{children}</div>
       </main>
     </div>
