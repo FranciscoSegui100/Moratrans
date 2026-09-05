@@ -3,11 +3,15 @@
 /* ===================================================
    DESIGN SYSTEM — Moratrans Panel
    Minimal cálido con color — base clara y prolija, con
-   personalidad boutique: un solo acento (azul pastel suave,
-   no invasivo), formas redondeadas generosas, micro-detalle
-   cuidado e interacciones vivas (hover, foco, animación sutil).
+   personalidad boutique: un solo acento de marca (terracota),
+   formas redondeadas generosas, micro-detalle cuidado e
+   interacciones vivas (hover, foco, animación sutil).
+   Tema claro por defecto; el oscuro se activa con
+   [data-theme="dark"] en <html> o por preferencia del sistema.
    =================================================== */
 :root {
+  color-scheme: light;
+
   /* ── Superficies (crema cálido, nunca blanco puro) ── */
   --bg-base:       #faf7f1;
   --bg-surface:    #f3ede1;
@@ -21,11 +25,11 @@
   --text-secondary:#756c5f;
   --text-muted:    #a89c88;
 
-  /* ── Acento único: azul pastel suave (discreto, no satura) ── */
-  --accent:        #5c7f9c;
-  --accent-dark:   #46647d;
-  --accent-tint:   rgba(92,127,156,0.11);
-  --accent-tint-strong: rgba(92,127,156,0.18);
+  /* ── Acento de marca: terracota (una sola voz para acciones primarias) ── */
+  --accent:        #b5652e;
+  --accent-dark:   #8f4f23;
+  --accent-tint:   rgba(181,101,46,0.11);
+  --accent-tint-strong: rgba(181,101,46,0.18);
 
   /* ── Semántico (cálido, apagado, no saturado) ── */
   --success:       #4d7c62;
@@ -56,6 +60,86 @@
   --ease-pop: cubic-bezier(.2, 1.4, .4, 1);
   --font-mono: 'Roboto Mono', 'SFMono-Regular', Consolas, monospace;
   --font-display: 'Instrument Serif', Georgia, serif;
+}
+
+/* ===================================================
+   MODO OSCURO
+   Mismos roles de color, superficies invertidas. Se define
+   dos veces: por preferencia del sistema (salvo que el
+   usuario haya forzado claro) y por override explícito. Cada
+   token que exista en :root se redefine acá — ninguno queda
+   solo dentro de un bloque de tema.
+   =================================================== */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --bg-base:       #1c1815;
+    --bg-surface:    #211c16;
+    --bg-card:       #252019;
+    --bg-card-hover: #2c2620;
+    --border:        #3a332a;
+    --border-light:  #4a4235;
+
+    --text-primary:  #f2ece2;
+    --text-secondary:#b6aa98;
+    --text-muted:    #7d7263;
+
+    --accent:        #e08a4f;
+    --accent-dark:   #c9743c;
+    --accent-tint:   rgba(224,138,79,0.15);
+    --accent-tint-strong: rgba(224,138,79,0.24);
+
+    --success:       #6fae8c;
+    --success-bg:    rgba(111,174,140,0.15);
+    --warning:       #d4af5a;
+    --warning-bg:    rgba(212,175,90,0.15);
+    --danger:        #d97066;
+    --danger-bg:     rgba(217,112,102,0.15);
+    --neutral:       #9a8f7d;
+    --neutral-bg:    rgba(154,143,125,0.14);
+    --purple:        #a594c4;
+    --purple-bg:     rgba(165,148,196,0.16);
+
+    --shadow-sm:   0 1px 3px rgba(0,0,0,0.32);
+    --shadow:      0 14px 32px -12px rgba(0,0,0,0.5);
+    --shadow-hover:0 26px 48px -14px rgba(0,0,0,0.6), 0 0 0 1px var(--accent-tint);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-base:       #1c1815;
+  --bg-surface:    #211c16;
+  --bg-card:       #252019;
+  --bg-card-hover: #2c2620;
+  --border:        #3a332a;
+  --border-light:  #4a4235;
+
+  --text-primary:  #f2ece2;
+  --text-secondary:#b6aa98;
+  --text-muted:    #7d7263;
+
+  --accent:        #e08a4f;
+  --accent-dark:   #c9743c;
+  --accent-tint:   rgba(224,138,79,0.15);
+  --accent-tint-strong: rgba(224,138,79,0.24);
+
+  --success:       #6fae8c;
+  --success-bg:    rgba(111,174,140,0.15);
+  --warning:       #d4af5a;
+  --warning-bg:    rgba(212,175,90,0.15);
+  --danger:        #d97066;
+  --danger-bg:     rgba(217,112,102,0.15);
+  --neutral:       #9a8f7d;
+  --neutral-bg:    rgba(154,143,125,0.14);
+  --purple:        #a594c4;
+  --purple-bg:     rgba(165,148,196,0.16);
+
+  --shadow-sm:   0 1px 3px rgba(0,0,0,0.32);
+  --shadow:      0 14px 32px -12px rgba(0,0,0,0.5);
+  --shadow-hover:0 26px 48px -14px rgba(0,0,0,0.6), 0 0 0 1px var(--accent-tint);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -186,8 +270,22 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   padding: 10px 10px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 14px;
   overflow-y: auto;
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.nav-group-title {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0 12px 5px;
 }
 
 .nav-item {
@@ -299,7 +397,7 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .main-content {
   margin-left: 220px;
   flex: 1;
-  padding: 26px 32px 40px;
+  padding: 0 32px 40px;
   min-height: 100vh;
   max-width: 1440px;
   transition: margin-left var(--transition), max-width var(--transition), padding-left var(--transition);
@@ -308,6 +406,105 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .page-enter {
   animation: pageEnter .45s var(--ease-pop) both;
 }
+
+/* ===== TOPBAR ===== */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 0 12px;
+  margin-bottom: 14px;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border);
+}
+.topbar-spacer { flex: 1; min-width: 0; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
+
+.topbar-btn {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition), background var(--transition), transform 200ms var(--ease-spring);
+}
+.topbar-btn:hover { color: var(--text-primary); border-color: var(--accent); transform: translateY(-1px); }
+.topbar-btn svg { width: 16px; height: 16px; }
+.topbar-btn-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--bg-card);
+}
+
+.topbar-user { position: relative; }
+.topbar-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--accent-tint);
+  color: var(--accent-dark);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color var(--transition), transform 200ms var(--ease-spring);
+}
+.topbar-avatar:hover { border-color: var(--accent); transform: translateY(-1px); }
+
+.topbar-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 200px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px;
+  z-index: 200;
+  animation: scaleIn .16s var(--ease-pop) both;
+  transform-origin: top right;
+}
+.topbar-menu-head { padding: 8px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.topbar-menu-email { font-size: 0.8rem; font-weight: 600; color: var(--text-primary); word-break: break-all; }
+.topbar-menu-role {
+  font-size: 0.64rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  margin-top: 2px;
+}
+.topbar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+.topbar-menu-item:hover { background: var(--bg-surface); color: var(--danger); }
 
 /* ===== OCULTAR / MOSTRAR SIDEBAR ===== */
 /* Botón siempre visible: pegado al borde derecho del sidebar cuando está
@@ -576,7 +773,7 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   border-radius: 50%;
 }
 .badge.disponible  { background: var(--success-bg); color: var(--success); }
-.badge.reservado   { background: var(--accent-tint); color: var(--accent); }
+.badge.reservado   { background: var(--purple-bg); color: var(--purple); }
 .badge.entregado   { background: var(--purple-bg); color: var(--purple); }
 .badge.retirado    { background: var(--neutral-bg); color: var(--neutral); }
 .badge.yendo_a_vaciar { background: var(--neutral-bg); color: var(--neutral); }
@@ -883,7 +1080,7 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 }
 .conv-filtro b { font-family: var(--font-mono); font-weight: 600; margin-left: 4px; opacity: 0.7; }
 .conv-filtro:hover { border-color: var(--border-light); }
-.conv-filtro.active { background: var(--text-primary); border-color: var(--text-primary); color: #fff; }
+.conv-filtro.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .conv-filtro.active b { opacity: 0.85; }
 
 /* ===== CHIPS DE ESTADO DE CONVERSACIÓN ===== */
