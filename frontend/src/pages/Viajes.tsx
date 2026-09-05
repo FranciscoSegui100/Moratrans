@@ -1,13 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X, LayoutGrid, List, Plus, ChevronDown } from 'lucide-react';
+import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X, Plus, ChevronDown } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
-import { useAuth, tieneRol } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
-import { TableroViajes } from '../components/TableroViajes';
 import { formatearFecha } from '../lib/fechas';
 import { hoyISO, sumarDias, fechaEnRango } from '../lib/viajes';
 
@@ -25,6 +23,7 @@ interface Viaje {
   id: string;
   tipo: 'entrega' | 'retiro';
   fecha: string;
+  creado_en: string;
   estado: string;
   zona: string | null;
   contenedor_numero: string | null;
@@ -75,7 +74,6 @@ const formInicial = {
 };
 
 type PestanaViajes = 'activos' | 'historial';
-type Vista = 'tablero' | 'tabla';
 type PresetRango = 'hoy' | 'manana' | 'semana' | 'todo' | 'custom';
 /** Un recambio son dos filas con grupo_id: para el filtro de tipo cuenta como su propia categoría. */
 const categoriaTipo = (v: Viaje): 'entrega' | 'retiro' | 'recambio' => (v.grupo_id ? 'recambio' : v.tipo);
@@ -89,9 +87,7 @@ const PRESETS: { id: PresetRango; label: string }[] = [
 
 export function Viajes() {
   const { show } = useToast();
-  const { user } = useAuth();
   const queryClient = useQueryClient();
-  const puedeAsignar = tieneRol(user, 'admin', 'operador');
 
   const [form, setForm] = useState(formInicial);
   const [mostrarForm, setMostrarForm] = useState(false);
@@ -101,7 +97,6 @@ export function Viajes() {
   const [pestana, setPestana] = useState<PestanaViajes>('activos');
   const [viajeComprobantes, setViajeComprobantes] = useState<Viaje | null>(null);
 
-  const [vista, setVista] = useState<Vista>('tablero');
   const [preset, setPreset] = useState<PresetRango>('semana');
   const [customDesde, setCustomDesde] = useState(() => hoyISO());
   const [customHasta, setCustomHasta] = useState(() => sumarDias(hoyISO(), 6));
@@ -226,35 +221,6 @@ export function Viajes() {
     }
   }
 
-  /**
-   * Asignar (o desasignar, con choferId null) una visita entera desde el
-   * tablero. Un recambio son dos filas (grupo_id) → se mandan las dos. El
-   * PATCH ya dispara el aviso de WhatsApp al chofer, igual que el <select> de
-   * la tabla. Optimista sobre la caché ['viajes'] con rollback.
-   */
-  async function asignarVisita(viajeIds: string[], choferId: string | null) {
-    const previo = queryClient.getQueryData<Viaje[]>(['viajes']);
-    if (previo) {
-      const set = new Set(viajeIds);
-      const nombre = choferId ? (choferes.find((c) => c.id === choferId)?.nombre ?? null) : null;
-      queryClient.setQueryData<Viaje[]>(['viajes'], previo.map((v) =>
-        set.has(v.id) ? { ...v, chofer_id: choferId, chofer_nombre: nombre } : v));
-    }
-    try {
-      await Promise.all(viajeIds.map((id) => api.patch(`/api/viajes/${id}`, { chofer_id: choferId })));
-      queryClient.invalidateQueries({ queryKey: ['viajes'] });
-      if (choferId) {
-        const nombre = choferes.find((c) => c.id === choferId)?.nombre ?? 'el chofer';
-        show('success', 'Viaje asignado', `Se asignó a ${nombre} y se le avisó por WhatsApp.`);
-      } else {
-        show('success', 'Viaje sin asignar', 'Volvió a la columna Sin asignar.');
-      }
-    } catch (err: any) {
-      if (previo) queryClient.setQueryData(['viajes'], previo);
-      show('error', 'No se pudo asignar', err.response?.data?.error || 'Error desconocido');
-    }
-  }
-
   async function cambiarRemito(id: string, remito: string) {
     try {
       await api.patch(`/api/viajes/${id}`, { remito: remito.trim() || null });
@@ -268,7 +234,6 @@ export function Viajes() {
   const viajesActivos = viajesEnRango.filter((v) => v.estado === 'programado' || v.estado === 'en_curso');
   const viajesHistorial = viajesEnRango.filter((v) => v.estado === 'completado' || v.estado === 'cancelado');
   const viajesAMostrar = pestana === 'activos' ? viajesActivos : viajesHistorial;
-  const rangoMultiDia = desde !== hasta;
 
   return (
     <div>
@@ -413,7 +378,7 @@ export function Viajes() {
         </div>
       </RoleGate>
 
-      {/* Barra de filtros + selector de vista */}
+      {/* Barra de filtros */}
       <div className="viajes-toolbar">
         <div className="viajes-filtros">
           <div className="btn-group">
@@ -451,54 +416,29 @@ export function Viajes() {
             <option value="recambio">Recambios</option>
           </select>
         </div>
-
-        <div className="btn-group">
-          <button className={`btn btn-sm ${vista === 'tablero' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setVista('tablero')}>
-            <LayoutGrid size={13} strokeWidth={2} /> Tablero
-          </button>
-          <button className={`btn btn-sm ${vista === 'tabla' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setVista('tabla')}>
-            <List size={13} strokeWidth={2} /> Tabla
-          </button>
-        </div>
       </div>
 
-      {vista === 'tablero' ? (
-        <>
-          <p className="text-muted" style={{ fontSize: '0.82rem', margin: '0 0 10px' }}>
-            {viajesActivos.length} viaje(s) activo(s) en el rango.
-            {puedeAsignar ? ' Arrastrá una tarjeta a un chofer para asignarla (se le avisa por WhatsApp).' : ''}
-          </p>
-          <TableroViajes
-            viajes={viajesActivos}
-            choferes={choferes}
-            puedeAsignar={puedeAsignar}
-            mostrarFecha={rangoMultiDia}
-            onAsignar={asignarVisita}
-          />
-        </>
-      ) : (
-        <>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-            <button
-              className={`btn btn-sm ${pestana === 'activos' ? 'btn-primary' : 'btn-ghost'}`}
-              onClick={() => setPestana('activos')}
-            >
-              Activos / Programados ({viajesActivos.length})
-            </button>
-            <button
-              className={`btn btn-sm ${pestana === 'historial' ? 'btn-primary' : 'btn-ghost'}`}
-              onClick={() => setPestana('historial')}
-            >
-              Historial de realizados ({viajesHistorial.length})
-            </button>
-          </div>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+        <button
+          className={`btn btn-sm ${pestana === 'activos' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setPestana('activos')}
+        >
+          Activos / Programados ({viajesActivos.length})
+        </button>
+        <button
+          className={`btn btn-sm ${pestana === 'historial' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setPestana('historial')}
+        >
+          Historial de realizados ({viajesHistorial.length})
+        </button>
+      </div>
 
-          <div className="table-wrapper">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Horario sugerido</th>
+      <div className="table-wrapper">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Fecha de pedido</th>
+              <th>Horario sugerido</th>
                   <th>Tipo</th>
                   <th>Zona</th>
                   <th>Origen</th>
@@ -515,7 +455,9 @@ export function Viajes() {
               <tbody>
                 {viajesAMostrar.map((v) => (
                   <tr key={v.id}>
-                    <td className="strong" style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
+                    <td className="strong" style={{ whiteSpace: 'nowrap' }} title="Fecha en la que el cliente pidió el viaje">
+                      {formatearFecha(v.creado_en)}
+                    </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {v.horario_preferido ? (
                         // El texto ya trae su propio emoji (🌅/🕐), no anteponer otro.
@@ -675,8 +617,6 @@ export function Viajes() {
               </tbody>
             </table>
           </div>
-        </>
-      )}
 
       {viajeComprobantes && (
         <div className="modal-overlay" onClick={() => setViajeComprobantes(null)}>
