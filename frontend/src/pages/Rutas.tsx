@@ -14,7 +14,6 @@ interface Ruta {
   chofer_id: string;
   chofer_nombre: string | null;
   patente: string | null;
-  estado: 'planificada' | 'en_curso' | 'finalizada' | 'cancelada';
   notas: string | null;
   version: number;
   creado_en: string;
@@ -51,6 +50,8 @@ interface ViajePendiente {
   orden?: number | null;
   grupo_id: string | null;
   planificable?: boolean;
+  ruta_confirmada_en?: string | null;
+  completada_en?: string | null;
   // Datos extra para el detalle del pedido (GET /api/rutas/bolsa).
   cliente_nombre?: string | null;
   notas?: string | null;
@@ -124,7 +125,7 @@ function agruparPendientes(viajes: ViajePendiente[]): VisitaPendiente[] {
   return [...sueltas, ...porGrupo.values()];
 }
 
-interface StatsRuta { paradas: number; ent: number; ret: number; rec: number; warn: number; }
+interface StatsRuta { paradas: number; ent: number; ret: number; rec: number; warn: number; sinConfirmar: number; finalizadas: number; }
 /** Resumen por ruta para las tarjetas — cuenta visitas (recambio = 1 sola) agrupando por `orden`. No incluye vaciados (viven en otra tabla), solo da una idea rápida antes de abrir el detalle. */
 function statsPorRuta(viajesDia: ViajePendiente[]): Map<string, StatsRuta> {
   const porRuta = new Map<string, ViajePendiente[]>();
@@ -143,25 +144,32 @@ function statsPorRuta(viajesDia: ViajePendiente[]): Map<string, StatsRuta> {
       lista.push(v);
       porOrden.set(key, lista);
     }
-    let ent = 0, ret = 0, rec = 0, warn = 0;
+    let ent = 0, ret = 0, rec = 0, warn = 0, sinConfirmar = 0, finalizadas = 0;
     porOrden.forEach((visita) => {
       const entrega = visita.find((v) => v.tipo === 'entrega');
       const retiro = visita.find((v) => v.tipo === 'retiro');
       if (entrega && retiro) { rec++; if (!entrega.contenedor_numero) warn++; }
       else if (entrega) { ent++; if (!entrega.contenedor_numero) warn++; }
       else if (retiro) { ret++; }
+      if (visita.some((v) => v.completada_en)) finalizadas++;
+      else if (visita.some((v) => v.ruta_confirmada_en == null)) sinConfirmar++;
     });
-    resultado.set(rutaId, { paradas: ent + ret + rec, ent, ret, rec, warn });
+    resultado.set(rutaId, { paradas: ent + ret + rec, ent, ret, rec, warn, sinConfirmar, finalizadas });
   });
   return resultado;
 }
 
-const ETIQUETA_ESTADO: Record<Ruta['estado'], { texto: string; clase: string }> = {
-  planificada: { texto: 'Planificada', clase: 'programado' },
-  en_curso: { texto: 'En curso', clase: 'en_curso' },
-  finalizada: { texto: 'Finalizada', clase: 'completado' },
-  cancelada: { texto: 'Cancelada', clase: 'cancelado' },
-};
+/**
+ * La ruta ya no tiene `estado` propio: siempre está abierta. El badge se
+ * deriva de las paradas — hay cambios sin confirmar, está toda completada, o
+ * está en curso.
+ */
+function badgeRuta(s: { paradas: number; sinConfirmar: number; finalizadas: number }): { texto: string; clase: string } {
+  if (s.paradas === 0) return { texto: 'Vacía', clase: 'vacia' };
+  if (s.sinConfirmar > 0) return { texto: 'Sin confirmar', clase: 'sin_confirmar' };
+  if (s.finalizadas >= s.paradas) return { texto: 'Completada', clase: 'completado' };
+  return { texto: 'En curso', clase: 'en_curso' };
+}
 
 const iniciales = (nombre: string) => nombre.split(',')[0].slice(0, 2).toUpperCase();
 
@@ -223,6 +231,8 @@ interface ParadaViaje {
   grupo_id: string | null;
   estado: string;
   notas: string | null;
+  completada_en: string | null;
+  ruta_confirmada_en: string | null;
   disponibles?: string[];
 }
 interface ParadaVaciado {
@@ -265,6 +275,11 @@ function agruparVisitas(paradas: Parada[]): Visita[] {
     else { v.retiro = p; if (!v.entrega) v.id = p.id; v.tipoParada = 'viaje'; }
   }
   return [...porOrden.values()].sort((a, b) => a.orden - b.orden);
+}
+
+/** Una visita que el chofer ya marcó como hecha: intocable (no se reordena, quita, mueve ni se le cambia el contenedor). */
+function visitaFinalizada(v: Visita): boolean {
+  return !!(v.entrega?.completada_en || v.retiro?.completada_en);
 }
 
 function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado, onInsertarPedido }: {
@@ -310,7 +325,12 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   };
 
   const visitas = ruta ? agruparVisitas(ruta.paradas) : [];
-  const editable = ruta?.estado === 'planificada' || ruta?.estado === 'en_curso';
+  // La ruta siempre está abierta ("ruta viva"): lo único que no se toca es una
+  // parada que el chofer ya terminó (ver `visitaFinalizada`).
+  const paradasSinConfirmar = ruta
+    ? ruta.paradas.filter((p) => p.tipo_parada === 'viaje' && !p.completada_en && p.ruta_confirmada_en == null)
+    : [];
+  const hayCambiosSinConfirmar = paradasSinConfirmar.length > 0;
 
   // Stock real que la simulación del backend usa como punto de partida:
   // contenedores 'disponible' que NO están comprometidos con ningún viaje
@@ -450,6 +470,12 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   /** Saca la parada `from` y la reinserta en la posición `to` (drag & drop y flechas ↑/↓ pasan por acá). */
   function moverA(from: number, to: number) {
     if (from === to || reordenando) return;
+    // Una parada finalizada no se mueve, y tampoco se puede meter otra en su
+    // lugar (el backend lo rechaza igual; esto evita el ida y vuelta).
+    if (visitaFinalizada(visitas[from]) || visitaFinalizada(visitas[to])) {
+      show('error', 'No se puede reordenar', 'Hay una parada que el chofer ya terminó.');
+      return;
+    }
     const nuevo = [...visitas];
     const [item] = nuevo.splice(from, 1);
     nuevo.splice(to, 0, item);
@@ -508,21 +534,13 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     }
   }
 
-  async function cambiarEstado(estado: string) {
-    try {
-      await api.patch(`/api/rutas/${rutaId}`, { estado });
-      cargar();
-      show('success', 'Estado actualizado');
-    } catch (err: any) {
-      show('error', 'No se pudo actualizar el estado', err.response?.data?.error);
-    }
-  }
-
   if (!ruta) return null;
 
-  const estado = ETIQUETA_ESTADO[ruta.estado];
+  const finalizadasCount = visitas.filter(visitaFinalizada).length;
+  const estado = badgeRuta({ paradas: visitas.length, sinConfirmar: paradasSinConfirmar.length, finalizadas: finalizadasCount });
   let invalid = 0;
   for (const v of visitas) {
+    if (visitaFinalizada(v)) continue; // ya hecha: su contenedor no se toca más
     if (v.entrega && !v.entrega.contenedor_numero) invalid++;
     else if (v.entrega?.contenedor_numero && !(v.entrega.disponibles ?? []).includes(v.entrega.contenedor_numero)) invalid++;
   }
@@ -534,15 +552,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
           <div className="t">{ruta.chofer_nombre ?? 'Sin chofer'}</div>
           <div className="s">Patente {ruta.patente ?? '—'} · {formatearFecha(ruta.fecha)}</div>
         </div>
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-          <select className="form-select" style={{ width: 'auto', fontSize: '0.8rem' }} value={ruta.estado} onChange={(e) => cambiarEstado(e.target.value)}>
-            <option value="planificada">Planificada</option>
-            <option value="en_curso">En curso</option>
-            <option value="finalizada">Finalizada</option>
-            <option value="cancelada">Cancelada</option>
-          </select>
-          <span className={`badge ${estado.clase}`}>{estado.texto}</span>
-        </div>
+        <span className={`badge ${estado.clase}`}>{estado.texto}</span>
       </div>
 
       <RoleGate roles={['admin', 'operador']}>
@@ -565,6 +575,15 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
             </div>
           )}
 
+          {hayCambiosSinConfirmar && (
+            <div className="rc-warn confirmar-pendiente" style={{ marginTop: '10px', marginBottom: '8px', background: 'var(--warning-bg)', padding: '8px 12px', borderRadius: 'var(--radius)' }}>
+              <AlertTriangle size={14} strokeWidth={2} />
+              {paradasSinConfirmar.length === 1
+                ? '1 parada sin confirmar — confirmá la ruta para reservar y avisarle al chofer.'
+                : `${paradasSinConfirmar.length} paradas sin confirmar — confirmá la ruta para reservar y avisarle al chofer.`}
+            </div>
+          )}
+
           {visitas.length === 0 && <div className="rc-empty" style={{ margin: '16px 0' }}>Todavía no hay paradas en esta ruta — asigná desde la bolsa a la izquierda.</div>}
           
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
@@ -573,15 +592,18 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
               const necesitaContenedor = !!v.entrega;
               const sinAsignar = necesitaContenedor && !v.entrega!.contenedor_numero;
               const invalido = necesitaContenedor && !!v.entrega!.contenedor_numero && !disponibles.includes(v.entrega!.contenedor_numero!);
+              // Parada ya terminada por el chofer: intocable (sin grip, sin
+              // flechas, sin "mover a", sin quitar, contenedor de solo lectura).
+              const finalizada = visitaFinalizada(v);
               return (
                 <div
                   key={`${v.tipoParada}-${v.id}`}
-                  className={`stop${dragIdx === idx ? ' dragging' : ''}${overIdx === idx && dragIdx !== null && dragIdx !== idx ? ' drop-target' : ''}${insertIdx === idx ? ' insert-antes' : ''}`}
+                  className={`stop${finalizada ? ' finalizada' : ''}${dragIdx === idx ? ' dragging' : ''}${overIdx === idx && dragIdx !== null && dragIdx !== idx ? ' drop-target' : ''}${insertIdx === idx ? ' insert-antes' : ''}`}
                   onDragOver={(e) => {
                     if (dragIdx !== null) {
                       e.preventDefault();
                       if (overIdx !== idx) setOverIdx(idx);
-                    } else if (pedidoArrastrado) {
+                    } else if (pedidoArrastrado && !finalizada) {
                       // Soltar un pedido de la bolsa acá lo inserta ANTES de esta parada.
                       e.preventDefault();
                       e.stopPropagation();
@@ -599,7 +621,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                       moverA(dragIdx, idx);
                       setDragIdx(null);
                       setOverIdx(null);
-                    } else if (pedidoArrastrado) {
+                    } else if (pedidoArrastrado && !finalizada) {
                       e.preventDefault();
                       e.stopPropagation();
                       onInsertarPedido(v.orden);
@@ -607,7 +629,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                     }
                   }}
                 >
-                  {editable && (
+                  {!finalizada && (
                     <span
                       className="stop-grip"
                       draggable={!reordenando}
@@ -628,6 +650,9 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                   )}
                   <div className="stop-ord">{idx + 1}</div>
                   <div className="stop-body">
+                    {finalizada && (
+                      <div className="stop-sub" style={{ color: 'var(--success)', fontWeight: 700 }}>✓ Finalizada por el chofer</div>
+                    )}
                     {v.vaciado && (
                       <>
                         <div className="stop-top">
@@ -655,7 +680,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                         )}
                         <div className="sel-row">
                           <label>Vacío a dejar:</label>
-                          {editable ? (
+                          {!finalizada ? (
                             <select
                               className={`form-select${(sinAsignar || invalido) ? ' err' : ''}`}
                               value={v.entrega.contenedor_numero ?? ''}
@@ -683,7 +708,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                         {v.entrega.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.entrega.horario_preferido}</div>}
                         <div className="sel-row">
                           <label>Contenedor:</label>
-                          {editable ? (
+                          {!finalizada ? (
                             <select
                               className={`form-select${(sinAsignar || invalido) ? ' err' : ''}`}
                               value={v.entrega.contenedor_numero ?? ''}
@@ -715,11 +740,11 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                   </div>
 
                   <div className="arrows">
-                    <button disabled={idx === 0 || !editable || reordenando} onClick={() => mover(idx, -1)} title="Subir orden"><ArrowUp size={12} strokeWidth={2} /></button>
-                    <button disabled={idx === visitas.length - 1 || !editable || reordenando} onClick={() => mover(idx, 1)} title="Bajar orden"><ArrowDown size={12} strokeWidth={2} /></button>
+                    <button disabled={idx === 0 || finalizada || reordenando} onClick={() => mover(idx, -1)} title="Subir orden"><ArrowUp size={12} strokeWidth={2} /></button>
+                    <button disabled={idx === visitas.length - 1 || finalizada || reordenando} onClick={() => mover(idx, 1)} title="Bajar orden"><ArrowDown size={12} strokeWidth={2} /></button>
                   </div>
 
-                  {editable && (
+                  {!finalizada && (
                     <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginLeft: '6px' }}>
                       <select
                         className="form-select"
@@ -746,31 +771,29 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
             })}
           </div>
 
-          {editable && (
-            <div style={{ marginTop: '14px' }}>
-              {agregandoVaciado ? (
-                <form onSubmit={agregarVaciado} className="form-row">
-                  <div className="form-group">
-                    <label className="form-label">Vaciadero</label>
-                    <select className="form-select" value={vaciadoForm.ubicacion_id} onChange={(e) => setVaciadoForm({ ...vaciadoForm, ubicacion_id: e.target.value })}>
-                      <option value="">— Elegir —</option>
-                      {vaciaderos.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Notas</label>
-                    <input className="form-input" value={vaciadoForm.notas} onChange={(e) => setVaciadoForm({ ...vaciadoForm, notas: e.target.value })} />
-                  </div>
-                  <button type="submit" className="btn btn-primary btn-sm">Agregar</button>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAgregandoVaciado(false)}>Cancelar</button>
-                </form>
-              ) : (
-                <button className="btn btn-ghost" onClick={() => setAgregandoVaciado(true)}>
-                  <Plus size={14} strokeWidth={2} /> Agregar vaciado
-                </button>
-              )}
-            </div>
-          )}
+          <div style={{ marginTop: '14px' }}>
+            {agregandoVaciado ? (
+              <form onSubmit={agregarVaciado} className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Vaciadero</label>
+                  <select className="form-select" value={vaciadoForm.ubicacion_id} onChange={(e) => setVaciadoForm({ ...vaciadoForm, ubicacion_id: e.target.value })}>
+                    <option value="">— Elegir —</option>
+                    {vaciaderos.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Notas</label>
+                  <input className="form-input" value={vaciadoForm.notas} onChange={(e) => setVaciadoForm({ ...vaciadoForm, notas: e.target.value })} />
+                </div>
+                <button type="submit" className="btn btn-primary btn-sm">Agregar</button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAgregandoVaciado(false)}>Cancelar</button>
+              </form>
+            ) : (
+              <button className="btn btn-ghost" onClick={() => setAgregandoVaciado(true)}>
+                <Plus size={14} strokeWidth={2} /> Agregar vaciado
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="detail-foot">
@@ -778,9 +801,9 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
             {visitas.length === 0 ? '' : invalid ? `${invalid} parada(s) sin contenedor válido` : '✓ todas las paradas resueltas'}
           </span>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-            {editable && visitas.length > 0 && (
-              <button className="btn btn-primary" onClick={confirmarRuta} disabled={confirmando}>
-                <CheckCircle2 size={16} strokeWidth={1.75} /> {confirmando ? 'Confirmando...' : 'Confirmar ruta'}
+            {visitas.length > 0 && (
+              <button className={`btn btn-primary${hayCambiosSinConfirmar ? ' confirmar-pendiente' : ''}`} onClick={confirmarRuta} disabled={confirmando}>
+                <CheckCircle2 size={16} strokeWidth={1.75} /> {confirmando ? 'Confirmando...' : hayCambiosSinConfirmar ? 'Confirmar cambios' : 'Confirmar ruta'}
               </button>
             )}
           </div>
@@ -840,15 +863,16 @@ export function Rutas() {
     queryKey: ['viajes', 'del-dia', fecha],
     queryFn: () => api.get<ViajePendiente[]>(`/api/viajes?fecha=${fecha}&estado=programado`).then((r) => r.data),
   });
-  // Rutas 'en_curso' de días anteriores al elegido: si nadie las cerró (ej.
-  // camión roto, tareas que quedaron sin reasignar), el corte manual del día
-  // (ver punto 8.1) no alcanza si nadie nota que la ruta vieja sigue abierta.
-  const { data: rutasEnCursoTodas = [] } = useQuery({
-    queryKey: ['rutas', 'en_curso'],
-    queryFn: () => api.get<Ruta[]>('/api/rutas?estado=en_curso').then((r) => r.data),
+  // Rutas de días anteriores con paradas pendientes (confirmadas, avisadas al
+  // chofer, todavía sin completar): si quedó trabajo colgado de un día anterior
+  // (camión roto, paradas sin reasignar) hay que verlo — la ruta ya no "se
+  // cierra", así que esto se deriva de las paradas.
+  const { data: rutasConPendientes = [] } = useQuery({
+    queryKey: ['rutas', 'pendientes'],
+    queryFn: () => api.get<Ruta[]>('/api/rutas?pendientes=1').then((r) => r.data),
     refetchInterval: 60000,
   });
-  const rutasAbiertasAnteriores = rutasEnCursoTodas.filter((r) => r.fecha < fecha);
+  const rutasAbiertasAnteriores = rutasConPendientes.filter((r) => r.fecha < fecha);
 
   const visitasPendientes = agruparPendientes(cola);
   const statsRutas = statsPorRuta(viajesDelDia);
@@ -1032,6 +1056,8 @@ export function Rutas() {
             grupo_id: visita.entrega.grupo_id,
             estado: 'programado',
             notas: null,
+            completada_en: null,
+            ruta_confirmada_en: null,
           });
         }
         if (visita.retiro) {
@@ -1051,6 +1077,8 @@ export function Rutas() {
             grupo_id: visita.retiro.grupo_id,
             estado: 'programado',
             notas: null,
+            completada_en: null,
+            ruta_confirmada_en: null,
           });
         }
         if (paradasNuevas.length > 0) {
@@ -1240,7 +1268,7 @@ export function Rutas() {
         }}>
           <AlertTriangle size={16} strokeWidth={2} />
           <span>
-            {rutasAbiertasAnteriores.length === 1 ? 'Quedó 1 ruta abierta de un día anterior sin cerrar:' : `Quedaron ${rutasAbiertasAnteriores.length} rutas abiertas de días anteriores sin cerrar:`}
+            {rutasAbiertasAnteriores.length === 1 ? 'Quedó 1 ruta de un día anterior con paradas pendientes:' : `Quedaron ${rutasAbiertasAnteriores.length} rutas de días anteriores con paradas pendientes:`}
           </span>
           {rutasAbiertasAnteriores.map((r) => (
             <button
@@ -1431,8 +1459,8 @@ export function Rutas() {
                     </button>
                   );
                 }
-                const stats = statsRutas.get(ruta.id) ?? { paradas: 0, ent: 0, ret: 0, rec: 0, warn: 0 };
-                const estado = ETIQUETA_ESTADO[ruta.estado];
+                const stats = statsRutas.get(ruta.id) ?? { paradas: 0, ent: 0, ret: 0, rec: 0, warn: 0, sinConfirmar: 0, finalizadas: 0 };
+                const estado = badgeRuta(stats);
                 const sel = ruta.id === rutaSeleccionada;
                 return (
                   <button

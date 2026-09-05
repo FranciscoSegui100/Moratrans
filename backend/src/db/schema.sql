@@ -87,9 +87,6 @@ CREATE TYPE rol_usuario AS ENUM ('admin', 'operador', 'finanzas', 'lectura');
 -- retiro). Puede haber varias de cada tipo — no es una dirección fija.
 CREATE TYPE tipo_ubicacion AS ENUM ('deposito', 'vaciadero');
 
--- Pestaña "Ruta": pre-planificación del recorrido diario de un chofer.
-CREATE TYPE estado_ruta AS ENUM ('planificada', 'en_curso', 'finalizada', 'cancelada');
-
 -- ---------------------------------------------------------------------
 -- 2. USUARIOS DEL PANEL (RBAC)
 -- ---------------------------------------------------------------------
@@ -376,16 +373,17 @@ CREATE TABLE rutas (
   chofer_id   UUID NOT NULL REFERENCES choferes(id) ON DELETE RESTRICT,
   -- Foto de choferes.patente al armar la ruta (mismo patrón que viajes.patente).
   patente     TEXT,
-  estado      estado_ruta NOT NULL DEFAULT 'planificada',
+  -- "Ruta viva": no tiene ciclo de vida. Siempre abierta, siempre acepta
+  -- trabajo nuevo. ¿Hay que confirmar? ¿ya terminó? se deriva de las paradas
+  -- (viajes.ruta_confirmada_en / viajes.completada_en).
   armada_por  UUID REFERENCES usuarios(id) ON DELETE SET NULL,
   notas       TEXT,
   creado_en      TIMESTAMPTZ NOT NULL DEFAULT now(),
   actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_rutas_fecha_chofer ON rutas(fecha, chofer_id);
-CREATE INDEX idx_rutas_estado ON rutas(estado);
--- Una sola ruta activa (no cancelada) por chofer por día.
-CREATE UNIQUE INDEX ux_rutas_chofer_fecha ON rutas(chofer_id, fecha) WHERE estado <> 'cancelada';
+-- Una sola ruta por chofer por día.
+CREATE UNIQUE INDEX ux_rutas_chofer_fecha ON rutas(chofer_id, fecha);
 
 CREATE TABLE ruta_vaciados (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
