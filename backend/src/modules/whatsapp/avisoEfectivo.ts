@@ -7,5 +7,5 @@
 export function avisoEfectivoChofer(medioPago: string | null | undefined, precio: string | null | undefined): string {
   if (medioPago !== 'efectivo') return '';
   const monto = precio ? `ARS ${Number(precio).toLocaleString('es-AR')}` : 'el importe correspondiente';
-  return `\n\n💵 *PAGO EN EFECTIVO — cobrar ${monto} al entregar*`;
+  return `\n\n💵 *PAGO EN EFECTIVO — cobrar ${monto} en esta visita*`;
 }

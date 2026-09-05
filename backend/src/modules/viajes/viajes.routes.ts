@@ -147,6 +147,8 @@ export async function avisarChoferViaje(
   destinoDireccion: string | null,
   clienteTelefono: string | null = null,
   horaEstimada: string | null = null,
+  medioPago: string | null = null,
+  precio: string | null = null,
 ): Promise<void> {
   const [chofer] = await query<{ telefono: string | null; nombre: string }>(
     'SELECT telefono, nombre FROM choferes WHERE id = $1',
@@ -168,7 +170,8 @@ export async function avisarChoferViaje(
       (cliente ? `Cliente: *${cliente}*\n` : '') +
       (hora ? `Horario estimado: *${hora} hs*\n` : '') +
       `📍 Dirección:\n${destino}\n\n` +
-      'Cuando la completes, marcala desde el menú del chofer.',
+      'Cuando la completes, marcala desde el menú del chofer.' +
+      avisoEfectivoChofer(medioPago, precio),
   );
   await menuChofer(chofer.telefono, chofer.nombre);
 }
@@ -258,9 +261,9 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
   const siguientes = await query<{
     id: string; tipo: 'entrega' | 'retiro'; contenedor_numero: string | null; destino_direccion: string | null;
     ubicacion_id: string | null; grupo_id: string | null; chofer_id: string | null; orden: number;
-    cliente_telefono: string | null; hora_estimada: string | null;
+    cliente_telefono: string | null; hora_estimada: string | null; pago_id: string | null;
   }>(
-    `SELECT id, tipo, contenedor_numero, destino_direccion, ubicacion_id, grupo_id, chofer_id, orden, cliente_telefono, hora_estimada
+    `SELECT id, tipo, contenedor_numero, destino_direccion, ubicacion_id, grupo_id, chofer_id, orden, cliente_telefono, hora_estimada, pago_id
        FROM viajes
       WHERE ruta_id = $1 AND orden > $2 AND ruta_confirmada_en IS NOT NULL
         AND estado IN ('programado', 'en_curso') AND completada_en IS NULL
@@ -275,15 +278,30 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
 
   const entrega = visita.find((v) => v.tipo === 'entrega');
   const retiro = visita.find((v) => v.tipo === 'retiro');
+  // Si esta parada se cobra en efectivo, hay que avisárselo al chofer en el
+  // mismo momento en que se entera de la parada — no solo cuando ya la
+  // completó (ver aplicarEstado en chofer.flow.ts). entrega y retiro de un
+  // recambio comparten pago_id, así que alcanza con mirar cualquiera de los dos.
+  const pagoId = (entrega ?? retiro)?.pago_id ?? null;
+  const [pagoAviso] = pagoId
+    ? await query<{ medio_pago: string; precio: string | null }>(
+        `SELECT p.medio_pago, COALESCE(pe.precio, p.monto) AS precio FROM pagos p LEFT JOIN pedidos pe ON pe.id = p.pedido_id WHERE p.id = $1`,
+        [pagoId],
+      )
+    : [];
   try {
     if (entrega?.grupo_id && retiro) {
       await avisarChoferRecambio(
         choferId, retiro.contenedor_numero!, entrega.contenedor_numero, entrega.ubicacion_id,
         entrega.destino_direccion, entrega.cliente_telefono, entrega.hora_estimada,
+        pagoAviso?.medio_pago ?? null, pagoAviso?.precio ?? null,
       );
     } else {
       const v = entrega ?? retiro!;
-      await avisarChoferViaje(choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, v.hora_estimada);
+      await avisarChoferViaje(
+        choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, v.hora_estimada,
+        pagoAviso?.medio_pago ?? null, pagoAviso?.precio ?? null,
+      );
     }
   } catch (e: any) {
     const motivo = motivoErrorWa(e);

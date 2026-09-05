@@ -107,17 +107,30 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
 
+  // Respuesta a "¿Cobraste $X en efectivo?" (ver aplicarEstado) — el id del
+  // botón lleva el pago_id en vez de depender de sesion.paso, así no importa
+  // qué otro mensaje/menú se haya mandado después (siguiente parada, etc.).
+  // Va ANTES que todo lo demás — incluido el chequeo de 'estado:' de abajo —
+  // porque es la única acción permitida mientras queda una pregunta pendiente.
+  if (m.tipo === 'interactive_button' && m.seleccionId?.startsWith('efectivo:')) {
+    return manejarConfirmacionEfectivo(to, m.seleccionId, chofer[0].nombre, sesion);
+  }
+  // Mientras quede una pregunta de cobro sin responder, no se deja pasar a
+  // ninguna otra acción (retirar, entregar, recambio) — así no se pierde el
+  // dato de si cobró o no yéndose a la siguiente parada sin contestar. Tiene
+  // que ir ANTES del chequeo de 'estado:' de abajo: un botón viejo de "Ya
+  // entregué"/"Ya retiré" de un mensaje anterior sigue siendo tocable en
+  // WhatsApp aunque ya no correspondiera usarlo.
+  if (sesion.paso === 'esperando_confirmacion_efectivo') {
+    await sendText(to, '⚠️ Antes de seguir, respondé arriba si cobraste el efectivo pendiente. 👆');
+    return;
+  }
+
   // 2) Chofer reconocido: manejar cambio de estado (botones), elección de
   // contenedor (lista), y las dos acciones self-service nuevas (vaciado y
   // autoasignación del vacío de un recambio).
   if (m.tipo === 'interactive_button' && m.seleccionId?.startsWith('estado:')) {
     return elegirContenedor(to, chofer[0].id, m.seleccionId.replace('estado:', ''));
-  }
-  // Respuesta a "¿Cobraste $X en efectivo?" (ver aplicarEstado) — el id del
-  // botón lleva el pago_id en vez de depender de sesion.paso, así no importa
-  // qué otro mensaje/menú se haya mandado después (siguiente parada, etc.).
-  if (m.tipo === 'interactive_button' && m.seleccionId?.startsWith('efectivo:')) {
-    return manejarConfirmacionEfectivo(to, m.seleccionId, chofer[0].nombre);
   }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('cont:')) {
     const raw = m.seleccionId.replace('cont:', '');
@@ -136,11 +149,39 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('vaciado:')) {
     return aplicarVaciado(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('vaciado:', ''));
   }
-  if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recgrupo:')) {
-    return elegirVacioRecambio(to, chofer[0].id, m.seleccionId.replace('recgrupo:', ''));
-  }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recvacio:') && sesion.paso === 'elegir_vacio_recambio') {
     return aplicarVacioRecambio(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('recvacio:', ''), sesion);
+  }
+  // "🔄 Hice el recambio" (ver menuChofer) — un solo toque para las dos
+  // patas, en vez de tener que adivinar entre "Ya entregué" / "Ya retiré".
+  if (m.tipo === 'interactive_button' && m.seleccionId === 'recambio_hecho') {
+    const recambios = await recambiosActivos(chofer[0].id);
+    if (recambios.length === 0) {
+      await sendText(to, '🙁 No tenés ningún recambio activo en este momento.');
+      return menuChofer(to, chofer[0].nombre);
+    }
+    if (recambios.length === 1) {
+      const r = recambios[0];
+      return marcarRecambioHecho(to, chofer[0].id, chofer[0].nombre, r.entregaId, r.llenoNumero, r.vacioAsignado, sesion);
+    }
+    await sendList(
+      to,
+      '🔄 ¿Cuál recambio?',
+      'Tenés más de un recambio activo — ¿cuál ya realizaste?',
+      'Ver recambios',
+      recambios.map((r) => ({ id: `recambiohecho:${r.llenoNumero}`, title: `Lleno ${r.llenoNumero}` })),
+    );
+    return;
+  }
+  if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recambiohecho:')) {
+    const llenoNumero = m.seleccionId.replace('recambiohecho:', '');
+    const recambios = await recambiosActivos(chofer[0].id);
+    const r = recambios.find((x) => x.llenoNumero === llenoNumero);
+    if (!r) {
+      await sendText(to, '🙁 Ese recambio ya no está disponible. Escribí *menú* para volver a empezar.');
+      return;
+    }
+    return marcarRecambioHecho(to, chofer[0].id, chofer[0].nombre, r.entregaId, r.llenoNumero, r.vacioAsignado, sesion);
   }
 
   // Soporte para respuestas por texto libre o si el cliente no usa botones interactivos
@@ -174,29 +215,83 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
 }
 
 /**
- * Menú principal del chofer: 3 botones pegados al mensaje (un solo toque),
- * en vez de una lista desplegable — más rápido para alguien manejando.
- * Se manda después de cada acción para que nunca tenga que escribir "menú".
+ * Menú principal del chofer: hasta 3 botones pegados al mensaje (un solo
+ * toque), en vez de una lista desplegable — más rápido para alguien
+ * manejando. Se manda después de cada acción para que nunca tenga que
+ * escribir "menú". El tercer botón ("🔄 Hice el recambio") solo aparece si
+ * tiene algún recambio activo — ver recambiosActivos.
  *
  * Si además el chofer tiene contenedores propios en "retirado" esperando
- * confirmar el vaciado, o un recambio propio esperando que le asigne el
- * vacío, se mandan listas aparte con esas acciones — WhatsApp permite un
- * máximo de 3 botones por mensaje, por eso no se pueden agregar ahí mismo.
+ * confirmar el vaciado, se manda una lista aparte con esa acción —
+ * WhatsApp permite un máximo de 3 botones por mensaje, por eso no se puede
+ * agregar ahí mismo.
  */
 export async function menuChofer(to: string, nombre?: string): Promise<void> {
-  await sendButtons(
-    to,
-    nombre ? `🚚 Hola, ${nombre}. ¿Qué acción querés registrar?` : '🚚 Panel del chofer. ¿Qué acción querés registrar?',
-    ESTADOS_CHOFER.map((e) => ({ id: `estado:${e}`, title: LABEL_ESTADO[e] })),
-  );
-
   const [chofer] = await query<{ id: string }>(
     'SELECT id FROM choferes WHERE telefono = $1 AND activo = TRUE',
     [to],
   );
   if (!chofer) return; // no debería pasar (ya se validó identidad antes de llegar acá)
+
+  const recambios = await recambiosActivos(chofer.id);
+  const botones: { id: string; title: string }[] = ESTADOS_CHOFER.map((e) => ({ id: `estado:${e}`, title: LABEL_ESTADO[e] }));
+  if (recambios.length > 0) botones.push({ id: 'recambio_hecho', title: '🔄 Hice el recambio' });
+
+  await sendButtons(
+    to,
+    nombre ? `🚚 Hola, ${nombre}. ¿Qué acción querés registrar?` : '🚚 Panel del chofer. ¿Qué acción querés registrar?',
+    botones,
+  );
   await ofrecerVaciadosPendientes(to, chofer.id);
-  await ofrecerRecambioPendiente(to, chofer.id);
+}
+
+/**
+ * Recambios activos de este chofer (retiro del lleno asignado, la visita
+ * todavía sin completar) — para ofrecer "🔄 Hice el recambio" en el menú
+ * principal en vez de dejar que adivine entre "Ya entregué" / "Ya retiré",
+ * que no describen bien lo que en la práctica es una sola visita. Incluye
+ * tanto los que ya tienen el vacío asignado (alcanza con marcar el lleno,
+ * cascadearParejaRecambio completa el otro lado) como los que todavía no
+ * (primero hay que preguntar con cuál lo completó, ver marcarRecambioHecho).
+ */
+async function recambiosActivos(choferId: string): Promise<{ llenoNumero: string; entregaId: string; vacioAsignado: boolean }[]> {
+  const rows = await query<{ lleno_numero: string; entrega_id: string; vacio_numero: string | null }>(
+    `SELECT r.contenedor_numero AS lleno_numero, e.id AS entrega_id, e.contenedor_numero AS vacio_numero
+       FROM viajes r
+       JOIN viajes e ON e.grupo_id = r.grupo_id AND e.tipo = 'entrega' AND e.estado IN ('programado', 'en_curso')
+      WHERE r.chofer_id = $1 AND r.tipo = 'retiro' AND r.grupo_id IS NOT NULL AND r.estado IN ('programado', 'en_curso')
+      ORDER BY r.creado_en`,
+    [choferId],
+  );
+  return rows.map((r) => ({ llenoNumero: r.lleno_numero, entregaId: r.entrega_id, vacioAsignado: !!r.vacio_numero }));
+}
+
+/**
+ * El chofer marcó "🔄 Hice el recambio" (un solo toque para las dos patas).
+ * Si el vacío todavía no está asignado en el sistema, primero hace falta
+ * preguntar con cuál lo completó (ver enviarListaVacios/aplicarVacioRecambio,
+ * que ya registran las dos patas juntas). Si ya estaba asignado, alcanza con
+ * marcar el lleno como retirado: cascadearParejaRecambio (dentro de
+ * aplicarEstado) completa el vacío en el mismo momento.
+ */
+async function marcarRecambioHecho(
+  to: string,
+  choferId: string,
+  choferNombre: string,
+  entregaId: string,
+  llenoNumero: string,
+  vacioAsignado: boolean,
+  sesion: Sesion,
+): Promise<void> {
+  if (!vacioAsignado) {
+    const disponibles = await contenedoresDisponibles();
+    if (disponibles.length === 0) {
+      await sendText(to, '🙁 No hay contenedores vacíos disponibles en este momento.');
+      return menuChofer(to, choferNombre);
+    }
+    return enviarListaVacios(to, entregaId, llenoNumero, disponibles);
+  }
+  return aplicarEstado(to, choferId, choferNombre, llenoNumero, sesion, 'retirado');
 }
 
 /** Contenedores propios ya retirados del cliente, esperando que confirme que los vació. */
@@ -214,35 +309,6 @@ async function ofrecerVaciadosPendientes(to: string, choferId: string): Promise<
     '¿Ya vaciaste alguno de estos contenedores en el vaciadero?',
     'Ver contenedores',
     pendientes.map((p) => ({ id: `vaciado:${p.contenedor_numero}`, title: p.contenedor_numero })),
-  );
-}
-
-/** Recambios propios (ya tiene asignado el retiro del lleno) esperando que diga con qué vacío completa la entrega. */
-async function ofrecerRecambioPendiente(to: string, choferId: string): Promise<void> {
-  const pendientes = await query<{ entrega_id: string; lleno_numero: string }>(
-    `SELECT e.id AS entrega_id, r.contenedor_numero AS lleno_numero
-       FROM viajes r
-       JOIN viajes e ON e.grupo_id = r.grupo_id AND e.tipo = 'entrega' AND e.contenedor_numero IS NULL
-        AND e.estado IN ('programado', 'en_curso')
-      WHERE r.chofer_id = $1 AND r.tipo = 'retiro' AND r.grupo_id IS NOT NULL
-        AND r.estado IN ('programado', 'en_curso')
-      ORDER BY r.creado_en`,
-    [choferId],
-  );
-  if (pendientes.length === 0) return;
-
-  const disponibles = await contenedoresDisponibles();
-  if (disponibles.length === 0) return; // nada para ofrecer todavía — no hay ningún vacío en stock
-
-  if (pendientes.length === 1) {
-    return enviarListaVacios(to, pendientes[0].entrega_id, pendientes[0].lleno_numero, disponibles);
-  }
-  await sendList(
-    to,
-    '🔄 Recambio pendiente',
-    'Tenés más de un recambio asignado — ¿para cuál tenés el vacío?',
-    'Ver recambios',
-    pendientes.map((p) => ({ id: `recgrupo:${p.entrega_id}`, title: `Lleno ${p.lleno_numero}` })),
   );
 }
 
@@ -264,26 +330,6 @@ async function enviarListaVacios(
     'Ver contenedores',
     disponibles.map((d) => ({ id: `recvacio:${d.numero}`, title: d.numero })),
   );
-}
-
-/** El chofer eligió CUÁL de sus recambios pendientes completar (sólo aparece cuando tiene más de uno). */
-async function elegirVacioRecambio(to: string, choferId: string, entregaId: string): Promise<void> {
-  const [pendiente] = await query<{ contenedor_numero: string }>(
-    `SELECT r.contenedor_numero
-       FROM viajes e JOIN viajes r ON r.grupo_id = e.grupo_id AND r.tipo = 'retiro'
-      WHERE e.id = $1 AND e.tipo = 'entrega' AND e.contenedor_numero IS NULL AND r.chofer_id = $2`,
-    [entregaId, choferId],
-  );
-  if (!pendiente) {
-    await sendText(to, '🙁 Ese recambio ya no está disponible. Escribí *menú* para volver a empezar.');
-    return;
-  }
-  const disponibles = await contenedoresDisponibles();
-  if (disponibles.length === 0) {
-    await sendText(to, '🙁 No hay contenedores vacíos disponibles en este momento.');
-    return;
-  }
-  await enviarListaVacios(to, entregaId, pendiente.contenedor_numero, disponibles);
 }
 
 /**
@@ -404,9 +450,10 @@ async function aplicarVacioRecambio(
     }
 
     const [choferRow] = await query<{ patente: string | null }>('SELECT patente FROM choferes WHERE id = $1', [choferId]);
-    await query(
+    const [entregaActualizada] = await query<{ pago_id: string | null }>(
       `UPDATE viajes SET contenedor_numero = $1, chofer_id = $2, patente = $3
-        WHERE id = $4 AND contenedor_numero IS NULL`,
+        WHERE id = $4 AND contenedor_numero IS NULL
+        RETURNING pago_id`,
       [numero, choferId, choferRow?.patente ?? null, entregaId],
     );
 
@@ -433,6 +480,32 @@ async function aplicarVacioRecambio(
       to,
       `✅ Recambio registrado. Contenedor *${numero}* entregado${mensajeLleno}. ${mensajeLleno ? 'Avisame por acá cuando vacíes el lleno (opción 🗑️ del menú). ' : ''}Gracias por tu trabajo. 🙌`,
     );
+
+    // Mismo chequeo que en aplicarEstado: avisa si ya está pagado por
+    // transferencia, o pregunta el cobro en efectivo (y bloquea el menú
+    // hasta que conteste) — acá también, porque este camino no pasa por
+    // aplicarEstado.
+    let pendienteEfectivo: string | null = null;
+    if (entregaActualizada?.pago_id) {
+      const [pago] = await query<{ id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null }>(
+        `SELECT p.id, p.medio_pago, p.estado, p.efectivo_cobrado, COALESCE(pe.precio, p.monto) AS monto
+           FROM pagos p
+           LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+          WHERE p.id = $1`,
+        [entregaActualizada.pago_id],
+      );
+      if (await avisarEstadoPagoAlChofer(to, pago, `el contenedor ${numero}`)) pendienteEfectivo = pago!.id;
+    }
+    if (pendienteEfectivo) {
+      await setSesion({
+        telefono: to,
+        flujo: 'chofer',
+        paso: 'esperando_confirmacion_efectivo',
+        contexto: { pagosPendientes: [pendienteEfectivo], viajeIdsSiguienteParada: [entregaId], choferNombre },
+      });
+      return;
+    }
+
     // Después de la confirmación: avisar la parada siguiente de la ruta (trae su
     // propio menú, así que no se manda el menú suelto para no duplicarlo).
     const siguienteEntrega = await avisarSiguienteParadaRuta(entregaId).catch((e) => {
@@ -470,11 +543,11 @@ async function elegirContenedor(to: string, choferId: string, estado: string): P
   // entregas/retiros el mismo día.
   const conts = await query<{
     numero: string; grupo_id: string | null; tipo: string; pareja_numero: string | null; pareja_tipo: string | null;
-    destino_direccion: string | null; cliente_nombre: string | null; medio_pago: string | null;
+    destino_direccion: string | null; cliente_nombre: string | null; medio_pago: string | null; medio_pago_alargue: string | null;
   }>(
     `SELECT DISTINCT ON (c.numero)
             c.numero, v.grupo_id, v.tipo, pareja.contenedor_numero AS pareja_numero, pareja.tipo AS pareja_tipo,
-            v.destino_direccion, cl.nombre AS cliente_nombre, pg.medio_pago
+            v.destino_direccion, cl.nombre AS cliente_nombre, pg.medio_pago, alargue.medio_pago AS medio_pago_alargue
        FROM contenedores c
        JOIN viajes v ON v.contenedor_numero = c.numero
        LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
@@ -485,6 +558,14 @@ async function elegirContenedor(to: string, choferId: string, estado: string): P
           WHERE v2.grupo_id = v.grupo_id AND v2.id <> v.id
           LIMIT 1
        ) pareja ON TRUE
+       -- Extensión pedida en algún momento de este ciclo (por contenedor, sin
+       -- relación con viajes.pago_id) — solo importa para "Ya retiré": el
+       -- cobro de una extensión se hace en ese momento, no al entregar.
+       LEFT JOIN LATERAL (
+         SELECT medio_pago FROM pagos
+          WHERE contenedor_numero = c.numero AND tipo = 'alargue_retiro' AND estado <> 'rechazado' AND efectivo_cobrado = FALSE
+          ORDER BY creado_en DESC LIMIT 1
+       ) alargue ON TRUE
       WHERE c.estado = $1
         AND v.chofer_id = $2
         AND v.tipo = $3
@@ -498,15 +579,16 @@ async function elegirContenedor(to: string, choferId: string, estado: string): P
     return menuChofer(to);
   }
   await setSesion({ telefono: to, flujo: 'chofer', paso: 'elegir_contenedor', contexto: { estado } });
-  // Si alguno se cobra en efectivo, se aclara ANTES de que el chofer marque
-  // "Ya entregué" — no alcanza con haberlo avisado una sola vez al asignar
-  // la entrega (puede ser horas antes y quedar olvidado a esta altura).
-  const hayEfectivo = conts.some((c) => c.medio_pago === 'efectivo');
+  // Si alguno se cobra en efectivo (la entrega/recambio en sí, o una
+  // extensión pendiente), se aclara ANTES de que el chofer marque la
+  // acción — no alcanza con haberlo avisado una sola vez al asignar la
+  // entrega (puede ser horas antes y quedar olvidado a esta altura).
+  const hayEfectivo = conts.some((c) => c.medio_pago === 'efectivo' || c.medio_pago_alargue === 'efectivo');
   await sendList(
     to,
     LABEL_ESTADO[estado as keyof typeof LABEL_ESTADO],
     '¿Cuál contenedor? Fijate el cliente y la dirección para confirmar que es la parada correcta.' +
-      (hayEfectivo ? '\n\n💵 Las marcadas *EFECTIVO* se cobran en el momento de la entrega.' : ''),
+      (hayEfectivo ? '\n\n💵 Las marcadas *EFECTIVO* se cobran en esta visita.' : ''),
     'Ver contenedores',
     conts.map((c) => {
       const clienteODireccion = [c.cliente_nombre, c.destino_direccion].filter(Boolean).join(' — ') || 'Sin datos del cliente';
@@ -515,7 +597,7 @@ async function elegirContenedor(to: string, choferId: string, estado: string): P
           ? `🔄 Recambio, retira lleno ${c.pareja_numero} · `
           : `🔄 Recambio, entrega vacío ${c.pareja_numero} · `
         : '';
-      const efectivo = c.medio_pago === 'efectivo' ? '💵 EFECTIVO · ' : '';
+      const efectivo = c.medio_pago === 'efectivo' || c.medio_pago_alargue === 'efectivo' ? '💵 EFECTIVO · ' : '';
       return {
         id: `cont:${estado}:${c.numero}`,
         title: c.numero,
@@ -615,6 +697,7 @@ async function aplicarEstado(
       // viajes.pago_id) y el de una extensión pedida en algún momento de
       // este mismo ciclo (pagos.contenedor_numero, sin relación con viajes).
       // Un contenedor puede tener las dos cosas a la vez.
+      const pendientesEfectivo: string[] = [];
       if (retiroActualizado?.pago_id) {
         const [pagoRecambio] = await query<{ id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null }>(
           `SELECT p.id, p.medio_pago, p.estado, p.efectivo_cobrado, COALESCE(pe.precio, p.monto) AS monto
@@ -623,7 +706,7 @@ async function aplicarEstado(
             WHERE p.id = $1`,
           [retiroActualizado.pago_id],
         );
-        await avisarEstadoPagoAlChofer(to, pagoRecambio, `el contenedor ${numero}`);
+        if (await avisarEstadoPagoAlChofer(to, pagoRecambio, `el contenedor ${numero}`)) pendientesEfectivo.push(pagoRecambio!.id);
       }
       const [pagoAlargue] = await query<{ id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null }>(
         `SELECT id, medio_pago, estado, efectivo_cobrado, monto
@@ -635,7 +718,20 @@ async function aplicarEstado(
           ORDER BY creado_en DESC LIMIT 1`,
         [numero],
       );
-      await avisarEstadoPagoAlChofer(to, pagoAlargue, `la extensión del contenedor ${numero}`);
+      if (await avisarEstadoPagoAlChofer(to, pagoAlargue, `la extensión del contenedor ${numero}`)) pendientesEfectivo.push(pagoAlargue!.id);
+
+      // Si quedó algo por confirmar (¿cobró o no?), el chofer no sigue con
+      // otra acción hasta que conteste — ni el aviso de la parada siguiente
+      // ni el menú se mandan todavía (ver 'esperando_confirmacion_efectivo').
+      if (pendientesEfectivo.length > 0) {
+        await setSesion({
+          telefono: to,
+          flujo: 'chofer',
+          paso: 'esperando_confirmacion_efectivo',
+          contexto: { pagosPendientes: pendientesEfectivo, viajeIdsSiguienteParada: [retiroId], choferNombre },
+        });
+        return;
+      }
 
       // Después de la confirmación: avisar la parada siguiente de la ruta (trae
       // su propio menú, así que no se manda el menú suelto para no duplicarlo).
@@ -717,6 +813,7 @@ async function aplicarEstado(
     // dato fresco, en vez de depender de que oficina se acuerde de
     // preguntarle después y lo cargue a mano desde el panel.
     const pagoIds = entregasCompletadas.map((e) => e.pago_id).filter((id): id is string => !!id);
+    let pendienteEfectivo: string | null = null;
     if (pagoIds.length > 0) {
       const [pago] = await query<{ id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null }>(
         `SELECT p.id, p.medio_pago, p.estado, p.efectivo_cobrado, COALESCE(pe.precio, p.monto) AS monto
@@ -725,7 +822,19 @@ async function aplicarEstado(
           WHERE p.id = ANY($1::uuid[])`,
         [pagoIds],
       );
-      await avisarEstadoPagoAlChofer(to, pago, `el contenedor ${numero}`);
+      if (await avisarEstadoPagoAlChofer(to, pago, `el contenedor ${numero}`)) pendienteEfectivo = pago!.id;
+    }
+
+    // Igual que en 'retirado': si queda un cobro por confirmar, no se manda
+    // ni el aviso de la próxima parada ni el menú hasta que conteste.
+    if (pendienteEfectivo) {
+      await setSesion({
+        telefono: to,
+        flujo: 'chofer',
+        paso: 'esperando_confirmacion_efectivo',
+        contexto: { pagosPendientes: [pendienteEfectivo], viajeIdsSiguienteParada: entregasCompletadas.map((e) => e.id), choferNombre },
+      });
+      return;
     }
 
     // Después de la confirmación: si hay una parada siguiente en la ruta se la
@@ -759,16 +868,19 @@ async function aplicarEstado(
  *    id de los botones lleva el pago_id, ver manejarConfirmacionEfectivo.
  *  - Cualquier otro caso (pendiente de validar, ya cobrado, sin pago) -> no
  *    dice nada, no hay ninguna acción que el chofer tenga que tomar.
+ * Devuelve `true` si mandó la pregunta (queda pendiente de respuesta) — el
+ * llamador usa esto para no dejarlo seguir con otra acción hasta que conteste
+ * (ver 'esperando_confirmacion_efectivo' en aplicarEstado/handleChofer).
  */
 async function avisarEstadoPagoAlChofer(
   to: string,
   pago: { id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null } | undefined,
   descripcion: string,
-): Promise<void> {
-  if (!pago) return;
+): Promise<boolean> {
+  if (!pago) return false;
   if (pago.estado === 'validado' && pago.medio_pago === 'transferencia') {
     await sendText(to, `✅ Ya está pagado por transferencia — no hace falta cobrar nada por ${descripcion}.`);
-    return;
+    return false;
   }
   if (pago.medio_pago === 'efectivo' && !pago.efectivo_cobrado) {
     const monto = pago.monto != null ? `ARS ${Number(pago.monto).toLocaleString('es-AR')}` : 'el importe correspondiente';
@@ -776,7 +888,9 @@ async function avisarEstadoPagoAlChofer(
       { id: `efectivo:si:${pago.id}`, title: '✅ Sí, cobré' },
       { id: `efectivo:no:${pago.id}`, title: '❌ No cobré' },
     ]);
+    return true;
   }
+  return false;
 }
 
 /**
@@ -788,8 +902,14 @@ async function avisarEstadoPagoAlChofer(
  * vez de reusar 'pago_pendiente_validacion': ese tipo dispara los botones
  * de Validar/Rechazar en Alertas.tsx, que no aplican acá porque el pago YA
  * está validado — solo falta cobrarlo).
+ *
+ * Un mismo retiro puede dejar dos preguntas pendientes (recambio + alargue,
+ * ver aplicarEstado) — la sesión guarda la lista completa en
+ * `pagosPendientes`; recién cuando no queda ninguna se libera el gate:
+ * se manda el aviso de la parada siguiente (si había alguna esperando) y el
+ * menú. Hasta entonces, handleChofer no deja pasar ninguna otra acción.
  */
-async function manejarConfirmacionEfectivo(to: string, seleccionId: string, choferNombre: string): Promise<void> {
+async function manejarConfirmacionEfectivo(to: string, seleccionId: string, choferNombre: string, sesion: Sesion): Promise<void> {
   const [, respuesta, pagoId] = seleccionId.split(':');
 
   if (respuesta === 'si') {
@@ -803,19 +923,37 @@ async function manejarConfirmacionEfectivo(to: string, seleccionId: string, chof
     } else {
       await sendText(to, '🙁 No encontramos ese pago — avisale a un operador para que lo revise.');
     }
-    return menuChofer(to, choferNombre);
+  } else {
+    const [pagoCliente] = await query<{ cliente_telefono: string }>('SELECT cliente_telefono FROM pagos WHERE id = $1', [pagoId]);
+    const identificacionCliente = pagoCliente ? await nombreClienteParaAlerta(pagoCliente.cliente_telefono) : 'un cliente';
+    const [alerta] = await query(
+      `INSERT INTO alertas (tipo, referencia_id, mensaje)
+       VALUES ('efectivo_no_cobrado', $1, $2)
+       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+      [pagoId, `${choferNombre} avisó que TODAVÍA NO cobró el efectivo de ${identificacionCliente} — hacer seguimiento`],
+    );
+    if (alerta) emitAlerta(alerta);
+    await sendText(to, '📋 Anotado — le avisamos a oficina para que hagan el seguimiento.');
   }
 
-  const [pagoCliente] = await query<{ cliente_telefono: string }>('SELECT cliente_telefono FROM pagos WHERE id = $1', [pagoId]);
-  const identificacionCliente = pagoCliente ? await nombreClienteParaAlerta(pagoCliente.cliente_telefono) : 'un cliente';
-  const [alerta] = await query(
-    `INSERT INTO alertas (tipo, referencia_id, mensaje)
-     VALUES ('efectivo_no_cobrado', $1, $2)
-     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [pagoId, `${choferNombre} avisó que TODAVÍA NO cobró el efectivo de ${identificacionCliente} — hacer seguimiento`],
-  );
-  if (alerta) emitAlerta(alerta);
-  await sendText(to, '📋 Anotado — le avisamos a oficina para que hagan el seguimiento.');
-  return menuChofer(to, choferNombre);
+  const pendientes = ((sesion.contexto?.pagosPendientes as string[] | undefined) ?? []).filter((id) => id !== pagoId);
+  if (pendientes.length > 0) {
+    await setSesion({ ...sesion, contexto: { ...sesion.contexto, pagosPendientes: pendientes } });
+    return; // todavía falta que conteste la otra pregunta pendiente
+  }
+
+  // Ya no queda ninguna por confirmar: recién ahora se avisa la parada
+  // siguiente (si había alguna esperando) y se libera el menú.
+  const viajeIds = (sesion.contexto?.viajeIdsSiguienteParada as string[] | undefined) ?? [];
+  await clearSesion(to);
+  let siguienteEnviada = false;
+  for (const id of viajeIds) {
+    const enviada = await avisarSiguienteParadaRuta(id).catch((e) => {
+      console.error('Error avisando siguiente parada:', e.message);
+      return false;
+    });
+    if (enviada) siguienteEnviada = true;
+  }
+  if (!siguienteEnviada) return menuChofer(to, choferNombre);
 }
