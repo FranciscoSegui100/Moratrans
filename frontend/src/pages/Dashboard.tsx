@@ -9,6 +9,7 @@ interface Kpis {
   contenedores_activos: number;
   contenedores_disponibles: number;
   cobros_pendientes: number;
+  cobros_pendientes_monto: string;
   viajes_hoy: number;
 }
 
@@ -40,14 +41,15 @@ const estadoColors: Record<string, string> = {
 export function Dashboard() {
   const { show } = useToast();
   const queryClient = useQueryClient();
-  const { data: kpis = null } = useQuery({
+  const { data: kpis = null, isError: kpisError, refetch: refetchKpis } = useQuery({
     queryKey: ['dashboard', 'kpis'],
     queryFn: () => api.get<Kpis>('/api/dashboard/kpis').then((r) => r.data),
   });
-  const { data: distribucion = [] } = useQuery({
+  const { data: distribucion = [], isError: distribucionError, refetch: refetchDistribucion } = useQuery({
     queryKey: ['dashboard', 'contenedores'],
     queryFn: () => api.get<EstadoDist[]>('/api/dashboard/contenedores').then((r) => r.data),
   });
+  const hayError = kpisError || distribucionError;
   const { data: estadoBot } = useQuery({
     queryKey: ['config', 'bot'],
     queryFn: () => api.get<EstadoBot>('/api/config/bot').then((r) => r.data),
@@ -87,6 +89,24 @@ export function Dashboard() {
         </RoleGate>
       </div>
 
+      {hayError && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
+            background: 'var(--danger-bg)', border: '1px solid var(--danger)', borderRadius: 'var(--radius)',
+            padding: '10px 14px', marginBottom: '16px', fontSize: '0.85rem', color: 'var(--danger)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <TriangleAlert size={18} strokeWidth={2} />
+            No se pudieron cargar los datos del dashboard. Puede ser un problema de conexión.
+          </div>
+          <button className="btn btn-sm" onClick={() => { refetchKpis(); refetchDistribucion(); }}>
+            Reintentar
+          </button>
+        </div>
+      )}
+
       {estadoBot?.bot_activo === false && (
         <div
           style={{
@@ -111,6 +131,11 @@ export function Dashboard() {
                 {kpis ? (kpis as any)[c.key] : '—'}
               </div>
               <div className="kpi-label">{c.label}</div>
+              {c.key === 'cobros_pendientes' && kpis && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  ${Number(kpis.cobros_pendientes_monto).toLocaleString('es-AR')} adeudado
+                </div>
+              )}
             </div>
           );
         })}
@@ -123,8 +148,10 @@ export function Dashboard() {
           {distribucion.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon"><Package strokeWidth={1.5} /></div>
-              <div className="empty-state-title">Sin datos</div>
-              <div className="empty-state-text">No hay contenedores cargados</div>
+              <div className="empty-state-title">{distribucionError ? 'No se pudo cargar' : 'Sin datos'}</div>
+              <div className="empty-state-text">
+                {distribucionError ? 'Hubo un error al pedir la distribución de contenedores.' : 'No hay contenedores cargados'}
+              </div>
             </div>
           ) : (
             distribucion.map((d) => (
