@@ -130,9 +130,11 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   // contenedor (lista), y las dos acciones self-service nuevas (vaciado y
   // autoasignación del vacío de un recambio).
   if (m.tipo === 'interactive_button' && m.seleccionId?.startsWith('estado:')) {
-    return elegirContenedor(to, chofer[0].id, m.seleccionId.replace('estado:', ''));
+    return elegirContenedor(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('estado:', ''), sesion);
   }
-  if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('cont:')) {
+  // 'cont:' puede venir como botón directo (un solo candidato, ver
+  // menuChofer) o como lista (varios candidatos, ver elegirContenedor).
+  if ((m.tipo === 'interactive_button' || m.tipo === 'interactive_list') && m.seleccionId?.startsWith('cont:')) {
     const raw = m.seleccionId.replace('cont:', '');
     const parts = raw.split(':');
     let targetEstado: string;
@@ -187,10 +189,10 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   // Soporte para respuestas por texto libre o si el cliente no usa botones interactivos
   const txt = (m.texto ?? '').toLowerCase().trim();
   if (txt.includes('retir')) {
-    return elegirContenedor(to, chofer[0].id, 'retirado');
+    return elegirContenedor(to, chofer[0].id, chofer[0].nombre, 'retirado', sesion);
   }
   if (txt.includes('entreg')) {
-    return elegirContenedor(to, chofer[0].id, 'entregado');
+    return elegirContenedor(to, chofer[0].id, chofer[0].nombre, 'entregado', sesion);
   }
   if (sesion.paso === 'elegir_contenedor' && m.tipo === 'text' && m.texto) {
     const inputNumero = m.texto.trim();
@@ -218,8 +220,17 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
  * Menú principal del chofer: hasta 3 botones pegados al mensaje (un solo
  * toque), en vez de una lista desplegable — más rápido para alguien
  * manejando. Se manda después de cada acción para que nunca tenga que
- * escribir "menú". El tercer botón ("🔄 Hice el recambio") solo aparece si
- * tiene algún recambio activo — ver recambiosActivos.
+ * escribir "menú".
+ *
+ * A diferencia de la versión anterior, los botones NO son genéricos: solo
+ * aparece "Ya entregué" si de verdad tiene una entrega pendiente, solo
+ * "Ya retiré" si tiene un retiro pendiente, y solo "Hice el recambio" si
+ * tiene un recambio activo — así nunca tiene que elegir entre dos acciones
+ * para una sola visita (ej. un recambio ya no ofrece también "Ya retiré").
+ * Cuando la categoría tiene un único candidato, el botón actúa directo sobre
+ * ese contenedor (id `cont:<estado>:<numero>`) sin preguntar cuál es — la
+ * lista para elegir (ver elegirContenedor) solo aparece si hay ambigüedad
+ * real (2 o más candidatos).
  *
  * Si además el chofer tiene contenedores propios en "retirado" esperando
  * confirmar el vaciado, se manda una lista aparte con esa acción —
@@ -233,16 +244,86 @@ export async function menuChofer(to: string, nombre?: string): Promise<void> {
   );
   if (!chofer) return; // no debería pasar (ya se validó identidad antes de llegar acá)
 
-  const recambios = await recambiosActivos(chofer.id);
-  const botones: { id: string; title: string }[] = ESTADOS_CHOFER.map((e) => ({ id: `estado:${e}`, title: LABEL_ESTADO[e] }));
+  const [entregas, retiros, recambios] = await Promise.all([
+    candidatosEstado(chofer.id, 'entregado'),
+    candidatosEstado(chofer.id, 'retirado'),
+    recambiosActivos(chofer.id),
+  ]);
+
+  const botones: { id: string; title: string }[] = [];
+  if (entregas.length === 1) botones.push({ id: `cont:entregado:${entregas[0].numero}`, title: LABEL_ESTADO.entregado });
+  else if (entregas.length > 1) botones.push({ id: 'estado:entregado', title: LABEL_ESTADO.entregado });
+  if (retiros.length === 1) botones.push({ id: `cont:retirado:${retiros[0].numero}`, title: LABEL_ESTADO.retirado });
+  else if (retiros.length > 1) botones.push({ id: 'estado:retirado', title: LABEL_ESTADO.retirado });
   if (recambios.length > 0) botones.push({ id: 'recambio_hecho', title: '🔄 Hice el recambio' });
 
-  await sendButtons(
-    to,
-    nombre ? `🚚 Hola, ${nombre}. ¿Qué acción querés registrar?` : '🚚 Panel del chofer. ¿Qué acción querés registrar?',
-    botones,
-  );
+  const saludo = nombre ? `🚚 Hola, ${nombre}.` : '🚚 Panel del chofer.';
+  if (botones.length === 0) {
+    await sendText(to, `${saludo} No tenés ninguna entrega, retiro o recambio pendiente en este momento.`);
+  } else {
+    await sendButtons(to, `${saludo} ¿Qué acción querés registrar?`, botones);
+  }
   await ofrecerVaciadosPendientes(to, chofer.id);
+}
+
+/**
+ * Condición SQL: esta parada es "la actual" — o es un viaje suelto (sin
+ * ruta armada), o es la de menor `orden` entre las de su ruta que todavía
+ * no se completaron. Sin esto, un chofer con varias paradas en la misma
+ * ruta veía TODAS como candidatas para "Ya entregué"/"Ya retiré"/el
+ * recambio, aunque todavía no le hubiéramos avisado de las siguientes (ver
+ * avisarSiguienteParadaRuta, que sigue el mismo criterio para decidir cuál
+ * avisar a continuación). `alias` es el alias de tabla usado en cada query
+ * (siempre texto fijo interno, nunca input externo).
+ */
+function condicionParadaActual(alias: string): string {
+  return `(${alias}.ruta_id IS NULL OR (
+    ${alias}.ruta_confirmada_en IS NOT NULL
+    AND ${alias}.orden = (
+      SELECT MIN(x.orden) FROM viajes x
+       WHERE x.ruta_id = ${alias}.ruta_id AND x.completada_en IS NULL AND x.estado IN ('programado', 'en_curso')
+    )
+  ))`;
+}
+
+/**
+ * Candidatos reales para pasar a `estado` (entregado/retirado): solo la
+ * parada actual de cada ruta (ver condicionParadaActual) y excluyendo los
+ * contenedores que son parte de un recambio (grupo_id) — esos se resuelven
+ * con "Hice el recambio" (ver recambiosActivos/marcarRecambioHecho), no acá,
+ * para no ofrecer dos botones distintos para la misma visita.
+ */
+async function candidatosEstado(
+  choferId: string,
+  estado: string,
+): Promise<{ numero: string; destino_direccion: string | null; cliente_nombre: string | null; medio_pago: string | null; medio_pago_alargue: string | null }[]> {
+  const origen = estado === 'entregado' ? 'reservado' : 'entregado';
+  const tipoRequerido = estado === 'entregado' ? 'entrega' : 'retiro';
+  return query(
+    `SELECT DISTINCT ON (c.numero)
+            c.numero, v.destino_direccion, cl.nombre AS cliente_nombre, pg.medio_pago, alargue.medio_pago AS medio_pago_alargue
+       FROM contenedores c
+       JOIN viajes v ON v.contenedor_numero = c.numero
+       LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
+       LEFT JOIN pagos pg ON pg.id = v.pago_id
+       -- Extensión pedida en algún momento de este ciclo (por contenedor, sin
+       -- relación con viajes.pago_id) — solo importa para "Ya retiré": el
+       -- cobro de una extensión se hace en ese momento, no al entregar.
+       LEFT JOIN LATERAL (
+         SELECT medio_pago FROM pagos
+          WHERE contenedor_numero = c.numero AND tipo = 'alargue_retiro' AND estado <> 'rechazado' AND efectivo_cobrado = FALSE
+          ORDER BY creado_en DESC LIMIT 1
+       ) alargue ON TRUE
+      WHERE c.estado = $1
+        AND v.chofer_id = $2
+        AND v.tipo = $3
+        AND v.estado IN ('programado', 'en_curso')
+        AND v.grupo_id IS NULL
+        AND ${condicionParadaActual('v')}
+      ORDER BY c.numero, c.actualizado_en DESC
+      LIMIT 10`,
+    [origen, choferId, tipoRequerido],
+  );
 }
 
 /**
@@ -253,6 +334,7 @@ export async function menuChofer(to: string, nombre?: string): Promise<void> {
  * tanto los que ya tienen el vacío asignado (alcanza con marcar el lleno,
  * cascadearParejaRecambio completa el otro lado) como los que todavía no
  * (primero hay que preguntar con cuál lo completó, ver marcarRecambioHecho).
+ * Igual que candidatosEstado, solo trae la parada actual de cada ruta.
  */
 async function recambiosActivos(choferId: string): Promise<{ llenoNumero: string; entregaId: string; vacioAsignado: boolean }[]> {
   const rows = await query<{ lleno_numero: string; entrega_id: string; vacio_numero: string | null }>(
@@ -260,6 +342,7 @@ async function recambiosActivos(choferId: string): Promise<{ llenoNumero: string
        FROM viajes r
        JOIN viajes e ON e.grupo_id = r.grupo_id AND e.tipo = 'entrega' AND e.estado IN ('programado', 'en_curso')
       WHERE r.chofer_id = $1 AND r.tipo = 'retiro' AND r.grupo_id IS NOT NULL AND r.estado IN ('programado', 'en_curso')
+        AND ${condicionParadaActual('r')}
       ORDER BY r.creado_en`,
     [choferId],
   );
@@ -521,62 +604,25 @@ async function aplicarVacioRecambio(
   return menuChofer(to, choferNombre);
 }
 
-/** Tras elegir estado, listar contenedores candidatos. */
-async function elegirContenedor(to: string, choferId: string, estado: string): Promise<void> {
+/**
+ * Tras elegir estado, resuelve el contenedor. Si hay un solo candidato real
+ * (el caso normal: una parada a la vez, ver condicionParadaActual), actúa
+ * directo sin preguntar nada más — listar para elegir solo tiene sentido si
+ * hay ambigüedad de verdad (2 o más candidatos).
+ */
+async function elegirContenedor(to: string, choferId: string, choferNombre: string, estado: string, sesion: Sesion): Promise<void> {
   if (!ESTADOS_CHOFER.includes(estado as any)) {
     await sendText(to, 'Esa acción no está disponible para choferes.');
-    return menuChofer(to);
+    return menuChofer(to, choferNombre);
   }
-  // Contenedores en un estado desde el que la transición es válida.
   const origen = estado === 'entregado' ? 'reservado' : 'entregado';
-  // El viaje activo tiene que ser del tipo que realmente pide esa acción —
-  // sin esto, un contenedor recién entregado (cuyo viaje de 'entrega' sigue
-  // "activo" hasta que se cierra todo el ciclo, ver retiro.service.ts)
-  // aparecía como candidato para "Ya retiré" aunque nadie hubiera pedido el
-  // retiro todavía.
-  const tipoRequerido = estado === 'entregado' ? 'entrega' : 'retiro';
-  // Solo contenedores con un viaje activo asignado a ESTE chofer.
-  // Se usa DISTINCT ON (c.numero) para garantizar IDs únicos y no saturar Meta API.
-  // Se trae también el cliente y la dirección del viaje: sin esto, el chofer
-  // solo veía el número de contenedor en la lista y no tenía forma de
-  // confirmar que estaba por marcar la parada correcta cuando maneja varias
-  // entregas/retiros el mismo día.
-  const conts = await query<{
-    numero: string; grupo_id: string | null; tipo: string; pareja_numero: string | null; pareja_tipo: string | null;
-    destino_direccion: string | null; cliente_nombre: string | null; medio_pago: string | null; medio_pago_alargue: string | null;
-  }>(
-    `SELECT DISTINCT ON (c.numero)
-            c.numero, v.grupo_id, v.tipo, pareja.contenedor_numero AS pareja_numero, pareja.tipo AS pareja_tipo,
-            v.destino_direccion, cl.nombre AS cliente_nombre, pg.medio_pago, alargue.medio_pago AS medio_pago_alargue
-       FROM contenedores c
-       JOIN viajes v ON v.contenedor_numero = c.numero
-       LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
-       LEFT JOIN pagos pg ON pg.id = v.pago_id
-       LEFT JOIN LATERAL (
-         SELECT v2.contenedor_numero, v2.tipo
-           FROM viajes v2
-          WHERE v2.grupo_id = v.grupo_id AND v2.id <> v.id
-          LIMIT 1
-       ) pareja ON TRUE
-       -- Extensión pedida en algún momento de este ciclo (por contenedor, sin
-       -- relación con viajes.pago_id) — solo importa para "Ya retiré": el
-       -- cobro de una extensión se hace en ese momento, no al entregar.
-       LEFT JOIN LATERAL (
-         SELECT medio_pago FROM pagos
-          WHERE contenedor_numero = c.numero AND tipo = 'alargue_retiro' AND estado <> 'rechazado' AND efectivo_cobrado = FALSE
-          ORDER BY creado_en DESC LIMIT 1
-       ) alargue ON TRUE
-      WHERE c.estado = $1
-        AND v.chofer_id = $2
-        AND v.tipo = $3
-        AND v.estado IN ('programado', 'en_curso')
-      ORDER BY c.numero, c.actualizado_en DESC
-      LIMIT 10`,
-    [origen, choferId, tipoRequerido],
-  );
+  const conts = await candidatosEstado(choferId, estado);
   if (conts.length === 0) {
     await sendText(to, `🙁 No tenés contenedores en estado "${origen}" para pasar a "${estado.replace('_', ' ')}".`);
-    return menuChofer(to);
+    return menuChofer(to, choferNombre);
+  }
+  if (conts.length === 1) {
+    return aplicarEstado(to, choferId, choferNombre, conts[0].numero, sesion, estado);
   }
   await setSesion({ telefono: to, flujo: 'chofer', paso: 'elegir_contenedor', contexto: { estado } });
   // Si alguno se cobra en efectivo (la entrega/recambio en sí, o una
@@ -592,16 +638,11 @@ async function elegirContenedor(to: string, choferId: string, estado: string): P
     'Ver contenedores',
     conts.map((c) => {
       const clienteODireccion = [c.cliente_nombre, c.destino_direccion].filter(Boolean).join(' — ') || 'Sin datos del cliente';
-      const recambio = c.grupo_id
-        ? c.pareja_tipo === 'retiro'
-          ? `🔄 Recambio, retira lleno ${c.pareja_numero} · `
-          : `🔄 Recambio, entrega vacío ${c.pareja_numero} · `
-        : '';
       const efectivo = c.medio_pago === 'efectivo' || c.medio_pago_alargue === 'efectivo' ? '💵 EFECTIVO · ' : '';
       return {
         id: `cont:${estado}:${c.numero}`,
         title: c.numero,
-        description: `${efectivo}${recambio}${clienteODireccion}`,
+        description: `${efectivo}${clienteODireccion}`,
       };
     }),
   );

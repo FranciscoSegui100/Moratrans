@@ -10,7 +10,7 @@ import { descargarArchivo } from '../../services/storage.service';
 import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { avisarChoferRecambio } from '../viajes/viajes.routes';
-import { avisoEfectivoChofer } from '../whatsapp/avisoEfectivo';
+import { avisoPagoChofer } from '../whatsapp/avisoEfectivo';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
@@ -142,6 +142,7 @@ async function avisarChoferAsignacion(
     destino_direccion: string | null;
     medio_pago?: string | null;
     precio?: string | null;
+    es_cuenta_corriente?: boolean | null;
   } | undefined,
 ): Promise<void> {
   const [chofer] = await query<{ telefono: string | null; nombre: string }>(
@@ -164,7 +165,7 @@ async function avisarChoferAsignacion(
       `👤 Cliente: ${info?.cliente_nombre ?? 'Sin nombre registrado'}\n` +
       `📞 Teléfono: ${info?.cliente_telefono ?? '—'}\n` +
       `📍 Destino:\n${destino}` +
-      avisoEfectivoChofer(info?.medio_pago, info?.precio),
+      avisoPagoChofer(info?.medio_pago, info?.precio, info?.es_cuenta_corriente),
   );
   // El menú (botones) sale abajo del aviso: un solo toque para avisar
   // "voy en camino" apenas arranca, sin tener que escribir nada.
@@ -184,6 +185,7 @@ async function avisarChoferReservaFutura(
   fechaEntrega: string,
   medioPago?: string | null,
   precio?: string | null,
+  esCuentaCorriente?: boolean | null,
 ): Promise<void> {
   const [chofer] = await query<{ telefono: string | null }>('SELECT telefono FROM choferes WHERE id = $1', [choferId]);
   if (!chofer?.telefono) return;
@@ -191,7 +193,7 @@ async function avisarChoferReservaFutura(
     chofer.telefono,
     `📦 Te quedó reservada una entrega del contenedor *${contenedor}*, pero todavía está con otro cliente.\n` +
       `Prevista para el ${formatearFechaCorta(fechaEntrega)} — te avisamos apenas esté listo para salir.` +
-      avisoEfectivoChofer(medioPago, precio),
+      avisoPagoChofer(medioPago, precio, esCuentaCorriente),
   );
 }
 
@@ -623,7 +625,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
             );
           });
         } else if (fechaEntrega) {
-          avisarChoferReservaFutura(choferId, result.contenedor, fechaEntrega, info?.medio_pago, info?.precio).catch((e) =>
+          avisarChoferReservaFutura(choferId, result.contenedor, fechaEntrega, info?.medio_pago, info?.precio, info?.es_cuenta_corriente).catch((e) =>
             console.error('Error avisando reserva futura al chofer:', motivoErrorWa(e)),
           );
         }

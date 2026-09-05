@@ -9,7 +9,7 @@ import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { reservarParaEntrega } from '../../services/contenedorReserva.service';
 import { emitRecursoActualizado } from '../../config/socket';
-import { avisoEfectivoChofer } from '../whatsapp/avisoEfectivo';
+import { avisoPagoChofer } from '../whatsapp/avisoEfectivo';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -152,6 +152,7 @@ export async function avisarChoferViaje(
   horaEstimada: string | null = null,
   medioPago: string | null = null,
   precio: string | null = null,
+  esCuentaCorriente: boolean | null = null,
 ): Promise<void> {
   const [chofer] = await query<{ telefono: string | null; nombre: string }>(
     'SELECT telefono, nombre FROM choferes WHERE id = $1',
@@ -174,7 +175,7 @@ export async function avisarChoferViaje(
       (hora ? `Horario estimado: *${hora} hs*\n` : '') +
       `📍 Dirección:\n${destino}\n\n` +
       'Cuando la completes, marcala desde el menú del chofer.' +
-      avisoEfectivoChofer(medioPago, precio),
+      avisoPagoChofer(medioPago, precio, esCuentaCorriente),
   );
   await menuChofer(chofer.telefono, chofer.nombre);
 }
@@ -195,6 +196,7 @@ export async function avisarChoferRecambio(
   horaEstimada: string | null = null,
   medioPago: string | null = null,
   precio: string | null = null,
+  esCuentaCorriente: boolean | null = null,
 ): Promise<void> {
   const [chofer] = await query<{ telefono: string | null; nombre: string }>(
     'SELECT telefono, nombre FROM choferes WHERE id = $1',
@@ -226,7 +228,7 @@ export async function avisarChoferRecambio(
       (hora ? `Horario estimado: *${hora} hs*\n` : '') +
       `📍 Dirección:\n${destino}\n\n` +
       'Cuando lo completes, marcalo desde el menú del chofer.' +
-      avisoEfectivoChofer(medioPago, precio),
+      avisoPagoChofer(medioPago, precio, esCuentaCorriente),
   );
   await menuChofer(chofer.telefono, chofer.nombre);
 }
@@ -287,8 +289,8 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
   // recambio comparten pago_id, así que alcanza con mirar cualquiera de los dos.
   const pagoId = (entrega ?? retiro)?.pago_id ?? null;
   const [pagoAviso] = pagoId
-    ? await query<{ medio_pago: string; precio: string | null }>(
-        `SELECT p.medio_pago, COALESCE(pe.precio, p.monto) AS precio FROM pagos p LEFT JOIN pedidos pe ON pe.id = p.pedido_id WHERE p.id = $1`,
+    ? await query<{ medio_pago: string; precio: string | null; es_cuenta_corriente: boolean }>(
+        `SELECT p.medio_pago, COALESCE(pe.precio, p.monto) AS precio, p.es_cuenta_corriente FROM pagos p LEFT JOIN pedidos pe ON pe.id = p.pedido_id WHERE p.id = $1`,
         [pagoId],
       )
     : [];
@@ -297,13 +299,13 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
       await avisarChoferRecambio(
         choferId, retiro.contenedor_numero!, entrega.contenedor_numero, entrega.ubicacion_id,
         entrega.destino_direccion, entrega.cliente_telefono, entrega.hora_estimada,
-        pagoAviso?.medio_pago ?? null, pagoAviso?.precio ?? null,
+        pagoAviso?.medio_pago ?? null, pagoAviso?.precio ?? null, pagoAviso?.es_cuenta_corriente ?? null,
       );
     } else {
       const v = entrega ?? retiro!;
       await avisarChoferViaje(
         choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, v.hora_estimada,
-        pagoAviso?.medio_pago ?? null, pagoAviso?.precio ?? null,
+        pagoAviso?.medio_pago ?? null, pagoAviso?.precio ?? null, pagoAviso?.es_cuenta_corriente ?? null,
       );
     }
   } catch (e: any) {
