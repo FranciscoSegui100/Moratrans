@@ -1,9 +1,48 @@
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, Power, TriangleAlert } from 'lucide-react';
+import { Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, Power, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
+
+// Cuenta desde el valor anterior hasta el nuevo con ease-out: le da a los
+// KPIs un golpe de vida cada vez que cargan o cambian, en vez de aparecer
+// como texto estático.
+function useCountUp(target: number | null, duration = 700) {
+  const [value, setValue] = useState(0);
+  const prevTarget = useRef(0);
+  useEffect(() => {
+    if (target === null) return;
+    const from = prevTarget.current;
+    prevTarget.current = target;
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setValue(Math.round(from + (target - from) * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration]);
+  return value;
+}
+
+function KpiCard({ icon: Icon, tint, fg, label, value, extra }: {
+  icon: LucideIcon; tint: string; fg: string; label: string; value: number | null; extra?: React.ReactNode;
+}) {
+  const shown = useCountUp(value);
+  return (
+    <div className="kpi-card">
+      <div className="kpi-icon" style={{ background: tint, color: fg }}><Icon strokeWidth={1.75} /></div>
+      <div className="kpi-value">{value === null ? '—' : shown}</div>
+      <div className="kpi-label">{label}</div>
+      {extra}
+    </div>
+  );
+}
 
 interface Kpis {
   contenedores_activos: number;
@@ -122,23 +161,21 @@ export function Dashboard() {
 
       {/* KPI Cards */}
       <div className="kpi-grid">
-        {kpiConfig.map((c) => {
-          const Icon = c.icon;
-          return (
-            <div key={c.key} className="kpi-card">
-              <div className="kpi-icon" style={{ background: c.tint, color: c.fg }}><Icon strokeWidth={1.75} /></div>
-              <div className="kpi-value">
-                {kpis ? (kpis as any)[c.key] : '—'}
+        {kpiConfig.map((c) => (
+          <KpiCard
+            key={c.key}
+            icon={c.icon}
+            tint={c.tint}
+            fg={c.fg}
+            label={c.label}
+            value={kpis ? (kpis as any)[c.key] : null}
+            extra={c.key === 'cobros_pendientes' && kpis ? (
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                ${Number(kpis.cobros_pendientes_monto).toLocaleString('es-AR')} adeudado
               </div>
-              <div className="kpi-label">{c.label}</div>
-              {c.key === 'cobros_pendientes' && kpis && (
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                  ${Number(kpis.cobros_pendientes_monto).toLocaleString('es-AR')} adeudado
-                </div>
-              )}
-            </div>
-          );
-        })}
+            ) : undefined}
+          />
+        ))}
       </div>
 
       {/* Distribución de contenedores */}
