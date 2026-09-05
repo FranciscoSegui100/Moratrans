@@ -173,7 +173,13 @@ function generarTicketPDF(d: DatosTicket): Promise<Buffer> {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    let y = dibujarEncabezado(doc, 'COMPROBANTE DE PAGO', [`N° ${d.ticketId}`, d.fecha.toLocaleString('es-AR')]);
+    const esEfectivo = d.medioPago === 'efectivo';
+
+    let y = dibujarEncabezado(
+      doc,
+      esEfectivo ? 'PEDIDO CONFIRMADO' : 'COMPROBANTE DE PAGO',
+      [`N° ${d.ticketId}`, d.fecha.toLocaleString('es-AR')],
+    );
     y += 25;
 
     y = dibujarTituloSeccion(doc, y, 'Datos del cliente');
@@ -196,13 +202,23 @@ function generarTicketPDF(d: DatosTicket): Promise<Buffer> {
       doc,
       y,
       'Medio de pago',
-      d.medioPago === 'cuenta_corriente' ? 'Cuenta corriente' : d.medioPago === 'efectivo' ? 'Efectivo contra entrega' : 'Transferencia bancaria',
+      d.medioPago === 'cuenta_corriente' ? 'Cuenta corriente' : esEfectivo ? 'Efectivo contra entrega' : 'Transferencia bancaria',
     );
+    if (esEfectivo) {
+      y = dibujarFila(doc, y, 'Estado del pago', 'Pendiente — se abona en el momento de la entrega/retiro');
+    }
     if (d.titularTransferencia) y = dibujarFila(doc, y, 'Titular de la transferencia', d.titularTransferencia);
     y += 10;
 
-    dibujarMontoDestacado(doc, y, formatearMonto(d.precio));
-    dibujarPiePagina(doc);
+    dibujarMontoDestacado(doc, y, formatearMonto(d.precio), {
+      etiqueta: esEfectivo ? 'MONTO A PAGAR EN LA ENTREGA' : 'TOTAL PAGADO',
+    });
+    dibujarPiePagina(
+      doc,
+      esEfectivo
+        ? 'Este comprobante certifica la confirmación de tu pedido. El pago en efectivo se realiza al chofer en el momento de la entrega/retiro.'
+        : undefined,
+    );
 
     doc.end();
   });
@@ -225,10 +241,16 @@ export async function enviarTicketPorWhatsApp(d: DatosTicket): Promise<void> {
   const filename = `Comprobante_${nombreCliente}_${zona}_${d.ticketId}.pdf`;
   await subirArchivo(buffer, `tickets/${filename}`, 'application/pdf');
   const mediaId = await uploadMedia(buffer, 'application/pdf', filename);
-  const caption =
-    (d.contenedor
+  const esEfectivo = d.medioPago === 'efectivo';
+  const encabezadoCaption = esEfectivo
+    ? d.contenedor
+      ? `✅ ¡Pedido confirmado! Tu contenedor asignado es ${d.contenedor}.\n\n💵 Recordá que abonás *${formatearMonto(d.precio)}* en efectivo al chofer en el momento de la entrega/retiro.`
+      : `✅ ¡Pedido confirmado y registrado exitosamente!\n\n💵 Recordá que abonás *${formatearMonto(d.precio)}* en efectivo al chofer en el momento de la entrega/retiro.`
+    : d.contenedor
       ? `✅ ¡Pago validado! Tu contenedor asignado es ${d.contenedor}.`
-      : `✅ ¡Pago validado! Tu pedido fue confirmado y registrado exitosamente.`) +
+      : `✅ ¡Pago validado! Tu pedido fue confirmado y registrado exitosamente.`;
+  const caption =
+    encabezadoCaption +
     `\n\n🧾 Si necesitás factura, comunicate con un asesor.` +
     `\n\n¡Gracias por confiar en *MoraTrans*! 🚚`;
 
