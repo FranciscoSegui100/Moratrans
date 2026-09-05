@@ -67,7 +67,7 @@ export function Login() {
       <div className="login-page">
         <div className="login-card">
           <div className="login-logo">
-            <div className="login-logo-mark">MT</div>
+            <img src="/logo.png" alt="MoraTrans" className="login-logo-mark" />
             <h1>Moratrans</h1>
             <p>Verificación en dos pasos</p>
           </div>
@@ -121,7 +121,7 @@ export function Login() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-logo">
-          <div className="login-logo-mark">MT</div>
+          <img src="/logo.png" alt="MoraTrans" className="login-logo-mark" />
           <h1>Moratrans</h1>
           <p>Panel de gestión logística</p>
         </div>
