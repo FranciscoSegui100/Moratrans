@@ -32,7 +32,7 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
   else if (rutaId) { params.push(rutaId); conds.push(`v.ruta_id = $${params.length}`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const rows = await query(
-    `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
+    `SELECT v.id, v.tipo, v.fecha, v.creado_en, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
             v.destino_lat, v.destino_lng, v.horario_preferido, v.hora_estimada,
             v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id, v.patente, v.grupo_id,
             v.remito, v.importe, v.ubicacion_id, v.ubicacion_direccion, v.ruta_id, v.orden,
