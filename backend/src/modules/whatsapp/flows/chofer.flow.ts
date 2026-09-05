@@ -573,14 +573,15 @@ async function aplicarEstado(
         return menuChofer(to, choferNombre);
       }
       const retiroId = retiroExistente.id;
-      await query(
+      const [retiroActualizado] = await query<{ pago_id: string | null }>(
         `UPDATE viajes SET estado = 'en_curso', completada_en = now(),
                 chofer_id = COALESCE(chofer_id, $2),
                 destino_direccion = COALESCE(destino_direccion, $3),
                 zona = COALESCE(zona, $4),
                 ubicacion_id = COALESCE(ubicacion_id, $5),
                 ubicacion_direccion = COALESCE(ubicacion_direccion, $6)
-          WHERE id = $1`,
+          WHERE id = $1
+          RETURNING pago_id`,
         [retiroExistente.id, choferId, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
       );
       await query(
@@ -608,6 +609,34 @@ async function aplicarEstado(
         to,
         `📥 Registrado. Contenedor *${numero}* marcado como retirado${extraVacio}. Avisame por acá cuando lo vacíes en el vaciadero (opción 🗑️ del menú). Gracias por tu trabajo. 🙌`,
       );
+
+      // Este retiro puede tener dos pagos distintos asociados, no uno solo:
+      // el del recambio (compartido con la entrega del vacío, ver
+      // viajes.pago_id) y el de una extensión pedida en algún momento de
+      // este mismo ciclo (pagos.contenedor_numero, sin relación con viajes).
+      // Un contenedor puede tener las dos cosas a la vez.
+      if (retiroActualizado?.pago_id) {
+        const [pagoRecambio] = await query<{ id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null }>(
+          `SELECT p.id, p.medio_pago, p.estado, p.efectivo_cobrado, COALESCE(pe.precio, p.monto) AS monto
+             FROM pagos p
+             LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+            WHERE p.id = $1`,
+          [retiroActualizado.pago_id],
+        );
+        await avisarEstadoPagoAlChofer(to, pagoRecambio, `el contenedor ${numero}`);
+      }
+      const [pagoAlargue] = await query<{ id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null }>(
+        `SELECT id, medio_pago, estado, efectivo_cobrado, monto
+           FROM pagos
+          WHERE contenedor_numero = $1 AND tipo = 'alargue_retiro' AND estado <> 'rechazado'
+            AND creado_en >= COALESCE(
+              (SELECT creado_en FROM viajes WHERE contenedor_numero = $1 AND tipo = 'entrega' AND estado <> 'cancelado' ORDER BY creado_en DESC LIMIT 1),
+              '1970-01-01')
+          ORDER BY creado_en DESC LIMIT 1`,
+        [numero],
+      );
+      await avisarEstadoPagoAlChofer(to, pagoAlargue, `la extensión del contenedor ${numero}`);
+
       // Después de la confirmación: avisar la parada siguiente de la ruta (trae
       // su propio menú, así que no se manda el menú suelto para no duplicarlo).
       const siguienteRetiro = await avisarSiguienteParadaRuta(retiroId).catch((e) => {
@@ -683,26 +712,20 @@ async function aplicarEstado(
     await clearSesion(to);
     await sendText(to, `✅ Registrado. Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
 
-    // Si esta entrega se cobra en efectivo y todavía no se marcó como
-    // cobrada, preguntarle al chofer ahí mismo — es el único momento en que
-    // tiene el dato fresco, en vez de depender de que oficina se acuerde de
+    // Avisa si ya está pagado (transferencia confirmada) o pregunta el cobro
+    // en efectivo — ahí mismo, es el único momento en que el chofer tiene el
+    // dato fresco, en vez de depender de que oficina se acuerde de
     // preguntarle después y lo cargue a mano desde el panel.
     const pagoIds = entregasCompletadas.map((e) => e.pago_id).filter((id): id is string => !!id);
     if (pagoIds.length > 0) {
-      const [pagoEfectivo] = await query<{ id: string; precio: string | null }>(
-        `SELECT p.id, pe.precio
+      const [pago] = await query<{ id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null }>(
+        `SELECT p.id, p.medio_pago, p.estado, p.efectivo_cobrado, COALESCE(pe.precio, p.monto) AS monto
            FROM pagos p
            LEFT JOIN pedidos pe ON pe.id = p.pedido_id
-          WHERE p.id = ANY($1::uuid[]) AND p.medio_pago = 'efectivo' AND p.efectivo_cobrado = FALSE`,
+          WHERE p.id = ANY($1::uuid[])`,
         [pagoIds],
       );
-      if (pagoEfectivo) {
-        const monto = pagoEfectivo.precio ? `ARS ${Number(pagoEfectivo.precio).toLocaleString('es-AR')}` : 'el importe correspondiente';
-        await sendButtons(to, `💵 ¿Cobraste ${monto} en efectivo al entregar el contenedor ${numero}?`, [
-          { id: `efectivo:si:${pagoEfectivo.id}`, title: '✅ Sí, cobré' },
-          { id: `efectivo:no:${pagoEfectivo.id}`, title: '❌ No cobré' },
-        ]);
-      }
+      await avisarEstadoPagoAlChofer(to, pago, `el contenedor ${numero}`);
     }
 
     // Después de la confirmación: si hay una parada siguiente en la ruta se la
@@ -724,6 +747,36 @@ async function aplicarEstado(
   }
   // El aviso de la parada siguiente ya trajo su propio menú: no duplicarlo.
   if (!siguienteEnviada) return menuChofer(to, choferNombre);
+}
+
+/**
+ * Al completar una parada de logística (entrega, retiro, o el ciclo de una
+ * extensión) avisa el estado del pago asociado, si hay uno:
+ *  - Ya pagado por transferencia (validado) -> informa que ya está pagado,
+ *    no hace falta hacer nada.
+ *  - Efectivo todavía sin cobrar -> pregunta "¿Cobraste $X?" (Sí/No), mismo
+ *    mecanismo para cualquier tipo de pago (flete, recambio, alargue) — el
+ *    id de los botones lleva el pago_id, ver manejarConfirmacionEfectivo.
+ *  - Cualquier otro caso (pendiente de validar, ya cobrado, sin pago) -> no
+ *    dice nada, no hay ninguna acción que el chofer tenga que tomar.
+ */
+async function avisarEstadoPagoAlChofer(
+  to: string,
+  pago: { id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null } | undefined,
+  descripcion: string,
+): Promise<void> {
+  if (!pago) return;
+  if (pago.estado === 'validado' && pago.medio_pago === 'transferencia') {
+    await sendText(to, `✅ Ya está pagado por transferencia — no hace falta cobrar nada por ${descripcion}.`);
+    return;
+  }
+  if (pago.medio_pago === 'efectivo' && !pago.efectivo_cobrado) {
+    const monto = pago.monto != null ? `ARS ${Number(pago.monto).toLocaleString('es-AR')}` : 'el importe correspondiente';
+    await sendButtons(to, `💵 ¿Cobraste ${monto} en efectivo por ${descripcion}?`, [
+      { id: `efectivo:si:${pago.id}`, title: '✅ Sí, cobré' },
+      { id: `efectivo:no:${pago.id}`, title: '❌ No cobré' },
+    ]);
+  }
 }
 
 /**
@@ -760,7 +813,7 @@ async function manejarConfirmacionEfectivo(to: string, seleccionId: string, chof
      VALUES ('efectivo_no_cobrado', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [pagoId, `${choferNombre} entregó a ${identificacionCliente} pero todavía NO cobró el efectivo — hacer seguimiento`],
+    [pagoId, `${choferNombre} avisó que TODAVÍA NO cobró el efectivo de ${identificacionCliente} — hacer seguimiento`],
   );
   if (alerta) emitAlerta(alerta);
   await sendText(to, '📋 Anotado — le avisamos a oficina para que hagan el seguimiento.');
