@@ -7,6 +7,7 @@ import { finalizarRetiro } from '../../../services/retiro.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { DIAS_ALQUILER_ANTES_RETIRO } from '../../../config/bot.config';
 import { avisarSiguienteParadaRuta } from '../../viajes/viajes.routes';
+import { nombreClienteParaAlerta } from '../../../services/clientes.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -103,6 +104,25 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
     // Primer contacto: pedir DNI
     await setSesion({ telefono: to, flujo: 'chofer', paso: 'esperando_dni', contexto: {} });
     await sendText(to, '🚚 Hola. No tengo este número registrado como chofer. Para identificarte, enviame tu *DNI* (solo los números).');
+    return;
+  }
+
+  // Respuesta a "¿Cobraste $X en efectivo?" (ver aplicarEstado) — el id del
+  // botón lleva el pago_id en vez de depender de sesion.paso, así no importa
+  // qué otro mensaje/menú se haya mandado después (siguiente parada, etc.).
+  // Va ANTES que todo lo demás — incluido el chequeo de 'estado:' de abajo —
+  // porque es la única acción permitida mientras queda una pregunta pendiente.
+  if (m.tipo === 'interactive_button' && m.seleccionId?.startsWith('efectivo:')) {
+    return manejarConfirmacionEfectivo(to, m.seleccionId, chofer[0].nombre, sesion);
+  }
+  // Mientras quede una pregunta de cobro sin responder, no se deja pasar a
+  // ninguna otra acción (retirar, entregar, recambio) — así no se pierde el
+  // dato de si cobró o no yéndose a la siguiente parada sin contestar. Tiene
+  // que ir ANTES del chequeo de 'estado:' de abajo: un botón viejo de "Ya
+  // entregué"/"Ya retiré" de un mensaje anterior sigue siendo tocable en
+  // WhatsApp aunque ya no correspondiera usarlo.
+  if (sesion.paso === 'esperando_confirmacion_efectivo') {
+    await sendText(to, '⚠️ Antes de seguir, respondé arriba si cobraste el efectivo pendiente. 👆');
     return;
   }
 
@@ -462,23 +482,32 @@ async function aplicarVacioRecambio(
     );
 
     // Mismo chequeo que en aplicarEstado: avisa si ya está pagado por
-    // transferencia — acá también, porque este camino no pasa por
-    // aplicarEstado. El recordatorio de cobrar en efectivo ya se mandó al
-    // asignar la parada (ver avisoEfectivoChofer), así que acá no hace falta
-    // preguntar de nuevo.
+    // transferencia, o pregunta el cobro en efectivo (y bloquea el menú
+    // hasta que conteste) — acá también, porque este camino no pasa por
+    // aplicarEstado.
+    let pendienteEfectivo: string | null = null;
     if (entregaActualizada?.pago_id) {
-      const [pago] = await query<{ id: string; medio_pago: string; estado: string; monto: string | null }>(
-        `SELECT p.id, p.medio_pago, p.estado, COALESCE(pe.precio, p.monto) AS monto
+      const [pago] = await query<{ id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null }>(
+        `SELECT p.id, p.medio_pago, p.estado, p.efectivo_cobrado, COALESCE(pe.precio, p.monto) AS monto
            FROM pagos p
            LEFT JOIN pedidos pe ON pe.id = p.pedido_id
           WHERE p.id = $1`,
         [entregaActualizada.pago_id],
       );
-      await avisarEstadoPagoAlChofer(to, pago, `el contenedor ${numero}`);
+      if (await avisarEstadoPagoAlChofer(to, pago, `el contenedor ${numero}`)) pendienteEfectivo = pago!.id;
+    }
+    if (pendienteEfectivo) {
+      await setSesion({
+        telefono: to,
+        flujo: 'chofer',
+        paso: 'esperando_confirmacion_efectivo',
+        contexto: { pagosPendientes: [pendienteEfectivo], viajeIdsSiguienteParada: [entregaId], choferNombre },
+      });
+      return;
     }
 
-    // Avisar la parada siguiente de la ruta (trae su propio menú, así que no
-    // se manda el menú suelto para no duplicarlo).
+    // Después de la confirmación: avisar la parada siguiente de la ruta (trae su
+    // propio menú, así que no se manda el menú suelto para no duplicarlo).
     const siguienteEntrega = await avisarSiguienteParadaRuta(entregaId).catch((e) => {
       console.error('Error avisando siguiente parada:', e.message);
       return false;
@@ -667,22 +696,20 @@ async function aplicarEstado(
       // el del recambio (compartido con la entrega del vacío, ver
       // viajes.pago_id) y el de una extensión pedida en algún momento de
       // este mismo ciclo (pagos.contenedor_numero, sin relación con viajes).
-      // Un contenedor puede tener las dos cosas a la vez. El recordatorio de
-      // cobrar en efectivo ya se mandó al asignar la parada (ver
-      // avisoEfectivoChofer) — acá solo queda avisar si ya está pagado por
-      // transferencia.
+      // Un contenedor puede tener las dos cosas a la vez.
+      const pendientesEfectivo: string[] = [];
       if (retiroActualizado?.pago_id) {
-        const [pagoRecambio] = await query<{ id: string; medio_pago: string; estado: string; monto: string | null }>(
-          `SELECT p.id, p.medio_pago, p.estado, COALESCE(pe.precio, p.monto) AS monto
+        const [pagoRecambio] = await query<{ id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null }>(
+          `SELECT p.id, p.medio_pago, p.estado, p.efectivo_cobrado, COALESCE(pe.precio, p.monto) AS monto
              FROM pagos p
              LEFT JOIN pedidos pe ON pe.id = p.pedido_id
             WHERE p.id = $1`,
           [retiroActualizado.pago_id],
         );
-        await avisarEstadoPagoAlChofer(to, pagoRecambio, `el contenedor ${numero}`);
+        if (await avisarEstadoPagoAlChofer(to, pagoRecambio, `el contenedor ${numero}`)) pendientesEfectivo.push(pagoRecambio!.id);
       }
-      const [pagoAlargue] = await query<{ id: string; medio_pago: string; estado: string; monto: string | null }>(
-        `SELECT id, medio_pago, estado, monto
+      const [pagoAlargue] = await query<{ id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null }>(
+        `SELECT id, medio_pago, estado, efectivo_cobrado, monto
            FROM pagos
           WHERE contenedor_numero = $1 AND tipo = 'alargue_retiro' AND estado <> 'rechazado'
             AND creado_en >= COALESCE(
@@ -691,10 +718,23 @@ async function aplicarEstado(
           ORDER BY creado_en DESC LIMIT 1`,
         [numero],
       );
-      await avisarEstadoPagoAlChofer(to, pagoAlargue, `la extensión del contenedor ${numero}`);
+      if (await avisarEstadoPagoAlChofer(to, pagoAlargue, `la extensión del contenedor ${numero}`)) pendientesEfectivo.push(pagoAlargue!.id);
 
-      // Avisar la parada siguiente de la ruta (trae su propio menú, así que
-      // no se manda el menú suelto para no duplicarlo).
+      // Si quedó algo por confirmar (¿cobró o no?), el chofer no sigue con
+      // otra acción hasta que conteste — ni el aviso de la parada siguiente
+      // ni el menú se mandan todavía (ver 'esperando_confirmacion_efectivo').
+      if (pendientesEfectivo.length > 0) {
+        await setSesion({
+          telefono: to,
+          flujo: 'chofer',
+          paso: 'esperando_confirmacion_efectivo',
+          contexto: { pagosPendientes: pendientesEfectivo, viajeIdsSiguienteParada: [retiroId], choferNombre },
+        });
+        return;
+      }
+
+      // Después de la confirmación: avisar la parada siguiente de la ruta (trae
+      // su propio menú, así que no se manda el menú suelto para no duplicarlo).
       const siguienteRetiro = await avisarSiguienteParadaRuta(retiroId).catch((e) => {
         console.error('Error avisando siguiente parada:', e.message);
         return false;
@@ -768,23 +808,37 @@ async function aplicarEstado(
     await clearSesion(to);
     await sendText(to, `✅ Registrado. Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
 
-    // Avisa si ya está pagado por transferencia — el recordatorio de cobrar
-    // en efectivo ya se mandó al asignar la parada (ver avisoEfectivoChofer),
-    // así que acá no hace falta preguntar de nuevo.
+    // Avisa si ya está pagado (transferencia confirmada) o pregunta el cobro
+    // en efectivo — ahí mismo, es el único momento en que el chofer tiene el
+    // dato fresco, en vez de depender de que oficina se acuerde de
+    // preguntarle después y lo cargue a mano desde el panel.
     const pagoIds = entregasCompletadas.map((e) => e.pago_id).filter((id): id is string => !!id);
+    let pendienteEfectivo: string | null = null;
     if (pagoIds.length > 0) {
-      const [pago] = await query<{ id: string; medio_pago: string; estado: string; monto: string | null }>(
-        `SELECT p.id, p.medio_pago, p.estado, COALESCE(pe.precio, p.monto) AS monto
+      const [pago] = await query<{ id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null }>(
+        `SELECT p.id, p.medio_pago, p.estado, p.efectivo_cobrado, COALESCE(pe.precio, p.monto) AS monto
            FROM pagos p
            LEFT JOIN pedidos pe ON pe.id = p.pedido_id
           WHERE p.id = ANY($1::uuid[])`,
         [pagoIds],
       );
-      await avisarEstadoPagoAlChofer(to, pago, `el contenedor ${numero}`);
+      if (await avisarEstadoPagoAlChofer(to, pago, `el contenedor ${numero}`)) pendienteEfectivo = pago!.id;
     }
 
-    // Si hay una parada siguiente en la ruta se la avisa (ese aviso trae su
-    // propio menú, así que abajo no se manda el suelto).
+    // Igual que en 'retirado': si queda un cobro por confirmar, no se manda
+    // ni el aviso de la próxima parada ni el menú hasta que conteste.
+    if (pendienteEfectivo) {
+      await setSesion({
+        telefono: to,
+        flujo: 'chofer',
+        paso: 'esperando_confirmacion_efectivo',
+        contexto: { pagosPendientes: [pendienteEfectivo], viajeIdsSiguienteParada: entregasCompletadas.map((e) => e.id), choferNombre },
+      });
+      return;
+    }
+
+    // Después de la confirmación: si hay una parada siguiente en la ruta se la
+    // avisa (ese aviso trae su propio menú, así que abajo no se manda el suelto).
     for (const v of entregasCompletadas) {
       const enviada = await avisarSiguienteParadaRuta(v.id).catch((e) => {
         console.error('Error avisando siguiente parada:', e.message);
@@ -806,19 +860,100 @@ async function aplicarEstado(
 
 /**
  * Al completar una parada de logística (entrega, retiro, o el ciclo de una
- * extensión) avisa si el pago asociado ya está pagado por transferencia
- * (validado) — no hace falta cobrar nada. El recordatorio de cobrar en
- * efectivo se manda antes, al asignarle la parada al chofer (ver
- * avisoEfectivoChofer en avisarChoferViaje/Recambio), así que acá no se
- * vuelve a preguntar nada sobre eso.
+ * extensión) avisa el estado del pago asociado, si hay uno:
+ *  - Ya pagado por transferencia (validado) -> informa que ya está pagado,
+ *    no hace falta hacer nada.
+ *  - Efectivo todavía sin cobrar -> pregunta "¿Cobraste $X?" (Sí/No), mismo
+ *    mecanismo para cualquier tipo de pago (flete, recambio, alargue) — el
+ *    id de los botones lleva el pago_id, ver manejarConfirmacionEfectivo.
+ *  - Cualquier otro caso (pendiente de validar, ya cobrado, sin pago) -> no
+ *    dice nada, no hay ninguna acción que el chofer tenga que tomar.
+ * Devuelve `true` si mandó la pregunta (queda pendiente de respuesta) — el
+ * llamador usa esto para no dejarlo seguir con otra acción hasta que conteste
+ * (ver 'esperando_confirmacion_efectivo' en aplicarEstado/handleChofer).
  */
 async function avisarEstadoPagoAlChofer(
   to: string,
-  pago: { id: string; medio_pago: string; estado: string; monto: string | null } | undefined,
+  pago: { id: string; medio_pago: string; estado: string; efectivo_cobrado: boolean; monto: string | null } | undefined,
   descripcion: string,
-): Promise<void> {
-  if (!pago) return;
+): Promise<boolean> {
+  if (!pago) return false;
   if (pago.estado === 'validado' && pago.medio_pago === 'transferencia') {
     await sendText(to, `✅ Ya está pagado por transferencia — no hace falta cobrar nada por ${descripcion}.`);
+    return false;
   }
+  if (pago.medio_pago === 'efectivo' && !pago.efectivo_cobrado) {
+    const monto = pago.monto != null ? `ARS ${Number(pago.monto).toLocaleString('es-AR')}` : 'el importe correspondiente';
+    await sendButtons(to, `💵 ¿Cobraste ${monto} en efectivo por ${descripcion}?`, [
+      { id: `efectivo:si:${pago.id}`, title: '✅ Sí, cobré' },
+      { id: `efectivo:no:${pago.id}`, title: '❌ No cobré' },
+    ]);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Respuesta a "¿Cobraste $X en efectivo?" (ver aplicarEstado). Si dice que
+ * sí, marca el pago como cobrado directo — sin esto, alguien de oficina
+ * tenía que acordarse de preguntarle al chofer y cargarlo a mano desde el
+ * panel. Si dice que no, se avisa al panel para que un operador haga el
+ * seguimiento (se usa un tipo de alerta propio, 'efectivo_no_cobrado', en
+ * vez de reusar 'pago_pendiente_validacion': ese tipo dispara los botones
+ * de Validar/Rechazar en Alertas.tsx, que no aplican acá porque el pago YA
+ * está validado — solo falta cobrarlo).
+ *
+ * Un mismo retiro puede dejar dos preguntas pendientes (recambio + alargue,
+ * ver aplicarEstado) — la sesión guarda la lista completa en
+ * `pagosPendientes`; recién cuando no queda ninguna se libera el gate:
+ * se manda el aviso de la parada siguiente (si había alguna esperando) y el
+ * menú. Hasta entonces, handleChofer no deja pasar ninguna otra acción.
+ */
+async function manejarConfirmacionEfectivo(to: string, seleccionId: string, choferNombre: string, sesion: Sesion): Promise<void> {
+  const [, respuesta, pagoId] = seleccionId.split(':');
+
+  if (respuesta === 'si') {
+    const [pago] = await query<{ id: string }>(
+      `UPDATE pagos SET efectivo_cobrado = TRUE WHERE id = $1 AND medio_pago = 'efectivo' RETURNING id`,
+      [pagoId],
+    );
+    if (pago) {
+      emitRecursoActualizado('pagos');
+      await sendText(to, '✅ Confirmado. Quedó registrado en el sistema.');
+    } else {
+      await sendText(to, '🙁 No encontramos ese pago — avisale a un operador para que lo revise.');
+    }
+  } else {
+    const [pagoCliente] = await query<{ cliente_telefono: string }>('SELECT cliente_telefono FROM pagos WHERE id = $1', [pagoId]);
+    const identificacionCliente = pagoCliente ? await nombreClienteParaAlerta(pagoCliente.cliente_telefono) : 'un cliente';
+    const [alerta] = await query(
+      `INSERT INTO alertas (tipo, referencia_id, mensaje)
+       VALUES ('efectivo_no_cobrado', $1, $2)
+       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+      [pagoId, `${choferNombre} avisó que TODAVÍA NO cobró el efectivo de ${identificacionCliente} — hacer seguimiento`],
+    );
+    if (alerta) emitAlerta(alerta);
+    await sendText(to, '📋 Anotado — le avisamos a oficina para que hagan el seguimiento.');
+  }
+
+  const pendientes = ((sesion.contexto?.pagosPendientes as string[] | undefined) ?? []).filter((id) => id !== pagoId);
+  if (pendientes.length > 0) {
+    await setSesion({ ...sesion, contexto: { ...sesion.contexto, pagosPendientes: pendientes } });
+    return; // todavía falta que conteste la otra pregunta pendiente
+  }
+
+  // Ya no queda ninguna por confirmar: recién ahora se avisa la parada
+  // siguiente (si había alguna esperando) y se libera el menú.
+  const viajeIds = (sesion.contexto?.viajeIdsSiguienteParada as string[] | undefined) ?? [];
+  await clearSesion(to);
+  let siguienteEnviada = false;
+  for (const id of viajeIds) {
+    const enviada = await avisarSiguienteParadaRuta(id).catch((e) => {
+      console.error('Error avisando siguiente parada:', e.message);
+      return false;
+    });
+    if (enviada) siguienteEnviada = true;
+  }
+  if (!siguienteEnviada) return menuChofer(to, choferNombre);
 }
