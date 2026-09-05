@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X, Plus, ChevronDown } from 'lucide-react';
+import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -52,13 +52,6 @@ interface Viaje {
 interface Contenedor { numero: string; estado: string; vence_en: string | null; }
 interface Tarifa { departamento: string; activo: boolean; }
 interface Chofer { id: string; nombre: string; activo: boolean; }
-interface Ubicacion { id: string; tipo: 'deposito' | 'vaciadero'; nombre: string; direccion: string; activo: boolean; }
-
-// Mismas franjas que OPCIONES_HORARIO en horarioPreferido.flow.ts — el bot
-// guarda exactamente estos textos en viajes.horario_preferido, así que un
-// viaje armado a mano tiene que usar los mismos para que la columna
-// "Horario sugerido" se vea consistente.
-const OPCIONES_HORARIO_SUGERIDO = ['🌅 Mañana (8-12hs)', '🕐 Tarde (12-15hs)'];
 
 const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
   disponible: 'Disponible',
@@ -66,11 +59,6 @@ const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
   para_retirar: 'Para retirar',
   yendo_a_vaciar: 'Yendo a vaciar',
   vencido: 'Vencido',
-};
-
-const formInicial = {
-  tipo: 'entrega', fecha: '', horario_preferido: '', zona: '',
-  destino_direccion: '', importe: '', ubicacion_id: '',
 };
 
 type PestanaViajes = 'activos' | 'historial';
@@ -89,9 +77,6 @@ export function Viajes() {
   const { show } = useToast();
   const queryClient = useQueryClient();
 
-  const [form, setForm] = useState(formInicial);
-  const [mostrarForm, setMostrarForm] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [asignando, setAsignando] = useState<string | null>(null);
   const [asignarForm, setAsignarForm] = useState({ contenedor_numero: '', chofer_id: '' });
   const [pestana, setPestana] = useState<PestanaViajes>('activos');
@@ -113,14 +98,10 @@ export function Viajes() {
     queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
   });
 
-  // El contenedor y el chofer de una Entrega o un Retiro ya no se piden al
-  // programar el viaje: se asignan después, cuando entra a la bolsa de ruta
-  // (o desde la columna "Contenedor"/"Chofer" de esta misma tabla, o el
-  // tablero), porque hasta ese momento no se sabe cuál corresponde (ver
-  // DetalleRuta en Rutas.tsx). El Recambio es la excepción: el contenedor
-  // lleno que se va a retirar SÍ se sabe de entrada (es el que ya tiene ese
-  // cliente) y el backend lo exige al crear (viajes.routes.ts, "Un recambio
-  // necesita...").
+  // El contenedor de cualquier viaje (incluido el lleno de un recambio) ya no
+  // se pide al programarlo desde Rutas: se asigna después, con el botón
+  // "Asignar" de la columna Contenedor de esta tabla — retiro ofrece los
+  // contenedores "entregado" (llenos), entrega los "disponible" (vacíos).
   const contenedoresEntregados = contenedores.filter((c) => c.estado === 'entregado');
   const vaciosDisponibles = contenedores.filter((c) => c.estado === 'disponible');
 
@@ -132,15 +113,6 @@ export function Viajes() {
     queryKey: ['choferes', 'activos'],
     queryFn: () => api.get<Chofer[]>('/api/choferes').then((r) => r.data.filter((c) => c.activo)),
   });
-  const { data: ubicaciones = [] } = useQuery({
-    queryKey: ['ubicaciones'],
-    queryFn: () => api.get<Ubicacion[]>('/api/ubicaciones').then((r) => r.data.filter((u) => u.activo)),
-  });
-
-  // Depósito para una entrega, vaciadero para un retiro. Si hay una sola
-  // activa de ese tipo no hace falta elegir: el backend la autoasigna sola.
-  const tipoUbicacion = form.tipo === 'entrega' ? 'deposito' : 'vaciadero';
-  const ubicacionesElegibles = ubicaciones.filter((u) => u.tipo === tipoUbicacion);
   const cargar = () => queryClient.invalidateQueries({ queryKey: ['viajes'] });
 
   const { desde, hasta } = useMemo(() => {
@@ -162,29 +134,6 @@ export function Viajes() {
     ),
     [viajes, desde, hasta, filtroZona, filtroTipo],
   );
-
-  async function crear(e: React.FormEvent) {
-    e.preventDefault();
-    if (!form.fecha) return;
-    setLoading(true);
-    try {
-      await api.post('/api/viajes', {
-        ...form,
-        zona: form.zona || undefined,
-        destino_direccion: form.destino_direccion || undefined,
-        importe: form.importe || undefined,
-        ubicacion_id: form.ubicacion_id || undefined,
-        horario_preferido: form.horario_preferido || undefined,
-      });
-      setForm(formInicial);
-      cargar();
-      show('success', form.tipo === 'recambio' ? 'Recambio programado correctamente' : 'Viaje programado correctamente');
-    } catch (err: any) {
-      show('error', 'Error al programar', err.response?.data?.error || 'Error desconocido');
-    } finally {
-      setLoading(false);
-    }
-  }
 
   /** Completa la fila 'entrega' de un recambio (se crea sin contenedor, ver recambio.flow.ts). */
   async function asignarContenedor(id: string) {
@@ -223,106 +172,6 @@ export function Viajes() {
         <h2>Viajes</h2>
         <p>Gestión operativa de entregas, retiros e historial de viajes</p>
       </div>
-
-      <RoleGate roles={['admin', 'operador']}>
-        <div className="form-card">
-          <button
-            type="button"
-            className="btn btn-ghost"
-            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-            onClick={() => setMostrarForm((v) => !v)}
-          >
-            <Plus size={15} strokeWidth={2} /> Programar nuevo viaje
-            <ChevronDown size={14} strokeWidth={2} style={{ transform: mostrarForm ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
-          </button>
-          {mostrarForm && (
-          <form onSubmit={crear} className="form-row" style={{ marginTop: '14px' }}>
-            <div className="form-group">
-              <label className="form-label">Tipo</label>
-              <select
-                className="form-select"
-                value={form.tipo}
-                onChange={(e) => setForm({ ...form, tipo: e.target.value, ubicacion_id: '' })}
-              >
-                <option value="entrega">Entrega</option>
-                <option value="retiro">Retiro</option>
-                <option value="recambio">Recambio</option>
-              </select>
-            </div>
-            {ubicacionesElegibles.length > 1 && (
-              <div className="form-group">
-                <label className="form-label">{form.tipo === 'entrega' ? 'Sale de' : 'Se descarga en'}</label>
-                <select
-                  className="form-select"
-                  value={form.ubicacion_id}
-                  onChange={(e) => setForm({ ...form, ubicacion_id: e.target.value })}
-                >
-                  <option value="">— Elegir —</option>
-                  {ubicacionesElegibles.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
-                </select>
-              </div>
-            )}
-            <div className="form-group">
-              <label className="form-label">Fecha</label>
-              <input
-                type="date"
-                className="form-input"
-                value={form.fecha}
-                onChange={(e) => setForm({ ...form, fecha: e.target.value })}
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Horario sugerido</label>
-              <select
-                className="form-select"
-                value={form.horario_preferido}
-                onChange={(e) => setForm({ ...form, horario_preferido: e.target.value })}
-              >
-                <option value="">— Sin preferencia —</option>
-                {OPCIONES_HORARIO_SUGERIDO.map((h) => <option key={h} value={h}>{h}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Zona</label>
-              <select
-                className="form-select"
-                value={form.zona}
-                required={form.tipo === 'recambio'}
-                onChange={(e) => setForm({ ...form, zona: e.target.value })}
-              >
-                <option value="">— Elegir zona —</option>
-                {zonas.map((z) => <option key={z.departamento} value={z.departamento}>{z.departamento}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Dirección de destino</label>
-              <input
-                className="form-input"
-                placeholder="Ej. Av. San Martín 1234, Godoy Cruz"
-                value={form.destino_direccion}
-                required={form.tipo === 'recambio'}
-                onChange={(e) => setForm({ ...form, destino_direccion: e.target.value })}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Importe</label>
-              <input
-                type="number"
-                className="form-input"
-                placeholder="Ej. 85000"
-                value={form.importe}
-                required={form.tipo === 'recambio'}
-                onChange={(e) => setForm({ ...form, importe: e.target.value })}
-              />
-            </div>
-            <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? 'Guardando...' : 'Programar viaje'}
-            </button>
-          </form>
-          )}
-        </div>
-      </RoleGate>
 
       {/* Barra de filtros */}
       <div className="viajes-toolbar">
