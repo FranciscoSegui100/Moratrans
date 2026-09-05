@@ -8,6 +8,7 @@ import { contenedoresDelCliente, ContenedorCliente } from '../../../services/con
 import { datosBancarios, tieneCuentaCorrienteAprobada } from './pago.flow';
 import { manejarRespuestaInvalida } from '../estados';
 import { escalarAAsesor } from './asesor.flow';
+import { nombreClienteParaAlerta } from '../../../services/clientes.service';
 import { DIAS_ALARGUE, PORCENTAJE_ALARGUE } from '../../../config/bot.config';
 import { formatearFechaCorta } from '../../../services/diasHabiles.service';
 import type { MensajeEntrante } from '../messageRouter';
@@ -89,10 +90,11 @@ async function yaUsoElAlargueEsteCiclo(numero: string): Promise<boolean> {
 
 async function pedirConfirmacion(to: string, cont: ContenedorCliente, sesion: Sesion): Promise<void> {
   if (await yaUsoElAlargueEsteCiclo(cont.numero)) {
+    const identificacion = await nombreClienteParaAlerta(to);
     await escalarAAsesor(
       to,
       sesion,
-      `${to} quiere extender de nuevo el retiro del contenedor ${cont.numero} (ya usó su extensión de este ciclo)`,
+      `${identificacion} quiere extender de nuevo el retiro del contenedor ${cont.numero} (ya usó su extensión de este ciclo)`,
     );
     return;
   }
@@ -217,14 +219,15 @@ async function registrarAlargue(
     [to, numero, costo, pago.rutaCifrada ?? null, pago.mediaId ?? null, medioPago],
   );
 
+  const identificacion = await nombreClienteParaAlerta(to);
   const [alerta] = await query(
     `INSERT INTO alertas (tipo, referencia_id, mensaje)
      VALUES ('alargue_solicitado', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
     [row.id, medioPago === 'efectivo'
-      ? `${to} pidió alargar ${DIAS_ALARGUE} días el contenedor ${numero} en EFECTIVO (ARS ${costo})`
-      : `${to} pidió alargar ${DIAS_ALARGUE} días el contenedor ${numero} (ARS ${costo})`],
+      ? `${identificacion} pidió alargar ${DIAS_ALARGUE} días el contenedor ${numero} en EFECTIVO (ARS ${costo})`
+      : `${identificacion} pidió alargar ${DIAS_ALARGUE} días el contenedor ${numero} (ARS ${costo})`],
   );
   if (alerta) {
     emitAlerta({
@@ -281,12 +284,13 @@ async function registrarAlargueCC(to: string, sesion: Sesion): Promise<void> {
   // movió en una cuenta corriente sin que nadie la mirara, y el operador
   // tiene que enterarse aunque sea para revisarlo después (ver 'Resolver' en
   // Alertas.tsx, que ya sabe mostrar este tipo sin botones de Aprobar/Rechazar).
+  const identificacion = await nombreClienteParaAlerta(to);
   const [alerta] = await query(
     `INSERT INTO alertas (tipo, referencia_id, mensaje)
      VALUES ('alargue_solicitado', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [pago.id, `${to} (cuenta corriente) extendió ${DIAS_ALARGUE} días el contenedor ${numero} — ya se aplicó solo, se sumó ARS ${costo.toLocaleString('es-AR')} a su cuenta.`],
+    [pago.id, `${identificacion} (cuenta corriente) extendió ${DIAS_ALARGUE} días el contenedor ${numero} — ya se aplicó solo, se sumó ARS ${costo.toLocaleString('es-AR')} a su cuenta.`],
   );
   if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
 

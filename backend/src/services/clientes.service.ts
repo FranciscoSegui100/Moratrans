@@ -35,3 +35,22 @@ export async function necesitaNombre(telefono: string): Promise<boolean> {
   const [row] = await query<{ nombre: string }>('SELECT nombre FROM clientes WHERE telefono = $1', [telefono]);
   return !row || row.nombre === 'Sin nombre';
 }
+
+/** Nombre real del cliente, o `null` si todavía no tiene uno guardado (cliente nuevo, o "Sin nombre"). */
+export async function obtenerNombreCliente(telefono: string): Promise<string | null> {
+  const [row] = await query<{ nombre: string }>('SELECT nombre FROM clientes WHERE telefono = $1', [telefono]);
+  return row?.nombre && row.nombre !== 'Sin nombre' ? row.nombre : null;
+}
+
+/**
+ * "Nombre (teléfono)" para el texto de las alertas que le llegan al panel —
+ * antes esos mensajes interpolaban el teléfono a secas (`${to} pidió...`),
+ * así que nadie en el dashboard sabía quién estaba hablando sin ir a buscar
+ * el número en la lista de Clientes. Cae al teléfono solo si todavía no hay
+ * nombre registrado (cliente nuevo, o nunca confirmó un pedido — ver
+ * necesitaNombre arriba).
+ */
+export async function nombreClienteParaAlerta(telefono: string): Promise<string> {
+  const nombre = await obtenerNombreCliente(telefono);
+  return nombre ? `${nombre} (${telefono})` : telefono;
+}

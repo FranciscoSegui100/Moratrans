@@ -1,6 +1,7 @@
 import { sendText, sendButtons } from './graphApi';
 import { registrarIntentoInvalido } from './session.store';
 import { escalarAAsesor } from './flows/asesor.flow';
+import { nombreClienteParaAlerta } from '../../services/clientes.service';
 import { LIMITE_INTENTOS_INVALIDOS } from '../../config/bot.config';
 import type { MensajeEntrante } from './messageRouter';
 import type { Sesion } from './session.store';
@@ -41,5 +42,6 @@ export function esAsesorDirecto(m: MensajeEntrante): boolean {
 }
 
 export async function manejarAsesorDirecto(m: MensajeEntrante, sesion: Sesion): Promise<void> {
-  await escalarAAsesor(m.from, sesion, `${m.from} no pudo completar el flujo (respuestas inválidas seguidas)`);
+  const identificacion = await nombreClienteParaAlerta(m.from);
+  await escalarAAsesor(m.from, sesion, `${identificacion} no pudo completar el flujo (respuestas inválidas seguidas)`);
 }

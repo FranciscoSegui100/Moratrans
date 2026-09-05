@@ -7,6 +7,7 @@ import { finalizarRetiro } from '../../../services/retiro.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { DIAS_ALQUILER_ANTES_RETIRO } from '../../../config/bot.config';
 import { avisarSiguienteParadaRuta } from '../../viajes/viajes.routes';
+import { nombreClienteParaAlerta } from '../../../services/clientes.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -745,12 +746,14 @@ async function manejarConfirmacionEfectivo(to: string, seleccionId: string, chof
     return menuChofer(to, choferNombre);
   }
 
+  const [pagoCliente] = await query<{ cliente_telefono: string }>('SELECT cliente_telefono FROM pagos WHERE id = $1', [pagoId]);
+  const identificacionCliente = pagoCliente ? await nombreClienteParaAlerta(pagoCliente.cliente_telefono) : 'un cliente';
   const [alerta] = await query(
     `INSERT INTO alertas (tipo, referencia_id, mensaje)
      VALUES ('efectivo_no_cobrado', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [pagoId, `${choferNombre} entregó el contenedor pero todavía NO cobró el efectivo — hacer seguimiento`],
+    [pagoId, `${choferNombre} entregó a ${identificacionCliente} pero todavía NO cobró el efectivo — hacer seguimiento`],
   );
   if (alerta) emitAlerta(alerta);
   await sendText(to, '📋 Anotado — le avisamos a oficina para que hagan el seguimiento.');

@@ -5,7 +5,7 @@ import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
-import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
+import { obtenerOCrearCliente, necesitaNombre, nombreClienteParaAlerta } from '../../../services/clientes.service';
 import { opcionesMetodoPago, tieneCuentaCorrienteAprobada, pedidosAbiertos, mensajePedidoPendiente } from './pago.flow';
 import { reverseGeocode } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
@@ -583,12 +583,13 @@ async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: s
     [to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, precio, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
   );
 
+  const identificacion = await nombreClienteParaAlerta(to);
   const [alerta] = await query(
     `INSERT INTO alertas (tipo, referencia_id, mensaje)
      VALUES ('recambio_solicitado', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [numero, `${to} pidió un recambio del contenedor ${numero} por cuenta corriente`],
+    [numero, `${identificacion} pidió un recambio del contenedor ${numero} por cuenta corriente`],
   );
   if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
   emitRecursoActualizado('viajes');

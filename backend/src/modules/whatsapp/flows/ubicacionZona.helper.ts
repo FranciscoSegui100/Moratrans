@@ -1,7 +1,7 @@
 import { query } from '../../../config/db';
 import { sendText, sendLocationRequest, sendList, sendButtons } from '../graphApi';
 import { detectarDepartamento, distanciaALaBaseMasCercana } from '../../../services/geoDepartamento.service';
-import { obtenerOCrearCliente } from '../../../services/clientes.service';
+import { obtenerOCrearCliente, nombreClienteParaAlerta } from '../../../services/clientes.service';
 import { extraerLinkMaps, resolverCoordenadasDeLinkMaps } from '../../../services/mapsLink.service';
 import { escalarAAsesor } from './asesor.flow';
 import type { MensajeEntrante } from '../messageRouter';
@@ -61,7 +61,8 @@ export async function manejarFueraDeZona(
       (distancia ? ` (a unos *${distancia.distanciaKm} km* de ${distancia.nombre}).` : '.') +
       `\n\nAnotamos tu pedido *#${pedido.numero_pedido}* — un asesor lo va a revisar para ver si podemos coordinarlo igual.`,
   );
-  await escalarAAsesor(to, sesion, `${to} pidió un contenedor fuera de zona (pedido #${pedido.numero_pedido})`);
+  const identificacion = await nombreClienteParaAlerta(to);
+  await escalarAAsesor(to, sesion, `${identificacion} pidió un contenedor fuera de zona (pedido #${pedido.numero_pedido})`);
 }
 
 /**

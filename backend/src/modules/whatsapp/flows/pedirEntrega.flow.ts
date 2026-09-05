@@ -5,6 +5,7 @@ import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { reverseGeocode } from '../../../services/geocoding.service';
 import { proximosDiasHabiles, formatearFechaLarga } from '../../../services/diasHabiles.service';
+import { nombreClienteParaAlerta } from '../../../services/clientes.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
 import {
@@ -383,12 +384,13 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
     ],
   );
 
+  const identificacion = await nombreClienteParaAlerta(to);
   const [alerta] = await query(
     `INSERT INTO alertas (tipo, referencia_id, mensaje)
      VALUES ('entrega_solicitada', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [viaje.id, `${to} pidió una entrega por cuenta corriente`],
+    [viaje.id, `${identificacion} pidió una entrega por cuenta corriente`],
   );
   if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
   emitRecursoActualizado('viajes');
