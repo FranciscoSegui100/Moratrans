@@ -919,7 +919,7 @@ async function manejarConfirmacionEfectivo(to: string, seleccionId: string, chof
     );
     if (pago) {
       emitRecursoActualizado('pagos');
-      await sendText(to, '✅ ¡Anotado, gracias! 🙌');
+      await sendText(to, '✅ Confirmado. Quedó registrado en el sistema.');
     } else {
       await sendText(to, '🙁 No encontramos ese pago — avisale a un operador para que lo revise.');
     }
