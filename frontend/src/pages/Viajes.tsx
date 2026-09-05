@@ -437,7 +437,6 @@ export function Viajes() {
         <table className="data-table">
           <thead>
             <tr>
-              <th>Fecha</th>
               <th>Fecha de pedido</th>
               <th>Horario sugerido</th>
                   <th>Tipo</th>
@@ -456,8 +455,7 @@ export function Viajes() {
               <tbody>
                 {viajesAMostrar.map((v) => (
                   <tr key={v.id}>
-                    <td className="strong" style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
-                    <td className="text-muted" style={{ whiteSpace: 'nowrap' }} title="Fecha en la que el cliente pidió el viaje">
+                    <td className="strong" style={{ whiteSpace: 'nowrap' }} title="Fecha en la que el cliente pidió el viaje">
                       {formatearFecha(v.creado_en)}
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
@@ -611,7 +609,7 @@ export function Viajes() {
                 ))}
                 {viajesAMostrar.length === 0 && (
                   <tr>
-                    <td colSpan={14} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                    <td colSpan={13} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                       {pestana === 'activos' ? 'No hay viajes activos o programados en el rango' : 'No hay viajes en el historial para el rango'}
                     </td>
                   </tr>
