@@ -1340,3 +1340,15 @@ body {
   border-radius: 2px;
   background: var(--accent);
 }
+/* Parada que el chofer ya terminó: intocable (sin grip ni acciones), atenuada. */
+.stop.finalizada { opacity: 0.7; background: var(--bg-surface); border-style: dashed; }
+
+/* Badge de ruta con paradas todavía sin confirmar. */
+.badge.sin_confirmar { background: var(--warning-bg); color: var(--warning); }
+
+/* Resalta el aviso y el botón de "Confirmar" cuando hay cambios sin confirmar. */
+.confirmar-pendiente { animation: pulse-confirmar 1.8s ease-in-out infinite; }
+@keyframes pulse-confirmar {
+  0%, 100% { box-shadow: 0 0 0 0 var(--warning-bg); }
+  50% { box-shadow: 0 0 0 4px var(--warning-bg); }
+}
