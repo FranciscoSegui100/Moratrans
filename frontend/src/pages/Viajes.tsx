@@ -69,7 +69,7 @@ const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
 };
 
 const formInicial = {
-  tipo: 'entrega', fecha: '', horario_preferido: '', zona: '', contenedor_numero: '', contenedor_numero_entrega: '',
+  tipo: 'entrega', fecha: '', horario_preferido: '', zona: '',
   destino_direccion: '', importe: '', ubicacion_id: '',
 };
 
@@ -170,8 +170,6 @@ export function Viajes() {
     try {
       await api.post('/api/viajes', {
         ...form,
-        contenedor_numero: form.tipo === 'recambio' ? (form.contenedor_numero || undefined) : undefined,
-        contenedor_numero_entrega: form.tipo === 'recambio' ? (form.contenedor_numero_entrega || undefined) : undefined,
         zona: form.zona || undefined,
         destino_direccion: form.destino_direccion || undefined,
         importe: form.importe || undefined,
@@ -244,7 +242,7 @@ export function Viajes() {
               <select
                 className="form-select"
                 value={form.tipo}
-                onChange={(e) => setForm({ ...form, tipo: e.target.value, contenedor_numero: '', contenedor_numero_entrega: '', ubicacion_id: '' })}
+                onChange={(e) => setForm({ ...form, tipo: e.target.value, ubicacion_id: '' })}
               >
                 <option value="entrega">Entrega</option>
                 <option value="retiro">Retiro</option>
@@ -297,42 +295,6 @@ export function Viajes() {
                 {zonas.map((z) => <option key={z.departamento} value={z.departamento}>{z.departamento}</option>)}
               </select>
             </div>
-            {form.tipo === 'recambio' && (
-              <div className="form-group">
-                <label className="form-label">Contenedor lleno (a retirar)</label>
-                <select
-                  className="form-select"
-                  value={form.contenedor_numero}
-                  onChange={(e) => {
-                    const numero = e.target.value;
-                    // Al elegir el lleno, se completan zona/dirección/importe
-                    // con los de SU entrega activa (el viaje que lo tiene hoy
-                    // con ese cliente) — evita tipearlos de nuevo a mano.
-                    const activa = viajes.find((v) => v.contenedor_numero === numero && v.tipo === 'entrega' && (v.estado === 'programado' || v.estado === 'en_curso'));
-                    const datosAuto = activa
-                      ? { zona: activa.zona ?? '', destino_direccion: activa.destino_direccion ?? '', importe: activa.importe ?? '' }
-                      : {};
-                    setForm((f) => ({ ...f, contenedor_numero: numero, ...datosAuto }));
-                  }}
-                >
-                  <option value="">— Elegir contenedor entregado —</option>
-                  {contenedoresEntregados.map((c) => <option key={c.numero} value={c.numero}>{c.numero}</option>)}
-                </select>
-              </div>
-            )}
-            {form.tipo === 'recambio' && (
-              <div className="form-group">
-                <label className="form-label">Contenedor vacío (a entregar)</label>
-                <select
-                  className="form-select"
-                  value={form.contenedor_numero_entrega}
-                  onChange={(e) => setForm({ ...form, contenedor_numero_entrega: e.target.value })}
-                >
-                  <option value="">— Asignar después —</option>
-                  {vaciosDisponibles.map((c) => <option key={c.numero} value={c.numero}>{c.numero}</option>)}
-                </select>
-              </div>
-            )}
             <div className="form-group">
               <label className="form-label">Dirección de destino</label>
               <input
@@ -480,8 +442,8 @@ export function Viajes() {
                             value={asignarForm.contenedor_numero}
                             onChange={(e) => setAsignarForm({ ...asignarForm, contenedor_numero: e.target.value })}
                           >
-                            <option value="">— Vacío —</option>
-                            {contenedores.filter((c) => c.estado === 'disponible').map((c) => (
+                            <option value="">{v.tipo === 'retiro' ? '— Lleno —' : '— Vacío —'}</option>
+                            {(v.tipo === 'retiro' ? contenedoresEntregados : vaciosDisponibles).map((c) => (
                               <option key={c.numero} value={c.numero}>{c.numero}</option>
                             ))}
                           </select>

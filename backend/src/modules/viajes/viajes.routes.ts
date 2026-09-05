@@ -94,7 +94,9 @@ const nuevoSchema = z.object({
   fecha: z.string(), // YYYY-MM-DD
   chofer_id: z.string().uuid().optional(),
   // retiro: el contenedor que se retira. entrega: el que se entrega.
-  // recambio: el lleno que se retira (obligatorio).
+  // recambio: el lleno que se retira, si ya se sabe. Si no se manda, la pata
+  // 'retiro' queda sin contenedor para que el operador lo asigne después
+  // (misma UI "Asignar" que ya existe en la tabla de Viajes).
   contenedor_numero: z.string().optional(),
   // Solo recambio: el vacío que se deja. Si no se manda, la pata 'entrega'
   // queda sin contenedor para que el operador lo asigne después (misma UI
@@ -328,12 +330,6 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
 
   try {
     const resultado = await withTx(async (c) => {
-      const fail = (msg: string): never => {
-        const err: any = new Error(msg);
-        err.status = 409;
-        throw err;
-      };
-
       // reservarParaEntrega (backend/src/services/contenedorReserva.service.ts):
       // a lo sumo una reserva activa por contenedor, se usa tanto para una
       // entrega suelta como para la pata "entrega" de un recambio.
@@ -351,7 +347,6 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
       }
 
       if (v.tipo === 'recambio') {
-        if (!v.contenedor_numero) fail('Un recambio necesita el contenedor lleno que se va a retirar.');
         if (v.contenedor_numero_entrega) {
           await reservarParaEntrega(c, v.contenedor_numero_entrega, v.fecha, actualizadoPor);
         }
@@ -365,7 +360,7 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
         const { rows: retiroRows } = await c.query(
           `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, grupo_id, ubicacion_id, ubicacion_direccion, horario_preferido)
            VALUES ('retiro',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-          [v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.contenedor_numero, v.cliente_telefono ?? null, v.zona ?? null,
+          [v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.contenedor_numero ?? null, v.cliente_telefono ?? null, v.zona ?? null,
            v.destino_direccion ?? null, v.notas ?? null, patente, v.remito ?? null, v.importe ?? null, grupoId,
            ubicacion?.id ?? null, ubicacion?.direccion ?? null, v.horario_preferido ?? null],
         );
@@ -392,7 +387,11 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
       return { principal: rows[0], secundario: null as any };
     });
 
-    if (v.chofer_id) {
+    // Si es un recambio sin el lleno todavía asignado, no hay nada útil que
+    // avisarle al chofer todavía — el aviso sale solo cuando se le asigna el
+    // contenedor lleno desde la tabla de Viajes (ver PATCH /:id más abajo).
+    const contenedorListoParaAvisar = v.tipo !== 'recambio' || !!resultado.principal.contenedor_numero;
+    if (v.chofer_id && contenedorListoParaAvisar) {
       const avisoRecambioOChofer = v.tipo === 'recambio'
         ? avisarChoferRecambio(
             v.chofer_id,
@@ -525,17 +524,21 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
     // esto, la columna "Chofer asignado" de Contenedores quedaba
     // desactualizada hasta hacer F5.
     const cambioChofer = 'chofer_id' in parsed.data;
-    const cambioContenedorEntrega = 'contenedor_numero' in parsed.data && !!row.contenedor_numero && row.tipo === 'entrega';
-    if (cambioChofer || cambioContenedorEntrega) emitRecursoActualizado('contenedores');
+    // Ya no solo el vacío de una entrega: un recambio también puede crearse
+    // sin el lleno que va a retirar, así que esto dispara igual cuando se le
+    // completa el contenedor a un 'retiro'.
+    const cambioContenedorAsignado = 'contenedor_numero' in parsed.data && !!row.contenedor_numero;
+    if (cambioChofer || cambioContenedorAsignado) emitRecursoActualizado('contenedores');
 
     // Si se tocó el chofer (asignación nueva o reasignación) o se acaba de
-    // completar el contenedor de una entrega (típicamente el vacío de un
-    // recambio, ver comentario de contenedor_numero en patchSchema), y ya
-    // hay alguien asignado, le mandamos el mismo aviso que recibiría si el
-    // viaje se hubiera creado así desde el principio — antes esto solo
-    // pasaba en POST /api/viajes, así que reasignar desde la tabla de Viajes
-    // no le avisaba nada al chofer nuevo.
-    if (row.chofer_id && (cambioChofer || cambioContenedorEntrega)) {
+    // completar el contenedor de un viaje (el vacío de una entrega o el
+    // lleno de un retiro, típicamente los de un recambio, ver comentario de
+    // contenedor_numero en patchSchema), y ya hay alguien asignado, le
+    // mandamos el mismo aviso que recibiría si el viaje se hubiera creado
+    // así desde el principio — antes esto solo pasaba en POST /api/viajes,
+    // así que reasignar desde la tabla de Viajes no le avisaba nada al
+    // chofer nuevo.
+    if (row.chofer_id && (cambioChofer || cambioContenedorAsignado)) {
       (async () => {
         if (row.grupo_id) {
           const [retiro] = await query<{ contenedor_numero: string | null }>(
