@@ -61,7 +61,8 @@ CREATE TYPE tipo_alerta AS ENUM (
   'retiro_solicitado',
   'entrega_solicitada',
   'alargue_solicitado',
-  'direccion_sin_verificar'
+  'direccion_sin_verificar',
+  'efectivo_no_cobrado'
 );
 
 -- 'flete' = pago normal (ligado a un pedido). 'alargue_retiro' = paga un

@@ -112,6 +112,12 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   if (m.tipo === 'interactive_button' && m.seleccionId?.startsWith('estado:')) {
     return elegirContenedor(to, chofer[0].id, m.seleccionId.replace('estado:', ''));
   }
+  // Respuesta a "¿Cobraste $X en efectivo?" (ver aplicarEstado) — el id del
+  // botón lleva el pago_id en vez de depender de sesion.paso, así no importa
+  // qué otro mensaje/menú se haya mandado después (siguiente parada, etc.).
+  if (m.tipo === 'interactive_button' && m.seleccionId?.startsWith('efectivo:')) {
+    return manejarConfirmacionEfectivo(to, m.seleccionId, chofer[0].nombre);
+  }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('cont:')) {
     const raw = m.seleccionId.replace('cont:', '');
     const parts = raw.split(':');
@@ -654,10 +660,10 @@ async function aplicarEstado(
     // hace X min" por chofer). Solo aplica acá — 'retirado' ya se marca más
     // arriba, donde crea/actualiza su propia fila de viajes.
     const entregasCompletadas = estado === 'entregado'
-      ? await query<{ id: string }>(
+      ? await query<{ id: string; pago_id: string | null }>(
           `UPDATE viajes SET completada_en = now()
             WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
-            RETURNING id`,
+            RETURNING id, pago_id`,
           [numero, choferId],
         )
       : [];
@@ -668,6 +674,29 @@ async function aplicarEstado(
     if (siguienteCascada) siguienteEnviada = true;
     await clearSesion(to);
     await sendText(to, `✅ Registrado. Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
+
+    // Si esta entrega se cobra en efectivo y todavía no se marcó como
+    // cobrada, preguntarle al chofer ahí mismo — es el único momento en que
+    // tiene el dato fresco, en vez de depender de que oficina se acuerde de
+    // preguntarle después y lo cargue a mano desde el panel.
+    const pagoIds = entregasCompletadas.map((e) => e.pago_id).filter((id): id is string => !!id);
+    if (pagoIds.length > 0) {
+      const [pagoEfectivo] = await query<{ id: string; precio: string | null }>(
+        `SELECT p.id, pe.precio
+           FROM pagos p
+           LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+          WHERE p.id = ANY($1::uuid[]) AND p.medio_pago = 'efectivo' AND p.efectivo_cobrado = FALSE`,
+        [pagoIds],
+      );
+      if (pagoEfectivo) {
+        const monto = pagoEfectivo.precio ? `ARS ${Number(pagoEfectivo.precio).toLocaleString('es-AR')}` : 'el importe correspondiente';
+        await sendButtons(to, `💵 ¿Cobraste ${monto} en efectivo al entregar el contenedor ${numero}?`, [
+          { id: `efectivo:si:${pagoEfectivo.id}`, title: '✅ Sí, cobré' },
+          { id: `efectivo:no:${pagoEfectivo.id}`, title: '❌ No cobré' },
+        ]);
+      }
+    }
+
     // Después de la confirmación: si hay una parada siguiente en la ruta se la
     // avisa (ese aviso trae su propio menú, así que abajo no se manda el suelto).
     for (const v of entregasCompletadas) {
@@ -687,4 +716,43 @@ async function aplicarEstado(
   }
   // El aviso de la parada siguiente ya trajo su propio menú: no duplicarlo.
   if (!siguienteEnviada) return menuChofer(to, choferNombre);
+}
+
+/**
+ * Respuesta a "¿Cobraste $X en efectivo?" (ver aplicarEstado). Si dice que
+ * sí, marca el pago como cobrado directo — sin esto, alguien de oficina
+ * tenía que acordarse de preguntarle al chofer y cargarlo a mano desde el
+ * panel. Si dice que no, se avisa al panel para que un operador haga el
+ * seguimiento (se usa un tipo de alerta propio, 'efectivo_no_cobrado', en
+ * vez de reusar 'pago_pendiente_validacion': ese tipo dispara los botones
+ * de Validar/Rechazar en Alertas.tsx, que no aplican acá porque el pago YA
+ * está validado — solo falta cobrarlo).
+ */
+async function manejarConfirmacionEfectivo(to: string, seleccionId: string, choferNombre: string): Promise<void> {
+  const [, respuesta, pagoId] = seleccionId.split(':');
+
+  if (respuesta === 'si') {
+    const [pago] = await query<{ id: string }>(
+      `UPDATE pagos SET efectivo_cobrado = TRUE WHERE id = $1 AND medio_pago = 'efectivo' RETURNING id`,
+      [pagoId],
+    );
+    if (pago) {
+      emitRecursoActualizado('pagos');
+      await sendText(to, '✅ ¡Anotado, gracias! 🙌');
+    } else {
+      await sendText(to, '🙁 No encontramos ese pago — avisale a un operador para que lo revise.');
+    }
+    return menuChofer(to, choferNombre);
+  }
+
+  const [alerta] = await query(
+    `INSERT INTO alertas (tipo, referencia_id, mensaje)
+     VALUES ('efectivo_no_cobrado', $1, $2)
+     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+    [pagoId, `${choferNombre} entregó el contenedor pero todavía NO cobró el efectivo — hacer seguimiento`],
+  );
+  if (alerta) emitAlerta(alerta);
+  await sendText(to, '📋 Anotado — le avisamos a oficina para que hagan el seguimiento.');
+  return menuChofer(to, choferNombre);
 }
