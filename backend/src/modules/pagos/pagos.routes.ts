@@ -585,7 +585,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       if (choferId && result.contenedor) {
         avisarChoferRecambio(
           choferId, info!.contenedor_recambio_numero!, result.contenedor, ubicacion?.id ?? null, info?.destino_direccion ?? null,
-          null, null, info?.medio_pago, info?.precio,
+          null, null, pagoId,
         ).catch((e) => {
           const motivo = motivoErrorWa(e);
           console.error('Error avisando al chofer el recambio:', motivo);
