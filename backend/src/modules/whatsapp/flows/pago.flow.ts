@@ -349,6 +349,9 @@ async function registrarCuentaCorriente(to: string, pedido: PedidoCandidato | un
       precio: pedido?.precio ?? null,
     });
   }
+  // Refresca la lista de "Validar pagos" en vivo (nueva_alerta solo mueve el
+  // badge; sin esto el pago recién entrado no aparece hasta un F5).
+  emitRecursoActualizado('pagos');
 
   await clearSesion(to);
   await sendText(
@@ -438,6 +441,8 @@ async function registrarPagoEfectivo(to: string, pedido: PedidoCandidato | undef
       precio: pedido?.precio ?? null,
     });
   }
+  // Refresca la lista de "Validar pagos" en vivo (ver nota más arriba).
+  emitRecursoActualizado('pagos');
 
   await clearSesion(to);
   await sendText(
@@ -491,6 +496,8 @@ async function registrarAbonoCuentaCorriente(m: MensajeEntrante): Promise<void> 
         precio: null,
       });
     }
+    // Refresca la lista de "Validar pagos" en vivo (ver nota más arriba).
+    emitRecursoActualizado('pagos');
 
     await clearSesion(to);
     await sendText(
@@ -580,7 +587,6 @@ async function registrarComprobante(
       `INSERT INTO pagos_adjuntos (pago_id, url_comprobante, media_id) VALUES ($1,$2,$3)`,
       [pagoId, rutaCifrada, mediaId],
     );
-    emitRecursoActualizado('pagos');
   } else if (esReenviado) {
     pagoId = rechazadoId as string;
     await query(
@@ -593,7 +599,6 @@ async function registrarComprobante(
         WHERE id = $3`,
       [rutaCifrada, mediaId, pagoId],
     );
-    emitRecursoActualizado('pagos');
   } else {
     const [pago] = await query<{ id: string }>(
       `INSERT INTO pagos (cliente_telefono, pedido_id, url_comprobante, media_id, estado)
@@ -637,6 +642,11 @@ async function registrarComprobante(
       precio: pedido?.precio ?? null,
     });
   }
+  // Refresca la lista de "Validar pagos" en vivo para los tres casos
+  // (comprobante nuevo, reenviado y adjunto): emitAlerta solo mueve el badge
+  // del sidebar; sin esto lo recién llegado no aparece en la pantalla abierta
+  // hasta un F5.
+  emitRecursoActualizado('pagos');
 
   // Confirmar al cliente (sin prometer reserva automática)
   await sendText(
