@@ -1,5 +1,5 @@
 import { query } from '../../../config/db';
-import { sendText, sendList, sendButtons } from '../graphApi';
+import { sendText, sendList } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { blindIndex } from '../../../services/crypto.service';
@@ -53,7 +53,11 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
           // Refresca la pestaña Choferes (viene del webhook, no pasa por broadcastCambios).
           emitRecursoActualizado('choferes');
           await clearSesion(to);
-          await sendText(to, `✅ Identidad confirmada, ${chofer.nombre}. Tu número quedó vinculado. 🚚`);
+          await sendText(
+            to,
+            `✅ Identidad confirmada, ${chofer.nombre}. Tu número quedó vinculado. 🚚\n\n` +
+              'Te voy a avisar por acá cada vez que te asignen una entrega, retiro o recambio, con un botón para marcarla cuando la completes.',
+          );
           return menuChofer(to);
         }
         // Ya tiene otro número vinculado: el DNI solo no alcanza para pisarlo
@@ -108,13 +112,21 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
 
-  // 2) Chofer reconocido: manejar cambio de estado (botones), elección de
-  // contenedor (lista), y las dos acciones self-service nuevas (vaciado y
-  // autoasignación del vacío de un recambio).
+  // 2) Chofer reconocido: manejar cambio de estado, elección de contenedor,
+  // y las dos acciones self-service (vaciado y autoasignación del vacío de
+  // un recambio). `cont:` y `recgrupo:` llegan tanto de una lista (elegir
+  // entre varios candidatos) como de un botón pegado a un aviso de
+  // asignación puntual (un solo candidato, ya sabido de antemano) — mismo
+  // id, dos formas de mandarlo, por eso se aceptan los dos tipos acá.
+  const esSeleccion = m.tipo === 'interactive_button' || m.tipo === 'interactive_list';
+  // 'estado:' ya no lo manda ningún mensaje nuevo (el menú fijo de "Ya
+  // entregué/Ya retiré" se sacó, ver menuChofer), pero se mantiene el
+  // handler por si un chofer todavía tiene un mensaje viejo con ese botón
+  // sin tocar en su WhatsApp.
   if (m.tipo === 'interactive_button' && m.seleccionId?.startsWith('estado:')) {
     return elegirContenedor(to, chofer[0].id, m.seleccionId.replace('estado:', ''));
   }
-  if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('cont:')) {
+  if (esSeleccion && m.seleccionId?.startsWith('cont:')) {
     const raw = m.seleccionId.replace('cont:', '');
     const parts = raw.split(':');
     let targetEstado: string;
@@ -131,7 +143,7 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('vaciado:')) {
     return aplicarVaciado(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('vaciado:', ''));
   }
-  if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recgrupo:')) {
+  if (esSeleccion && m.seleccionId?.startsWith('recgrupo:')) {
     return elegirVacioRecambio(to, chofer[0].id, m.seleccionId.replace('recgrupo:', ''));
   }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recvacio:') && sesion.paso === 'elegir_vacio_recambio') {
@@ -165,26 +177,29 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
     }
   }
 
+  await sendText(
+    to,
+    `🚚 No entendí eso, ${chofer[0].nombre}. Cuando completes una entrega, retiro o recambio, tocá el botón del aviso correspondiente, o escribime *entregué* o *retiré*.`,
+  );
   return menuChofer(to, chofer[0].nombre);
 }
 
 /**
- * Menú principal del chofer: 3 botones pegados al mensaje (un solo toque),
- * en vez de una lista desplegable — más rápido para alguien manejando.
- * Se manda después de cada acción para que nunca tenga que escribir "menú".
+ * Ya no manda un menú fijo de botones ("Ya entregué"/"Ya retiré"): ese botón
+ * ahora viaja pegado al propio mensaje de cada asignación puntual, con el
+ * contenedor ya embebido en el id (ver avisarChoferViaje/avisarChoferRecambio
+ * en viajes.routes.ts, avisarChoferAsignacion en pagos.routes.ts) — así el
+ * chofer completa en un solo toque en el caso normal de un solo trabajo
+ * activo, sin tener que elegir de una lista.
  *
- * Si además el chofer tiene contenedores propios en "retirado" esperando
- * confirmar el vaciado, o un recambio propio esperando que le asigne el
- * vacío, se mandan listas aparte con esas acciones — WhatsApp permite un
- * máximo de 3 botones por mensaje, por eso no se pueden agregar ahí mismo.
+ * Esta función quedó reducida a las dos ofertas self-service que no
+ * dependen de una asignación puntual: contenedores propios esperando
+ * confirmar el vaciado, y un recambio propio esperando que se le asigne el
+ * vacío. El respaldo para cuando el chofer no tiene a mano el mensaje
+ * puntual (o tiene más de un trabajo activo a la vez) sigue siendo escribir
+ * "entregué"/"retiré" en texto libre (ver handleChofer más arriba).
  */
 export async function menuChofer(to: string, nombre?: string): Promise<void> {
-  await sendButtons(
-    to,
-    nombre ? `🚚 Hola, ${nombre}. ¿Qué acción querés registrar?` : '🚚 Panel del chofer. ¿Qué acción querés registrar?',
-    ESTADOS_CHOFER.map((e) => ({ id: `estado:${e}`, title: LABEL_ESTADO[e] })),
-  );
-
   const [chofer] = await query<{ id: string }>(
     'SELECT id FROM choferes WHERE telefono = $1 AND activo = TRUE',
     [to],

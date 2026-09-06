@@ -156,17 +156,20 @@ async function avisarChoferAsignacion(
   }
   const destino = partesDestino.length > 0 ? partesDestino.join('\n') : 'Sin ubicación registrada, coordiná con el cliente.';
 
-  await sendText(
+  // Botón pegado al aviso, con el contenedor ya embebido en el id (ver mismo
+  // esquema en avisarChoferViaje) — un solo toque para marcarla entregada,
+  // sin pasar por ningún menú genérico.
+  await sendButtons(
     chofer.telefono,
     `🚚 *Nueva entrega asignada*\n\n` +
       `📦 Contenedor: *${contenedor}*\n` +
       `👤 Cliente: ${info?.cliente_nombre ?? 'Sin nombre registrado'}\n` +
       `📞 Teléfono: ${info?.cliente_telefono ?? '—'}\n` +
-      `📍 Destino:\n${destino}` +
+      `📍 Destino:\n${destino}\n\n` +
+      'Cuando la completes, tocá el botón de abajo.' +
       avisoEfectivoChofer(info?.medio_pago, info?.precio),
+    [{ id: `cont:entregado:${contenedor}`, title: '📦 Ya entregué' }],
   );
-  // El menú (botones) sale abajo del aviso: un solo toque para avisar
-  // "voy en camino" apenas arranca, sin tener que escribir nada.
   await menuChofer(chofer.telefono, chofer.nombre);
 }
 

@@ -3,7 +3,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query, withTx } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
-import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
+import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
@@ -192,16 +192,27 @@ export async function avisarChoferViaje(
   const hora = formatearHora(horaEstimada);
   const { medioPago, monto } = await medioPagoDeViaje(pagoId);
 
-  await sendText(
-    chofer.telefono,
+  // Botón pegado al aviso, con el contenedor ya embebido en el id (mismo
+  // esquema `cont:<estado>:<numero>` que ya maneja handleChofer para la
+  // lista de "elegir contenedor") — así completa en un solo toque, sin
+  // pasar por ningún menú genérico. Sin contenedor todavía (entrega/retiro
+  // creado sin asignarlo) no hay a qué apuntar el botón: queda el texto
+  // libre ("entregué"/"retiré") como único camino hasta que se le asigne.
+  const boton = contenedorNumero
+    ? { id: `cont:${tipo === 'entrega' ? 'entregado' : 'retirado'}:${contenedorNumero}`, title: tipo === 'entrega' ? '📦 Ya entregué' : '📥 Ya retiré' }
+    : null;
+
+  const cuerpo =
     `🚚 *${titulo}*\n\n` +
-      (contenedorNumero ? `Contenedor: *${contenedorNumero}*\n` : '') +
-      (cliente ? `Cliente: *${cliente}*\n` : '') +
-      (hora ? `Horario estimado: *${hora} hs*\n` : '') +
-      `📍 Dirección:\n${destino}\n\n` +
-      'Cuando la completes, marcala desde el menú del chofer.' +
-      avisoEfectivoChofer(medioPago, monto),
-  );
+    (contenedorNumero ? `Contenedor: *${contenedorNumero}*\n` : '') +
+    (cliente ? `Cliente: *${cliente}*\n` : '') +
+    (hora ? `Horario estimado: *${hora} hs*\n` : '') +
+    `📍 Dirección:\n${destino}\n\n` +
+    (boton ? 'Cuando la completes, tocá el botón de abajo.' : `Cuando la completes, escribime *${tipo === 'entrega' ? 'entregué' : 'retiré'}*.`) +
+    avisoEfectivoChofer(medioPago, monto);
+
+  if (boton) await sendButtons(chofer.telefono, cuerpo, [boton]);
+  else await sendText(chofer.telefono, cuerpo);
   await menuChofer(chofer.telefono, chofer.nombre);
 }
 
@@ -245,15 +256,41 @@ export async function avisarChoferRecambio(
       (ubicacionNombre ? ` (sale de: *${ubicacionNombre}*)` : '') + '.\n'
     : `Retirás el contenedor lleno *${llenoNumero}*. El vacío que dejás todavía no está asignado.\n`;
 
-  await sendText(
-    chofer.telefono,
+  // Botón de un solo toque para cerrar el recambio entero (retirar el lleno
+  // + dejar el vacío), sin pasar por ningún menú genérico:
+  // - Vacío ya asignado: apunta directo a `cont:retirado:<lleno>` — la misma
+  //   acción de "marcar retirado" que ya dispara cascadearParejaRecambio,
+  //   que a su vez completa el vacío solo si ya está 'reservado'.
+  // - Vacío todavía sin asignar: no hay a qué apuntar un "retirado" directo
+  //   (el bot no sabe qué contenedor va a dejar el chofer), así que el botón
+  //   apunta a `recgrupo:<entregaId>` — el mismo selector de "con qué vacío
+  //   completo el recambio" que ya usa ofrecerRecambioPendiente/elegirVacioRecambio.
+  let entregaId: string | null = null;
+  if (!vacioNumero) {
+    const [entregaRow] = await query<{ id: string }>(
+      `SELECT e.id FROM viajes r JOIN viajes e ON e.grupo_id = r.grupo_id AND e.tipo = 'entrega'
+        WHERE r.contenedor_numero = $1 AND r.tipo = 'retiro' AND r.estado IN ('programado', 'en_curso')
+        ORDER BY r.creado_en DESC LIMIT 1`,
+      [llenoNumero],
+    );
+    entregaId = entregaRow?.id ?? null;
+  }
+  const boton = vacioNumero
+    ? { id: `cont:retirado:${llenoNumero}`, title: '🔄 Recambio hecho' }
+    : entregaId
+      ? { id: `recgrupo:${entregaId}`, title: '🔄 Recambio hecho' }
+      : null;
+
+  const cuerpo =
     `🔄 *Recambio de contenedor*\n\n${lineaVacio}` +
-      (cliente ? `Cliente: *${cliente}*\n` : '') +
-      (hora ? `Horario estimado: *${hora} hs*\n` : '') +
-      `📍 Dirección:\n${destino}\n\n` +
-      'Cuando lo completes, marcalo desde el menú del chofer.' +
-      avisoEfectivoChofer(medioPago, monto),
-  );
+    (cliente ? `Cliente: *${cliente}*\n` : '') +
+    (hora ? `Horario estimado: *${hora} hs*\n` : '') +
+    `📍 Dirección:\n${destino}\n\n` +
+    (boton ? 'Cuando lo completes, tocá el botón de abajo.' : 'Cuando lo completes, escribime *retiré*.') +
+    avisoEfectivoChofer(medioPago, monto);
+
+  if (boton) await sendButtons(chofer.telefono, cuerpo, [boton]);
+  else await sendText(chofer.telefono, cuerpo);
   await menuChofer(chofer.telefono, chofer.nombre);
 }
 
@@ -268,9 +305,9 @@ export async function avisarChoferRecambio(
  * suelto asignado directo, o un retiro espontáneo sin ruta) no hace nada.
  *
  * Devuelve `true` si había una parada siguiente y se la avisó (el aviso ya
- * incluye su propio menú del chofer, ver avisarChoferViaje/Recambio) — el
- * llamador usa esto para NO mandar además el menú suelto y evitar que al
- * chofer le aparezca el menú dos veces al cerrar una parada.
+ * trae su propio botón de "completar" pegado, ver avisarChoferViaje/Recambio)
+ * — el llamador usa esto para NO mandar además los avisos de pendientes
+ * (vaciados/recambio) sueltos y evitar duplicarlos al cerrar una parada.
  */
 export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Promise<boolean> {
   const [actual] = await query<{ ruta_id: string | null; orden: number | null }>(
