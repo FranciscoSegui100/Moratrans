@@ -1,7 +1,7 @@
 import { query } from '../../../config/db';
 import { sendText } from '../graphApi';
 import { setSesion } from '../session.store';
-import { emitAlerta } from '../../../config/socket';
+import { emitAlerta, emitConversacionActualizada } from '../../../config/socket';
 import { INTENTOS_PARA_ESCALAR_ASESOR } from '../../../config/bot.config';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
@@ -26,6 +26,9 @@ export async function escalarAAsesor(to: string, sesion: Sesion, motivo: string)
   if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
 
   await setSesion({ ...sesion, contexto: { ...sesion.contexto, asesorCount: 0, modoHumano: true } });
+  // La conversación pasa a "Requiere vos": que la lista de Conversaciones lo
+  // muestre en vivo, no recién tras un F5.
+  emitConversacionActualizada({ telefono: to, modo_humano: true });
   const textoAviso =
     '🙋 ¡Ya avisamos a un asesor! En breve te va a contactar por acá mismo.\n\n' +
     '_Tenés una ventana de 24hs para seguir esta conversación: si pasa ese tiempo sin que escribas, ' +

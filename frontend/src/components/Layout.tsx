@@ -182,6 +182,13 @@ export function Layout({ children }: { children: ReactNode }) {
       // El dashboard agrega datos de varios recursos (pagos, contenedores,
       // viajes...): se refresca ante cualquier cambio, no solo el suyo.
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      // Recursos cuyo cambio impacta otra pantalla que usa otra queryKey:
+      // - validar/rechazar un pago mueve los números de Finanzas
+      // - los cambios de /api/chat se listan bajo ['conversaciones']
+      // invalidateQueries solo re-consulta lo que está montado, así que si
+      // nadie está en esa pantalla es un no-op.
+      if (recurso === 'pagos') queryClient.invalidateQueries({ queryKey: ['finanzas'] });
+      if (recurso === 'chat') queryClient.invalidateQueries({ queryKey: ['conversaciones'] });
     };
     socket.on('recurso_actualizado', onRecursoActualizado);
     return () => { socket.off('recurso_actualizado', onRecursoActualizado); };

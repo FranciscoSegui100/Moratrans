@@ -50,6 +50,8 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
         if (!chofer.telefono) {
           // Primer vínculo: no hay número previo que pisar, se aplica directo.
           await query('UPDATE choferes SET telefono = $1 WHERE id = $2', [to, chofer.id]);
+          // Refresca la pestaña Choferes (viene del webhook, no pasa por broadcastCambios).
+          emitRecursoActualizado('choferes');
           await clearSesion(to);
           await sendText(to, `✅ Identidad confirmada, ${chofer.nombre}. Tu número quedó vinculado. 🚚`);
           return menuChofer(to);
@@ -333,6 +335,10 @@ async function cascadearParejaRecambio(
     if (cont?.estado !== 'reservado') return { texto: '', siguienteEnviada: false };
     await query(`UPDATE contenedores SET estado = 'entregado', actualizado_por = $2 WHERE numero = $1`, [pareja.contenedor_numero, `chofer:${choferId}`]);
     await query(`UPDATE viajes SET completada_en = now() WHERE id = $1`, [pareja.id]);
+    // El cascadeo cambia el contenedor/viaje de la pareja: se avisa acá adentro
+    // para que valga sin importar el orden en que el llamador emita lo suyo.
+    emitRecursoActualizado('contenedores');
+    emitRecursoActualizado('viajes');
     const siguienteEnviada = await avisarSiguienteParadaRuta(pareja.id).catch((e) => {
       console.error('Error avisando siguiente parada:', e.message);
       return false;
@@ -350,6 +356,8 @@ async function cascadearParejaRecambio(
     [pareja.id, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
   );
   await query(`UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`, [pareja.contenedor_numero, `chofer:${choferId}`]);
+  emitRecursoActualizado('contenedores');
+  emitRecursoActualizado('viajes');
   const siguienteEnviada = await avisarSiguienteParadaRuta(pareja.id).catch((e) => {
     console.error('Error avisando siguiente parada:', e.message);
     return false;
