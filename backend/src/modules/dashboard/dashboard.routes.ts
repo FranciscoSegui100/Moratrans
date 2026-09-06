@@ -88,7 +88,7 @@ dashboardRouter.get('/actividad', async (_req: Request, res: Response) => {
     `SELECT
        'contenedor' AS tipo,
        h.numero_contenedor AS entidad_id,
-       h.estado AS accion,
+       h.estado::text AS accion,
        COALESCE(h.actualizado_por, 'Sistema') AS actor,
        h.creado_en AS fecha,
        h.nota AS detalle
@@ -97,7 +97,7 @@ dashboardRouter.get('/actividad', async (_req: Request, res: Response) => {
      SELECT
        'pago' AS tipo,
        p.id::text AS entidad_id,
-       p.estado AS accion,
+       p.estado::text AS accion,
        'Cliente/Admin' AS actor,
        p.creado_en AS fecha,
        p.monto::text AS detalle

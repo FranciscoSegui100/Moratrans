@@ -49,7 +49,10 @@ export function crearApp() {
     // bloquea aunque la imagen ya esté en memoria del lado del cliente.
     contentSecurityPolicy: {
       useDefaults: true,
-      directives: { imgSrc: ["'self'", 'data:', 'blob:'] },
+      directives: { 
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+      },
     },
   }));
 
