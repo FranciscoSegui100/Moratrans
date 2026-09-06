@@ -75,6 +75,7 @@ interface ViajeParada {
   origen: 'planificada' | 'agregada_en_dia';
   completada_en: string | null;
   ruta_confirmada_en: string | null;
+  pago_id: string | null;
 }
 
 interface VaciadoParada {
@@ -105,7 +106,7 @@ async function calcularDisponibilidadRuta(
     ejecutar(
       `SELECT id, orden, tipo, contenedor_numero, destino_direccion, destino_lat, destino_lng,
               horario_preferido, hora_estimada, zona, cliente_telefono,
-              grupo_id, estado, notas, ubicacion_id, origen, completada_en, ruta_confirmada_en
+              grupo_id, estado, notas, ubicacion_id, origen, completada_en, ruta_confirmada_en, pago_id
          FROM viajes WHERE ruta_id = $1 ORDER BY orden`,
       [rutaId],
     ) as Promise<ViajeParada[]>,
@@ -953,11 +954,14 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
       let referenciaId: string;
       if (entrega?.grupo_id && retiro) {
         // Recambio: un solo aviso consolidado (mismo criterio que POST /api/viajes).
-        aviso = avisarChoferRecambio(resultado.choferId, retiro.contenedor_numero!, entrega.contenedor_numero, entrega.ubicacion_id, entrega.destino_direccion);
+        aviso = avisarChoferRecambio(
+          resultado.choferId, retiro.contenedor_numero!, entrega.contenedor_numero, entrega.ubicacion_id, entrega.destino_direccion,
+          undefined, undefined, retiro.pago_id ?? entrega.pago_id,
+        );
         referenciaId = retiro.id;
       } else {
         const v = entrega ?? retiro!;
-        aviso = avisarChoferViaje(resultado.choferId, v.tipo, v.contenedor_numero, v.destino_direccion);
+        aviso = avisarChoferViaje(resultado.choferId, v.tipo, v.contenedor_numero, v.destino_direccion, undefined, undefined, v.pago_id);
         referenciaId = v.id;
       }
       aviso.catch((e: any) => {
