@@ -3,7 +3,6 @@ import { sendText } from '../graphApi';
 import { setSesion } from '../session.store';
 import { emitAlerta } from '../../../config/socket';
 import { INTENTOS_PARA_ESCALAR_ASESOR } from '../../../config/bot.config';
-import { nombreClienteParaAlerta } from '../../../services/clientes.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -58,6 +57,5 @@ export async function handleAsesor(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
 
-  const identificacion = await nombreClienteParaAlerta(to);
-  await escalarAAsesor(to, sesion, `${identificacion} pidió hablar con un asesor (${intentos} veces)`);
+  await escalarAAsesor(to, sesion, `${to} pidió hablar con un asesor (${intentos} veces)`);
 }

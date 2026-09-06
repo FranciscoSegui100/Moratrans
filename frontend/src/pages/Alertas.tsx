@@ -141,13 +141,7 @@ export function Alertas() {
                 {esPago && (
                   <div className="alerta-pago-extra">
                     <div className="alerta-pago-info">
-                      <div className="pago-phone">
-                        {a.cliente_nombre && a.cliente_nombre !== 'Sin nombre' ? (
-                          <>{a.cliente_nombre} <span className="text-muted">· {a.cliente_telefono}</span></>
-                        ) : (
-                          a.cliente_telefono
-                        )}
-                      </div>
+                      <div className="pago-phone">{a.cliente_telefono}</div>
                       <div className="pago-detail">
                         {a.zona ?? 'Sin zona'} ·{' '}
                         {a.precio ? `ARS ${Number(a.precio).toLocaleString('es-AR')}` : 'Sin monto'}

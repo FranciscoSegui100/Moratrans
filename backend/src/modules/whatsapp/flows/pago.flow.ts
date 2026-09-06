@@ -5,7 +5,7 @@ import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { encrypt, encryptBuffer } from '../../../services/crypto.service';
 import { subirArchivo } from '../../../services/storage.service';
-import { obtenerOCrearCliente, nombreClienteParaAlerta, obtenerNombreCliente } from '../../../services/clientes.service';
+import { obtenerOCrearCliente } from '../../../services/clientes.service';
 import { env } from '../../../config/env';
 import { manejarRespuestaInvalida } from '../estados';
 import type { MensajeEntrante } from '../messageRouter';
@@ -331,20 +331,17 @@ async function registrarCuentaCorriente(to: string, pedido: PedidoCandidato | un
     await query(`UPDATE clientes SET cuenta_corriente_estado = 'pendiente' WHERE telefono = $1`, [to]);
   }
 
-  const clienteNombre = await obtenerNombreCliente(to);
-  const identificacion = clienteNombre ? `${clienteNombre} (${to})` : to;
   const [alerta] = await query(
     `INSERT INTO alertas (tipo, referencia_id, mensaje)
      VALUES ('cuenta_corriente_solicitada', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [pago.id, `${identificacion} pidió pagar a cuenta corriente`],
+    [pago.id, `${to} pidió pagar a cuenta corriente`],
   );
   if (alerta) {
     emitAlerta({
       ...alerta,
       cliente_telefono: to,
-      cliente_nombre: clienteNombre,
       monto: null,
       pago_estado: 'pendiente',
       tiene_comprobante: false,
@@ -422,20 +419,17 @@ async function registrarPagoEfectivo(to: string, pedido: PedidoCandidato | undef
     [to, pedido?.id ?? null],
   );
 
-  const clienteNombre = await obtenerNombreCliente(to);
-  const identificacion = clienteNombre ? `${clienteNombre} (${to})` : to;
   const [alerta] = await query(
     `INSERT INTO alertas (tipo, referencia_id, mensaje)
      VALUES ('pago_pendiente_validacion', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [pago.id, `${identificacion} eligió pagar en EFECTIVO — confirmar pedido`],
+    [pago.id, `${to} eligió pagar en EFECTIVO — confirmar pedido`],
   );
   if (alerta) {
     emitAlerta({
       ...alerta,
       cliente_telefono: to,
-      cliente_nombre: clienteNombre,
       monto: null,
       pago_estado: 'pendiente',
       tiene_comprobante: false,
@@ -479,20 +473,17 @@ async function registrarAbonoCuentaCorriente(m: MensajeEntrante): Promise<void> 
       [to, rutaCifrada, m.mediaId ?? null],
     );
 
-    const clienteNombre = await obtenerNombreCliente(to);
-    const identificacion = clienteNombre ? `${clienteNombre} (${to})` : to;
     const [alerta] = await query(
       `INSERT INTO alertas (tipo, referencia_id, mensaje)
        VALUES ('pago_pendiente_validacion', $1, $2)
        ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
        RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [pago.id, `${identificacion} envió un comprobante para su cuenta corriente`],
+      [pago.id, `${to} envió un comprobante para su cuenta corriente`],
     );
     if (alerta) {
       emitAlerta({
         ...alerta,
         cliente_telefono: to,
-        cliente_nombre: clienteNombre,
         monto: null,
         pago_estado: 'pendiente',
         tiene_comprobante: true,
@@ -614,8 +605,6 @@ async function registrarComprobante(
   }
 
   // Alerta para el panel + push en tiempo real.
-  const clienteNombre = await obtenerNombreCliente(to);
-  const identificacion = clienteNombre ? `${clienteNombre} (${to})` : to;
   let alerta: any;
   if (esReenviado) {
     await query(`UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'pago_pendiente_validacion' AND referencia_id = $1`, [pagoId]);
@@ -623,7 +612,7 @@ async function registrarComprobante(
       `INSERT INTO alertas (tipo, referencia_id, mensaje, estado)
        VALUES ('pago_pendiente_validacion', $1, $2, 'nueva')
        RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [pagoId, `Nuevo comprobante reenviado de ${identificacion} pendiente de validar`],
+      [pagoId, `Nuevo comprobante reenviado de ${to} pendiente de validar`],
     );
     alerta = nuevaAlerta;
   } else {
@@ -632,7 +621,7 @@ async function registrarComprobante(
        VALUES ('pago_pendiente_validacion', $1, $2)
        ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
        RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [pagoId, `Nuevo comprobante de ${identificacion} pendiente de validar`],
+      [pagoId, `Nuevo comprobante de ${to} pendiente de validar`],
     );
     alerta = nuevaAlerta;
   }
@@ -641,7 +630,6 @@ async function registrarComprobante(
     emitAlerta({
       ...alerta,
       cliente_telefono: to,
-      cliente_nombre: clienteNombre,
       monto: null,
       pago_estado: 'pendiente',
       tiene_comprobante: true,
