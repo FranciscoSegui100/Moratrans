@@ -1,13 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X, LayoutGrid, List } from 'lucide-react';
+import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
-import { useAuth, tieneRol } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
-import { TableroViajes } from '../components/TableroViajes';
 import { formatearFecha } from '../lib/fechas';
 import { hoyISO, sumarDias, fechaEnRango } from '../lib/viajes';
 
@@ -63,7 +61,6 @@ const ETIQUETAS_ESTADO_CONTENEDOR: Record<string, string> = {
 };
 
 type PestanaViajes = 'activos' | 'historial';
-type Vista = 'tablero' | 'tabla';
 type PresetRango = 'hoy' | 'manana' | 'semana' | 'todo' | 'custom';
 /** Un recambio son dos filas con grupo_id: para el filtro de tipo cuenta como su propia categoría. */
 const categoriaTipo = (v: Viaje): 'entrega' | 'retiro' | 'recambio' => (v.grupo_id ? 'recambio' : v.tipo);
@@ -77,16 +74,13 @@ const PRESETS: { id: PresetRango; label: string }[] = [
 
 export function Viajes() {
   const { show } = useToast();
-  const { user } = useAuth();
   const queryClient = useQueryClient();
-  const puedeAsignar = tieneRol(user, 'admin', 'operador');
 
   const [asignando, setAsignando] = useState<string | null>(null);
   const [asignarForm, setAsignarForm] = useState({ contenedor_numero: '', chofer_id: '' });
   const [pestana, setPestana] = useState<PestanaViajes>('activos');
   const [viajeComprobantes, setViajeComprobantes] = useState<Viaje | null>(null);
 
-  const [vista, setVista] = useState<Vista>('tablero');
   const [preset, setPreset] = useState<PresetRango>('semana');
   const [customDesde, setCustomDesde] = useState(() => hoyISO());
   const [customHasta, setCustomHasta] = useState(() => sumarDias(hoyISO(), 6));
@@ -173,35 +167,6 @@ export function Viajes() {
     }
   }
 
-  /**
-   * Asignar (o desasignar, con choferId null) una visita entera desde el
-   * tablero. Un recambio son dos filas (grupo_id) → se mandan las dos. El
-   * PATCH ya dispara el aviso de WhatsApp al chofer, igual que el <select> de
-   * la tabla. Optimista sobre la caché ['viajes'] con rollback.
-   */
-  async function asignarVisita(viajeIds: string[], choferId: string | null) {
-    const previo = queryClient.getQueryData<Viaje[]>(['viajes']);
-    if (previo) {
-      const set = new Set(viajeIds);
-      const nombre = choferId ? (choferes.find((c) => c.id === choferId)?.nombre ?? null) : null;
-      queryClient.setQueryData<Viaje[]>(['viajes'], previo.map((v) =>
-        set.has(v.id) ? { ...v, chofer_id: choferId, chofer_nombre: nombre } : v));
-    }
-    try {
-      await Promise.all(viajeIds.map((id) => api.patch(`/api/viajes/${id}`, { chofer_id: choferId })));
-      queryClient.invalidateQueries({ queryKey: ['viajes'] });
-      if (choferId) {
-        const nombre = choferes.find((c) => c.id === choferId)?.nombre ?? 'el chofer';
-        show('success', 'Viaje asignado', `Se asignó a ${nombre} y se le avisó por WhatsApp.`);
-      } else {
-        show('success', 'Viaje sin asignar', 'Volvió a la columna Sin asignar.');
-      }
-    } catch (err: any) {
-      if (previo) queryClient.setQueryData(['viajes'], previo);
-      show('error', 'No se pudo asignar', err.response?.data?.error || 'Error desconocido');
-    }
-  }
-
   async function cambiarRemito(id: string, remito: string) {
     try {
       await api.patch(`/api/viajes/${id}`, { remito: remito.trim() || null });
@@ -215,7 +180,6 @@ export function Viajes() {
   const viajesActivos = viajesEnRango.filter((v) => v.estado === 'programado' || v.estado === 'en_curso');
   const viajesHistorial = viajesEnRango.filter((v) => v.estado === 'completado' || v.estado === 'cancelado');
   const viajesAMostrar = pestana === 'activos' ? viajesActivos : viajesHistorial;
-  const rangoMultiDia = desde !== hasta;
 
   return (
     <div>
@@ -224,7 +188,7 @@ export function Viajes() {
         <p>Gestión operativa de entregas, retiros e historial de viajes</p>
       </div>
 
-      {/* Barra de filtros + selector de vista */}
+      {/* Barra de filtros */}
       <div className="viajes-toolbar">
         <div className="viajes-filtros">
           <div className="btn-group">
@@ -262,232 +226,205 @@ export function Viajes() {
             <option value="recambio">Recambios</option>
           </select>
         </div>
-
-        <div className="btn-group">
-          <button className={`btn btn-sm ${vista === 'tablero' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setVista('tablero')}>
-            <LayoutGrid size={13} strokeWidth={2} /> Tablero
-          </button>
-          <button className={`btn btn-sm ${vista === 'tabla' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setVista('tabla')}>
-            <List size={13} strokeWidth={2} /> Tabla
-          </button>
-        </div>
       </div>
 
-      {vista === 'tablero' ? (
-        <>
-          <p className="text-muted" style={{ fontSize: '0.82rem', margin: '0 0 10px' }}>
-            {viajesActivos.length} viaje(s) activo(s) en el rango.
-            {puedeAsignar ? ' Arrastrá una tarjeta a un chofer para asignarla (se le avisa por WhatsApp).' : ''}
-          </p>
-          <TableroViajes
-            viajes={viajesActivos}
-            choferes={choferes}
-            puedeAsignar={puedeAsignar}
-            mostrarFecha={rangoMultiDia}
-            onAsignar={asignarVisita}
-          />
-        </>
-      ) : (
-        <>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-            <button
-              className={`btn btn-sm ${pestana === 'activos' ? 'btn-primary' : 'btn-ghost'}`}
-              onClick={() => setPestana('activos')}
-            >
-              Activos / Programados ({viajesActivos.length})
-            </button>
-            <button
-              className={`btn btn-sm ${pestana === 'historial' ? 'btn-primary' : 'btn-ghost'}`}
-              onClick={() => setPestana('historial')}
-            >
-              Historial de realizados ({viajesHistorial.length})
-            </button>
-          </div>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+        <button
+          className={`btn btn-sm ${pestana === 'activos' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setPestana('activos')}
+        >
+          Activos / Programados ({viajesActivos.length})
+        </button>
+        <button
+          className={`btn btn-sm ${pestana === 'historial' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setPestana('historial')}
+        >
+          Historial de realizados ({viajesHistorial.length})
+        </button>
+      </div>
 
-          <div className="table-wrapper">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Horario sugerido</th>
-                  <th>Tipo</th>
-                  <th>Zona</th>
-                  <th>Origen</th>
-                  <th>Destino</th>
-                  <th>Contenedor</th>
-                  <th>Estado contenedor</th>
-                  <th>Chofer</th>
-                  <th>Patente</th>
-                  <th>Nº remito</th>
-                  <th>Importe</th>
-                  <th>Comprobantes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {viajesAMostrar.map((v) => (
-                  <tr key={v.id}>
-                    <td className="strong" style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      {v.horario_preferido ? (
-                        // El texto ya trae su propio emoji (🌅/🕐), no anteponer otro.
-                        <span title="Franja horaria preferida (la pidió el cliente por WhatsApp o la cargó el operador)">{v.horario_preferido}</span>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </td>
-                    <td>
-                      <span className={`badge ${v.tipo === 'entrega' ? 'reservado' : 'retirado'}`}>
-                        {v.tipo === 'entrega' ? <ArrowUpFromLine size={11} strokeWidth={2} /> : <ArrowDownToLine size={11} strokeWidth={2} />} {v.tipo}
-                      </span>
-                      {v.grupo_id && (
-                        <span title="Es parte de un recambio: entrega de vacío + retiro de lleno en la misma visita" style={{ marginLeft: '6px' }}>
-                          <RefreshCw size={11} strokeWidth={2} style={{ color: 'var(--accent)' }} />
-                        </span>
-                      )}
-                    </td>
-                    <td>{v.zona ?? '—'}</td>
-                    <td style={{ maxWidth: '160px', whiteSpace: 'normal' }}>
-                      {/* La dirección del cliente (con lat/lng, si vino de un GPS de WhatsApp) es
-                          origen en un retiro y destino en una entrega — v.destino_lat/lng siempre
-                          corresponden a v.destino_direccion, nunca a la ubicación propia. */}
-                      <DireccionMaps direccion={v.origen_direccion} lat={v.tipo === 'retiro' ? v.destino_lat : null} lng={v.tipo === 'retiro' ? v.destino_lng : null} />
-                    </td>
-                    <td style={{ maxWidth: '160px', whiteSpace: 'normal' }}>
-                      <DireccionMaps direccion={v.destino_final_direccion} lat={v.tipo === 'entrega' ? v.destino_lat : null} lng={v.tipo === 'entrega' ? v.destino_lng : null} />
-                    </td>
-                    <td className="mono">
-                      {v.contenedor_numero ? (
-                        v.contenedor_numero
-                      ) : asignando === v.id ? (
-                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                          <select
-                            className="form-select"
-                            style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                            value={asignarForm.contenedor_numero}
-                            onChange={(e) => setAsignarForm({ ...asignarForm, contenedor_numero: e.target.value })}
-                          >
-                            <option value="">{v.tipo === 'retiro' ? '— Lleno —' : '— Vacío —'}</option>
-                            {(v.tipo === 'retiro' ? contenedoresEntregados : vaciosDisponibles).map((c) => (
-                              <option key={c.numero} value={c.numero}>{c.numero}</option>
-                            ))}
-                          </select>
-                          <select
-                            className="form-select"
-                            style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                            value={asignarForm.chofer_id}
-                            onChange={(e) => setAsignarForm({ ...asignarForm, chofer_id: e.target.value })}
-                          >
-                            <option value="">— Sin chofer —</option>
-                            {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                          </select>
-                          <button className="btn btn-success btn-sm" onClick={() => asignarContenedor(v.id)}>OK</button>
-                          <button className="btn btn-ghost btn-sm" onClick={() => setAsignando(null)}>✕</button>
-                        </div>
-                      ) : (
-                        <RoleGate roles={['admin', 'operador']}>
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => { setAsignando(v.id); setAsignarForm({ contenedor_numero: '', chofer_id: v.chofer_id ?? '' }); }}
-                          >
-                            Asignar
-                          </button>
-                        </RoleGate>
-                      )}
-                    </td>
-                    <td>
-                      {v.contenedor_estado ? (
-                        <span className={`badge ${v.contenedor_estado}`}>
-                          {ETIQUETAS_ESTADO_CONTENEDOR[v.contenedor_estado] ?? v.contenedor_estado.replace('_', ' ')}
-                        </span>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </td>
-                    <td>
-                      <RoleGate roles={['admin', 'operador']}>
-                        <select
-                          className="form-select"
-                          style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                          value={v.chofer_id ?? ''}
-                          onChange={(e) => reasignarChofer(v.id, e.target.value)}
-                        >
-                          <option value="">— Sin asignar —</option>
-                          {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                        </select>
-                      </RoleGate>
-                      <RoleGate roles={['finanzas', 'lectura']}>
-                        {v.chofer_nombre ?? <span className="text-muted">Sin asignar</span>}
-                      </RoleGate>
-                    </td>
-                    <td className="mono">{v.patente ?? <span className="text-muted">—</span>}</td>
-                    <td className="mono">
-                      <RoleGate roles={['admin', 'operador']}>
-                        <input
-                          type="text"
-                          className="form-input mono"
-                          style={{ padding: '4px 8px', fontSize: '0.8rem', width: '105px' }}
-                          placeholder="Nº remito"
-                          defaultValue={v.remito ?? ''}
-                          key={`${v.id}-${v.remito}`}
-                          onBlur={(e) => {
-                            if (e.target.value !== (v.remito ?? '')) {
-                              cambiarRemito(v.id, e.target.value);
-                            }
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                          }}
-                        />
-                      </RoleGate>
-                      <RoleGate roles={['finanzas', 'lectura']}>
-                        {v.remito ?? <span className="text-muted">—</span>}
-                      </RoleGate>
-                    </td>
-                    <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>
-                    <td>
-                      {(() => {
-                        const inicial = v.comprobantes.find((c) => c.tipo !== 'alargue_retiro');
-                        const extensiones = v.comprobantes.filter((c) => c.tipo === 'alargue_retiro');
-                        const esCC = v.es_cuenta_corriente || inicial?.es_cuenta_corriente;
-                        if (!esCC && !inicial && extensiones.length === 0) {
-                          return <span className="text-muted">—</span>;
+      <div className="table-wrapper">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Horario sugerido</th>
+              <th>Tipo</th>
+              <th>Zona</th>
+              <th>Origen</th>
+              <th>Destino</th>
+              <th>Contenedor</th>
+              <th>Estado contenedor</th>
+              <th>Chofer</th>
+              <th>Patente</th>
+              <th>Nº remito</th>
+              <th>Importe</th>
+              <th>Comprobantes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {viajesAMostrar.map((v) => (
+              <tr key={v.id}>
+                <td className="strong" style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  {v.horario_preferido ? (
+                    // El texto ya trae su propio emoji (🌅/🕐), no anteponer otro.
+                    <span title="Franja horaria preferida (la pidió el cliente por WhatsApp o la cargó el operador)">{v.horario_preferido}</span>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                </td>
+                <td>
+                  <span className={`badge ${v.tipo === 'entrega' ? 'reservado' : 'retirado'}`}>
+                    {v.tipo === 'entrega' ? <ArrowUpFromLine size={11} strokeWidth={2} /> : <ArrowDownToLine size={11} strokeWidth={2} />} {v.tipo}
+                  </span>
+                  {v.grupo_id && (
+                    <span title="Es parte de un recambio: entrega de vacío + retiro de lleno en la misma visita" style={{ marginLeft: '6px' }}>
+                      <RefreshCw size={11} strokeWidth={2} style={{ color: 'var(--accent)' }} />
+                    </span>
+                  )}
+                </td>
+                <td>{v.zona ?? '—'}</td>
+                <td style={{ maxWidth: '160px', whiteSpace: 'normal' }}>
+                  {/* La dirección del cliente (con lat/lng, si vino de un GPS de WhatsApp) es
+                      origen en un retiro y destino en una entrega — v.destino_lat/lng siempre
+                      corresponden a v.destino_direccion, nunca a la ubicación propia. */}
+                  <DireccionMaps direccion={v.origen_direccion} lat={v.tipo === 'retiro' ? v.destino_lat : null} lng={v.tipo === 'retiro' ? v.destino_lng : null} />
+                </td>
+                <td style={{ maxWidth: '160px', whiteSpace: 'normal' }}>
+                  <DireccionMaps direccion={v.destino_final_direccion} lat={v.tipo === 'entrega' ? v.destino_lat : null} lng={v.tipo === 'entrega' ? v.destino_lng : null} />
+                </td>
+                <td className="mono">
+                  {v.contenedor_numero ? (
+                    v.contenedor_numero
+                  ) : asignando === v.id ? (
+                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                      <select
+                        className="form-select"
+                        style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                        value={asignarForm.contenedor_numero}
+                        onChange={(e) => setAsignarForm({ ...asignarForm, contenedor_numero: e.target.value })}
+                      >
+                        <option value="">{v.tipo === 'retiro' ? '— Lleno —' : '— Vacío —'}</option>
+                        {(v.tipo === 'retiro' ? contenedoresEntregados : vaciosDisponibles).map((c) => (
+                          <option key={c.numero} value={c.numero}>{c.numero}</option>
+                        ))}
+                      </select>
+                      <select
+                        className="form-select"
+                        style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                        value={asignarForm.chofer_id}
+                        onChange={(e) => setAsignarForm({ ...asignarForm, chofer_id: e.target.value })}
+                      >
+                        <option value="">— Sin chofer —</option>
+                        {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                      </select>
+                      <button className="btn btn-success btn-sm" onClick={() => asignarContenedor(v.id)}>OK</button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setAsignando(null)}>✕</button>
+                    </div>
+                  ) : (
+                    <RoleGate roles={['admin', 'operador']}>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => { setAsignando(v.id); setAsignarForm({ contenedor_numero: '', chofer_id: v.chofer_id ?? '' }); }}
+                      >
+                        Asignar
+                      </button>
+                    </RoleGate>
+                  )}
+                </td>
+                <td>
+                  {v.contenedor_estado ? (
+                    <span className={`badge ${v.contenedor_estado}`}>
+                      {ETIQUETAS_ESTADO_CONTENEDOR[v.contenedor_estado] ?? v.contenedor_estado.replace('_', ' ')}
+                    </span>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                </td>
+                <td>
+                  <RoleGate roles={['admin', 'operador']}>
+                    <select
+                      className="form-select"
+                      style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                      value={v.chofer_id ?? ''}
+                      onChange={(e) => reasignarChofer(v.id, e.target.value)}
+                    >
+                      <option value="">— Sin asignar —</option>
+                      {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                    </select>
+                  </RoleGate>
+                  <RoleGate roles={['finanzas', 'lectura']}>
+                    {v.chofer_nombre ?? <span className="text-muted">Sin asignar</span>}
+                  </RoleGate>
+                </td>
+                <td className="mono">{v.patente ?? <span className="text-muted">—</span>}</td>
+                <td className="mono">
+                  <RoleGate roles={['admin', 'operador']}>
+                    <input
+                      type="text"
+                      className="form-input mono"
+                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '105px' }}
+                      placeholder="Nº remito"
+                      defaultValue={v.remito ?? ''}
+                      key={`${v.id}-${v.remito}`}
+                      onBlur={(e) => {
+                        if (e.target.value !== (v.remito ?? '')) {
+                          cambiarRemito(v.id, e.target.value);
                         }
-                        return (
-                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                            {esCC ? (
-                              <span className="badge pendiente">📋 Cuenta corriente</span>
-                            ) : inicial && (
-                              <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                                <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
-                                  🧾 Inicial
-                                </button>
-                              </RoleGate>
-                            )}
-                            {extensiones.length > 0 && (
-                              <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                                <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
-                                  ⏳ Extensión{extensiones.length > 1 ? ` (${extensiones.length})` : ''}
-                                </button>
-                              </RoleGate>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </td>
-                  </tr>
-                ))}
-                {viajesAMostrar.length === 0 && (
-                  <tr>
-                    <td colSpan={13} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-                      {pestana === 'activos' ? 'No hay viajes activos o programados en el rango' : 'No hay viajes en el historial para el rango'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                      }}
+                    />
+                  </RoleGate>
+                  <RoleGate roles={['finanzas', 'lectura']}>
+                    {v.remito ?? <span className="text-muted">—</span>}
+                  </RoleGate>
+                </td>
+                <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>
+                <td>
+                  {(() => {
+                    const inicial = v.comprobantes.find((c) => c.tipo !== 'alargue_retiro');
+                    const extensiones = v.comprobantes.filter((c) => c.tipo === 'alargue_retiro');
+                    const esCC = v.es_cuenta_corriente || inicial?.es_cuenta_corriente;
+                    if (!esCC && !inicial && extensiones.length === 0) {
+                      return <span className="text-muted">—</span>;
+                    }
+                    return (
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                        {esCC ? (
+                          <span className="badge pendiente">📋 Cuenta corriente</span>
+                        ) : inicial && (
+                          <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
+                              🧾 Inicial
+                            </button>
+                          </RoleGate>
+                        )}
+                        {extensiones.length > 0 && (
+                          <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
+                              ⏳ Extensión{extensiones.length > 1 ? ` (${extensiones.length})` : ''}
+                            </button>
+                          </RoleGate>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </td>
+              </tr>
+            ))}
+            {viajesAMostrar.length === 0 && (
+              <tr>
+                <td colSpan={13} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                  {pestana === 'activos' ? 'No hay viajes activos o programados en el rango' : 'No hay viajes en el historial para el rango'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {viajeComprobantes && (
         <div className="modal-overlay" onClick={() => setViajeComprobantes(null)}>

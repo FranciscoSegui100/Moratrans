@@ -1,53 +1,6 @@
 /**
- * Helpers de viajes compartidos por el panel (tablero de Viajes, y a futuro
- * la bolsa de Rutas, que hoy tiene su propia versión de esto).
+ * Helpers de fechas de viajes compartidos por el panel.
  */
-
-/**
- * Un recambio son dos filas de `viajes` —una 'entrega' del vacío que se deja
- * y una 'retiro' del lleno que se lleva— unidas por `grupo_id`. En el panel
- * se muestran como una sola visita. `agruparVisitas` toma una lista plana y
- * la colapsa: los viajes sueltos quedan con un solo elemento, el par de un
- * recambio con dos. Mismo criterio que agruparPendientes() en Rutas.tsx.
- */
-export interface ViajeAgrupable {
-  id: string;
-  tipo: 'entrega' | 'retiro';
-  grupo_id: string | null;
-}
-
-export interface Visita<T extends ViajeAgrupable> {
-  /** grupo_id del recambio, o el id del viaje suelto — sirve de key en React. */
-  key: string;
-  grupoId: string | null;
-  viajes: T[];
-  entrega?: T;
-  retiro?: T;
-}
-
-export function agruparVisitas<T extends ViajeAgrupable>(viajes: T[]): Visita<T>[] {
-  const porGrupo = new Map<string, Visita<T>>();
-  const orden: Visita<T>[] = [];
-  for (const v of viajes) {
-    if (v.grupo_id) {
-      let visita = porGrupo.get(v.grupo_id);
-      if (!visita) {
-        visita = { key: v.grupo_id, grupoId: v.grupo_id, viajes: [] };
-        porGrupo.set(v.grupo_id, visita);
-        orden.push(visita);
-      }
-      visita.viajes.push(v);
-      if (v.tipo === 'entrega') visita.entrega = v;
-      else visita.retiro = v;
-    } else {
-      const visita: Visita<T> = { key: v.id, grupoId: null, viajes: [v] };
-      if (v.tipo === 'entrega') visita.entrega = v;
-      else visita.retiro = v;
-      orden.push(visita);
-    }
-  }
-  return orden;
-}
 
 /** Hoy en formato YYYY-MM-DD (mismo criterio de zona horaria que Rutas.tsx). */
 export function hoyISO(): string {
