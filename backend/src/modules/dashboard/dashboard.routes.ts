@@ -89,7 +89,15 @@ dashboardRouter.get('/actividad', async (_req: Request, res: Response) => {
        'contenedor' AS tipo,
        h.numero_contenedor AS entidad_id,
        h.estado::text AS accion,
-       COALESCE(h.actualizado_por, 'Sistema') AS actor,
+       COALESCE(
+         CASE 
+           WHEN h.actualizado_por LIKE 'chofer:%' THEN (SELECT nombre FROM choferes WHERE id = (split_part(h.actualizado_por, ':', 2))::uuid)
+           WHEN h.actualizado_por LIKE 'operador:%' THEN (SELECT nombre FROM usuarios WHERE id = (split_part(h.actualizado_por, ':', 2))::uuid)
+           WHEN h.actualizado_por LIKE 'admin:%' THEN (SELECT nombre FROM usuarios WHERE id = (split_part(h.actualizado_por, ':', 2))::uuid)
+           ELSE h.actualizado_por
+         END,
+         'Sistema'
+       ) AS actor,
        h.creado_en AS fecha,
        h.nota AS detalle
      FROM historial_contenedores h
