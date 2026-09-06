@@ -397,6 +397,13 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .main-content {
   margin-left: 220px;
   flex: 1;
+  /* Sin esto, un flex item toma como ancho mínimo el min-content de su
+     contenido: cualquier descendiente ancho que no rompe (texto nowrap,
+     una tabla, el hilo de chat) estira el <main> más allá del viewport y
+     aparece scroll horizontal en TODA la app — con el sidebar fijo tapando
+     lo que quedó corrido. min-width:0 deja que el main se achique y que el
+     scroll quede contenido donde corresponde (la tabla, el hilo). */
+  min-width: 0;
   padding: 0 32px 40px;
   min-height: 100vh;
   max-width: 1440px;
@@ -971,7 +978,10 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 }
 .asesoria-lista-col {
   width: 300px;
-  flex-shrink: 0;
+  /* Puede achicarse hasta 220 en ventanas angostas en vez de empujar el
+     panel fuera de la pantalla. */
+  flex: 0 1 300px;
+  min-width: 220px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1056,10 +1066,15 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  /* En panel angosto, el botón "Pausar bot y responder yo" (no rompe) baja
+     a la línea de abajo en vez de desbordar. */
+  flex-wrap: wrap;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
 }
-.asesoria-panel-quien { display: flex; align-items: center; gap: 10px; }
+.asesoria-panel-quien { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+.asesoria-panel-quien > div { min-width: 0; }
+.asesoria-panel-nombre, .asesoria-panel-tel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .asesoria-panel-nombre { font-size: 1rem; font-weight: 700; color: var(--text-primary); }
 .asesoria-panel-tel { font-size: 0.76rem; color: var(--text-muted); font-family: var(--font-mono); }
 .asesoria-panel .chat-asesor { flex: 1; min-height: 0; }
@@ -1185,7 +1200,7 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   color: var(--text-muted);
   margin-bottom: 2px;
 }
-.chat-burbuja-texto { font-size: 0.84rem; color: var(--text-primary); white-space: pre-wrap; }
+.chat-burbuja-texto { font-size: 0.84rem; color: var(--text-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-burbuja-hora { font-size: 0.66rem; color: var(--text-muted); margin-top: 2px; font-family: var(--font-mono); }
 .chat-asesor-input { display: flex; gap: 8px; }
 .chat-asesor-input .form-input { flex: 1; }
