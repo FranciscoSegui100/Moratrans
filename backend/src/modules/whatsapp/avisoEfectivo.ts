@@ -21,10 +21,10 @@ export function avisoPagoChofer(
   if (esCuentaCorriente) return '';
   if (medioPago === 'efectivo') {
     const monto = precio ? `ARS ${Number(precio).toLocaleString('es-AR')}` : 'el importe correspondiente';
-    return `\n\n💵 *PAGO EN EFECTIVO — cobrar ${monto} en esta visita*`;
+    return `\n\n💵 *Pago en efectivo:* recordá cobrar ${monto} en esta visita.`;
   }
   if (medioPago === 'transferencia') {
-    return `\n\n✅ *Ya está pagado por transferencia — no hace falta cobrar nada.*`;
+    return `\n\n✅ *Ya está pagado por transferencia:* no hace falta cobrar nada.`;
   }
   return '';
 }

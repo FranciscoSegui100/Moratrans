@@ -561,6 +561,16 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
     // chofer nuevo.
     if (row.chofer_id && (cambioChofer || cambioContenedorAsignado)) {
       (async () => {
+        // Mismo criterio que avisarSiguienteParadaRuta: si el viaje ya tiene
+        // un pago cargado y es en efectivo, se lo recordamos al chofer en
+        // este mismo aviso (antes esto quedaba sin mandar acá, así que
+        // asignar/reasignar desde la tabla de Viajes nunca lo avisaba).
+        const [pagoAviso] = row.pago_id
+          ? await query<{ medio_pago: string; precio: string | null; es_cuenta_corriente: boolean }>(
+              `SELECT p.medio_pago, COALESCE(pe.precio, p.monto) AS precio, p.es_cuenta_corriente FROM pagos p LEFT JOIN pedidos pe ON pe.id = p.pedido_id WHERE p.id = $1`,
+              [row.pago_id],
+            )
+          : [];
         if (row.grupo_id) {
           const [retiro] = await query<{ contenedor_numero: string | null }>(
             `SELECT contenedor_numero FROM viajes WHERE grupo_id = $1 AND tipo = 'retiro' LIMIT 1`,
@@ -574,10 +584,14 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
             await avisarChoferRecambio(
               row.chofer_id, retiro.contenedor_numero, entrega?.contenedor_numero ?? null, entrega?.ubicacion_id ?? null,
               row.destino_direccion, row.cliente_telefono, row.hora_estimada,
+              pagoAviso?.medio_pago ?? null, pagoAviso?.precio ?? null, pagoAviso?.es_cuenta_corriente ?? null,
             );
           }
         } else {
-          await avisarChoferViaje(row.chofer_id, row.tipo, row.contenedor_numero, row.destino_direccion, row.cliente_telefono, row.hora_estimada);
+          await avisarChoferViaje(
+            row.chofer_id, row.tipo, row.contenedor_numero, row.destino_direccion, row.cliente_telefono, row.hora_estimada,
+            pagoAviso?.medio_pago ?? null, pagoAviso?.precio ?? null, pagoAviso?.es_cuenta_corriente ?? null,
+          );
         }
       })().catch((e) => {
         const motivo = motivoErrorWa(e);

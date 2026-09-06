@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <title>Moratrans - Panel Logístico</title>
+    <script>
+      // Fija el tema antes del primer paint para que no haya flash de claro
+      // al entrar en oscuro (o viceversa). 'system' = sin atributo, decide el SO.
+      (function () {
+        try {
+          var p = localStorage.getItem('theme');
+          if (p === 'light' || p === 'dark') {
+            document.documentElement.setAttribute('data-theme', p);
+          }
+        } catch (e) { /* modo privado */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
