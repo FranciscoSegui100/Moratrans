@@ -62,6 +62,15 @@ interface EstadoBot {
   actualizado_en: string;
 }
 
+interface ActividadItem {
+  tipo: string;
+  entidad_id: string;
+  accion: string;
+  actor: string;
+  fecha: string;
+  detalle: string | null;
+}
+
 const kpiConfig = [
   { key: 'contenedores_activos',    label: 'Contenedores activos', icon: Package,          tint: 'var(--accent-tint)',  fg: 'var(--accent-dark)' },
   { key: 'contenedores_disponibles',label: 'Disponibles',          icon: CircleCheck,       tint: 'var(--success-bg)',   fg: 'var(--success)' },
@@ -87,6 +96,10 @@ export function Dashboard() {
   const { data: distribucion = [], isError: distribucionError, refetch: refetchDistribucion } = useQuery({
     queryKey: ['dashboard', 'contenedores'],
     queryFn: () => api.get<EstadoDist[]>('/api/dashboard/contenedores').then((r) => r.data),
+  });
+  const { data: actividad = [] } = useQuery({
+    queryKey: ['dashboard', 'actividad'],
+    queryFn: () => api.get<ActividadItem[]>('/api/dashboard/actividad').then((r) => r.data),
   });
   const hayError = kpisError || distribucionError;
   const { data: estadoBot } = useQuery({
@@ -161,54 +174,112 @@ export function Dashboard() {
 
       {/* KPI Cards */}
       <div className="kpi-grid">
-        {kpiConfig.map((c) => (
-          <KpiCard
-            key={c.key}
-            icon={c.icon}
-            tint={c.tint}
-            fg={c.fg}
-            label={c.label}
-            value={kpis ? (kpis as any)[c.key] : null}
-            extra={c.key === 'cobros_pendientes' && kpis ? (
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                ${Number(kpis.cobros_pendientes_monto).toLocaleString('es-AR')} adeudado
-              </div>
-            ) : undefined}
-          />
-        ))}
+        <div className="kpi-card">
+          <div className="kpi-header">
+            <div className="kpi-icon" style={{ background: 'var(--accent-tint)', color: 'var(--accent-dark)' }}><Package strokeWidth={1.75} /></div>
+            <div className="kpi-trend" style={{ color: 'var(--success)' }}>▲ 1 hoy</div>
+          </div>
+          <div className="kpi-value">{kpis ? kpis.contenedores_activos : '—'}</div>
+          <div className="kpi-label">Contenedores activos</div>
+          <div className="kpi-sparkline">
+            {[4, 6, 4, 5, 8, 7, 9].map((v, i) => (
+              <div key={i} className="spark-bar" style={{ height: `${v * 10}%`, background: 'var(--accent-tint)' }} />
+            ))}
+          </div>
+        </div>
+
+        <div className="kpi-card">
+          <div className="kpi-header">
+            <div className="kpi-icon" style={{ background: 'var(--success-bg)', color: 'var(--success)' }}><CircleCheck strokeWidth={1.75} /></div>
+            <div className="kpi-trend" style={{ color: 'var(--text-secondary)' }}>= est.</div>
+          </div>
+          <div className="kpi-value">{kpis ? kpis.contenedores_disponibles : '—'}</div>
+          <div className="kpi-label">Disponibles</div>
+          <div className="kpi-sparkline">
+             {[3, 3, 4, 4, 3, 3, 4].map((v, i) => (
+              <div key={i} className="spark-bar" style={{ height: `${v * 10}%`, background: 'var(--success-bg)' }} />
+            ))}
+          </div>
+        </div>
+
+        <div className="kpi-card">
+          <div className="kpi-header">
+            <div className="kpi-icon" style={{ background: 'var(--warning-bg)', color: 'var(--warning)' }}><CircleDollarSign strokeWidth={1.75} /></div>
+            <div className="kpi-trend" style={{ color: 'var(--text-secondary)' }}>al día</div>
+          </div>
+          <div className="kpi-value">{kpis ? kpis.cobros_pendientes : '—'}</div>
+          <div className="kpi-label">Cobros pendientes</div>
+          {kpis && kpis.cobros_pendientes > 0 && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+              ${Number(kpis.cobros_pendientes_monto).toLocaleString('es-AR')} adeudado
+            </div>
+          )}
+          <div className="kpi-sparkline">
+             {[1, 1, 1, 1, 1, 1, 1].map((v, i) => (
+              <div key={i} className="spark-bar" style={{ height: `10%`, background: 'var(--warning-bg)' }} />
+            ))}
+          </div>
+        </div>
+
+        <div className="kpi-card">
+          <div className="kpi-header">
+            <div className="kpi-icon" style={{ background: 'var(--purple-bg)', color: 'var(--purple)' }}><Truck strokeWidth={1.75} /></div>
+            <div className="kpi-trend" style={{ color: 'var(--success)' }}>▲ 2 vs ayer</div>
+          </div>
+          <div className="kpi-value">{kpis ? kpis.viajes_hoy : '—'}</div>
+          <div className="kpi-label">Viajes de hoy</div>
+          <div className="kpi-sparkline">
+            {[2, 3, 2, 5, 4, 6, 8].map((v, i) => (
+              <div key={i} className="spark-bar" style={{ height: `${v * 10}%`, background: 'var(--purple-bg)' }} />
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Distribución de contenedores */}
       <div className="chart-grid">
         <div className="card">
           <div className="section-title">Distribución por estado</div>
-          {distribucion.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-state-icon"><Package strokeWidth={1.5} /></div>
-              <div className="empty-state-title">{distribucionError ? 'No se pudo cargar' : 'Sin datos'}</div>
-              <div className="empty-state-text">
-                {distribucionError ? 'Hubo un error al pedir la distribución de contenedores.' : 'No hay contenedores cargados'}
-              </div>
+          <div style={{ display: 'flex', gap: '20px', alignItems: 'center', marginTop: '16px' }}>
+            <div className="donut-chart">
+               <div className="donut-center">
+                 <div className="donut-value">{totalContenedores}</div>
+                 <div className="donut-label">totales</div>
+               </div>
+               <svg viewBox="0 0 36 36" className="circular-chart">
+                 {/* Círculo base */}
+                 <path className="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="var(--bg-surface)" strokeWidth="4" />
+                 {/* Representación estática por ahora del anillo */}
+                 <path className="circle" strokeDasharray="60, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="var(--success)" strokeWidth="4" />
+                 <path className="circle" strokeDasharray="25, 100" strokeDashoffset="-60" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="var(--purple)" strokeWidth="4" />
+               </svg>
             </div>
-          ) : (
-            distribucion.map((d) => (
-              <div key={d.estado} className="estado-bar">
-                <div className="estado-name">
-                  <span className={`badge ${d.estado}`}>{d.estado.replace('_', ' ')}</span>
-                </div>
-                <div className="bar-track">
-                  <div
-                    className="bar-fill"
-                    style={{
-                      width: `${Math.round((d.total / totalContenedores) * 100)}%`,
-                      background: estadoColors[d.estado] || 'var(--accent)',
-                    }}
-                  />
-                </div>
-                <div className="estado-count">{d.total}</div>
-              </div>
-            ))
-          )}
+            
+            <div style={{ flex: 1 }}>
+              {distribucion.length === 0 ? (
+                <div className="empty-state-text">No hay contenedores cargados</div>
+              ) : (
+                distribucion.map((d) => (
+                  <div key={d.estado} className="estado-bar">
+                    <div className="estado-name">
+                      <span className="badge-dot" style={{ background: estadoColors[d.estado] || 'var(--accent)' }} />
+                      {d.estado.replace('_', ' ')}
+                    </div>
+                    <div className="bar-track">
+                      <div
+                        className="bar-fill"
+                        style={{
+                          width: `${Math.round((d.total / totalContenedores) * 100)}%`,
+                          background: estadoColors[d.estado] || 'var(--accent)',
+                        }}
+                      />
+                    </div>
+                    <div className="estado-count">{d.total}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="card">
@@ -222,33 +293,38 @@ export function Dashboard() {
             ].map((item) => {
               const Icon = item.icon;
               return (
-                <Link
-                  key={item.href}
-                  to={item.href}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    padding: '10px 12px',
-                    background: 'var(--bg-surface)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius)',
-                    color: 'var(--text-secondary)',
-                    textDecoration: 'none',
-                    fontSize: '0.83rem',
-                    fontWeight: 500,
-                    transition: 'all var(--transition)',
-                  }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)'; }}
-                >
-                  <Icon size={16} strokeWidth={1.75} />
+                <Link key={item.href} to={item.href} className="quick-access-btn">
+                  <div className="quick-access-icon"><Icon size={16} strokeWidth={1.75} /></div>
                   {item.label}
                 </Link>
               );
             })}
           </div>
         </div>
+      </div>
+
+      <div className="card" style={{ marginTop: '16px' }}>
+         <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
+           <span>Actividad Reciente</span>
+           <Link to="/viajes" style={{ fontSize: '0.8rem', fontWeight: 600 }}>Ver más →</Link>
+         </div>
+         <div className="activity-list">
+           {actividad.length === 0 ? (
+             <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>No hay actividad reciente.</div>
+           ) : (
+             actividad.map((act, i) => (
+               <div key={i} className="activity-item">
+                 <div className="activity-dot" style={{ background: act.tipo === 'pago' ? 'var(--warning)' : 'var(--success)' }} />
+                 <div className="activity-text">
+                   <strong>{act.actor}</strong> {act.tipo === 'pago' ? 'registró un pago' : `marcó un contenedor como ${act.accion.replace('_', ' ')}`} {act.entidad_id}
+                 </div>
+                 <div className="activity-time">
+                   {new Date(act.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                 </div>
+               </div>
+             ))
+           )}
+         </div>
       </div>
     </div>
   );

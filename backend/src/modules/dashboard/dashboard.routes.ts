@@ -71,3 +71,39 @@ dashboardRouter.get('/comprobantes', async (_req: Request, res: Response) => {
   );
   res.json(rows);
 });
+
+/**
+ * GET /api/dashboard/actividad — feed combinado de actividad reciente
+ * (cambios de estado de contenedores por choferes/admins, y pagos enviados/validados).
+ */
+dashboardRouter.get('/actividad', async (_req: Request, res: Response) => {
+  const rows = await query<{
+    tipo: string;
+    entidad_id: string;
+    accion: string;
+    actor: string;
+    fecha: string;
+    detalle: string | null;
+  }>(
+    `SELECT
+       'contenedor' AS tipo,
+       h.numero_contenedor AS entidad_id,
+       h.estado AS accion,
+       COALESCE(h.actualizado_por, 'Sistema') AS actor,
+       h.creado_en AS fecha,
+       h.nota AS detalle
+     FROM historial_contenedores h
+     UNION ALL
+     SELECT
+       'pago' AS tipo,
+       p.id::text AS entidad_id,
+       p.estado AS accion,
+       'Cliente/Admin' AS actor,
+       p.creado_en AS fecha,
+       p.monto::text AS detalle
+     FROM pagos p
+     ORDER BY fecha DESC
+     LIMIT 10`
+  );
+  res.json(rows);
+});
