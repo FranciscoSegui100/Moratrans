@@ -141,17 +141,24 @@ function formatearHora(horaEstimada: string | null): string | null {
 /**
  * Medio de pago y monto del pago asociado a un viaje (viajes.pago_id, ver
  * schema.sql), para poder avisarle al chofer si cobra en efectivo contra
- * entrega (ver avisoEfectivoChofer). Se resuelve acá, a partir del pago_id
- * que YA viaja en la fila del viaje, en vez de que cada llamador tenga que
- * acordarse de pasarlo — antes cada aviso lo hacía "a mano" y la mayoría de
- * los call sites (asignar desde el panel, reasignar chofer, siguiente parada
- * de una ruta) directamente no lo pasaban, así que el aviso de efectivo solo
- * salía en el momento puntual de validar el pago desde el bot.
+ * entrega, y cuánto (ver avisoEfectivoChofer). Se resuelve acá, a partir del
+ * pago_id que YA viaja en la fila del viaje, en vez de que cada llamador
+ * tenga que acordarse de pasarlo — antes cada aviso lo hacía "a mano" y la
+ * mayoría de los call sites (asignar desde el panel, reasignar chofer,
+ * siguiente parada de una ruta) directamente no lo pasaban, así que el aviso
+ * de efectivo solo salía en el momento puntual de validar el pago desde el bot.
+ *
+ * `pagos.monto` solo se carga para alargues/abonos — un flete normal (la
+ * mayoría de los casos) nace sin monto propio y el precio vive en
+ * `pedidos.precio` (mismo criterio que ya usa GET /api/clientes), por eso el
+ * COALESCE.
  */
 async function medioPagoDeViaje(pagoId: string | null | undefined): Promise<{ medioPago: string | null; monto: string | null }> {
   if (!pagoId) return { medioPago: null, monto: null };
   const [p] = await query<{ medio_pago: string | null; monto: string | null }>(
-    'SELECT medio_pago, monto FROM pagos WHERE id = $1',
+    `SELECT p.medio_pago, COALESCE(p.monto, pe.precio) AS monto
+       FROM pagos p LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+      WHERE p.id = $1`,
     [pagoId],
   );
   return { medioPago: p?.medio_pago ?? null, monto: p?.monto ?? null };
