@@ -140,11 +140,11 @@ export function Clientes() {
       <div className="form-card" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <button
           className="btn btn-primary"
-          onClick={() => descargarArchivo('/api/clientes/export.xlsx', 'clientes.xlsx')}
+          onClick={() => descargarArchivo('/api/clientes/export.xlsx', 'clientes-y-pedidos.xlsx')}
         >
-          <Download strokeWidth={1.75} /> Exportar todo a Excel
+          <Download strokeWidth={1.75} /> Exportar clientes y pedidos a Excel
         </button>
-        <small className="text-muted">Sale seccionado en una hoja por mes, con todos los clientes.</small>
+        <small className="text-muted">Incluye 3 hojas: resumen facturado por mes, listado de clientes, y el detalle de todos los pedidos.</small>
         <RoleGate roles={['admin', 'operador', 'finanzas']}>
           <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => setMostrarAlta((v) => !v)}>
             <Plus strokeWidth={1.75} /> Nuevo cliente
