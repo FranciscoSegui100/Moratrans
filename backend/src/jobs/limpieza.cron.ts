@@ -18,7 +18,6 @@ const RETENCION_DIAS: Record<string, number> = {
 
 // Sección 9 (Ley 25.326 — guardar datos sensibles solo el tiempo necesario).
 const RETENCION_COMPROBANTES_DIAS = 730; // 2 años desde creado_en
-const RETENCION_DNI_INACTIVO_DIAS = 365; // 1 año desde que el chofer quedó inactivo
 
 async function limpiarTablasViejas(): Promise<void> {
   for (const [tabla, dias] of Object.entries(RETENCION_DIAS)) {

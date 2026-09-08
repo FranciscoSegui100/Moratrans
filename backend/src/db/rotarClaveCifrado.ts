@@ -1,6 +1,6 @@
 /**
  * Rotación de ENCRYPTION_KEY: descifra con la clave vieja lo que ya está
- * guardado (DNI de choferes, comprobantes/facturas, secreto TOTP de MFA) y
+ * guardado (comprobantes/facturas, secreto TOTP de MFA) y
  * lo vuelve a cifrar/indexar con la nueva. También re-encripta el CONTENIDO
  * BINARIO de comprobantes/facturas en Supabase Storage (no solo la ruta en
  * la DB) — desde que ese binario se sube cifrado (sección 9, ver

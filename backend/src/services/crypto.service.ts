@@ -2,14 +2,13 @@ import crypto from 'crypto';
 import { env } from '../config/env';
 
 /**
- * Cifrado en reposo de campos sensibles (DNI, URL de comprobantes).
+ * Cifrado en reposo de campos sensibles (URL de comprobantes, secreto MFA).
  *
  * - Cifrado: AES-256-GCM con IV aleatorio por valor. La clave vive SOLO en la
  *   variable de entorno ENCRYPTION_KEY (idealmente inyectada desde un KMS /
  *   Secret Manager), nunca en la base de datos ni en los logs de SQL.
- * - Búsqueda: como AES-GCM produce ciphertext distinto cada vez, no se puede
- *   hacer `WHERE dni = ...`. Para eso guardamos además un "blind index":
- *   un HMAC-SHA256 determinístico del valor, que permite igualdad exacta sin
+ * - Búsqueda: como AES-GCM produce ciphertext distinto cada vez, se usa un
+ *   "blind index" (HMAC-SHA256 determinístico) para igualdad exacta sin
  *   revelar el dato.
  */
 

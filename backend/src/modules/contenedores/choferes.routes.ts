@@ -8,8 +8,7 @@ import { normalizarTelefonoAR } from '../../services/telefono.service';
 export const choferesRouter = Router();
 choferesRouter.use(requireAuth);
 
-// Presenta un chofer: descifra el DNI solo si el rol tiene permiso; si no, lo enmascara.
-// dni_enc puede ser NULL: se anonimiza a los 365 días de inactivo (sección 9, ver limpieza.cron.ts).
+// Presenta un chofer con los campos públicos.
 function presentar(row: any, rol: Rol) {
   return {
     id: row.id,
@@ -20,7 +19,7 @@ function presentar(row: any, rol: Rol) {
   };
 }
 
-/** GET /api/choferes — DNI descifrado solo para admin/operador. */
+/** GET /api/choferes — lista de choferes. */
 choferesRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query('SELECT id, nombre, telefono, patente, activo FROM choferes ORDER BY nombre');
   res.json(rows.map((r) => presentar(r, req.user!.rol)));
@@ -32,7 +31,7 @@ const nuevoSchema = z.object({
   patente: z.string().min(1).optional(),
 });
 
-/** POST /api/choferes — alta con DNI cifrado (solo admin/operador). */
+/** POST /api/choferes — alta de chofer (solo admin/operador). */
 choferesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = nuevoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
@@ -45,7 +44,7 @@ choferesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, r
     );
     res.status(201).json(presentar(row, req.user!.rol));
   } catch (e: any) {
-    res.status(409).json({ error: 'DNI o teléfono ya registrado' });
+    res.status(409).json({ error: 'Teléfono ya registrado' });
   }
 });
 
@@ -56,7 +55,7 @@ const patchSchema = z.object({
   activo: z.boolean().optional(),
 });
 
-/** PATCH /api/choferes/:id — modificar un chofer, incluido el DNI (solo admin/operador). */
+/** PATCH /api/choferes/:id — modificar un chofer (solo admin/operador). */
 choferesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = patchSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
@@ -69,8 +68,7 @@ choferesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Reques
     params.push(k === 'telefono' ? normalizarTelefonoAR(val as string) : val);
     sets.push(`${k} = $${params.length}`);
   }
-  // Retención de DNI (sección 9): desactivado_en marca desde cuándo cuenta
-  // el plazo de anonimización (limpieza.cron.ts); se limpia si se reactiva.
+  // desactivado_en marca desde cuándo está inactivo; se limpia si se reactiva.
   if (resto.activo === false) {
     sets.push('desactivado_en = now()');
   } else if (resto.activo === true) {
@@ -88,7 +86,7 @@ choferesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Reques
     if (!row) return res.status(404).json({ error: 'Chofer inexistente' });
     res.json(presentar(row, req.user!.rol));
   } catch (e: any) {
-    res.status(409).json({ error: 'DNI o teléfono ya registrado' });
+    res.status(409).json({ error: 'Teléfono ya registrado' });
   }
 });
 

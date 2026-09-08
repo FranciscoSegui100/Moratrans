@@ -133,14 +133,13 @@ CREATE UNIQUE INDEX clientes_numero_plan_key ON clientes(numero_plan) WHERE nume
 CREATE TABLE choferes (
   id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nombre    TEXT    NOT NULL,
-  -- DNI columns removed from schema.
-  -- No encrypted DNI stored.
+
   telefono  TEXT,                             -- se usa para autoidentificar en WA; NULL = desvinculado
   -- Patente del camión que maneja habitualmente. No es UNIQUE: un camión puede
   -- rotar entre choferes en distintos turnos/períodos.
   patente   TEXT,
   activo    BOOLEAN NOT NULL DEFAULT TRUE,
-  -- Desde cuándo activo=false; usado para contar los 365 días de retención del DNI.
+  -- Desde cuándo activo=false.
   desactivado_en TIMESTAMPTZ,
   creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
 );

@@ -1,12 +1,12 @@
 /**
- * Carga el/los chofer(es) inicial(es) cifrando el DNI en la app.
+ * Carga el/los chofer(es) inicial(es).
  * Uso:  npm run db:seed-choferes
  */
 import { pool, query } from '../config/db';
 
 
 const choferesIniciales = [
-  { nombre: 'Juan Pérez', dni: '48123456', telefono: '59899111222' },
+  { nombre: 'Juan Pérez', telefono: '59899111222' },
 ];
 
 async function main() {

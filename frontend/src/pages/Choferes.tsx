@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 
-interface Chofer { id: string; nombre: string; dni: string | null; telefono: string | null; patente: string | null; activo: boolean; }
+interface Chofer { id: string; nombre: string; telefono: string | null; patente: string | null; activo: boolean; }
 
 function initials(name: string) {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -14,10 +14,10 @@ function initials(name: string) {
 export function Choferes() {
   const { show } = useToast();
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ nombre: '', dni: '', telefono: '', patente: '' });
+  const [form, setForm] = useState({ nombre: '', telefono: '', patente: '' });
   const [loading, setLoading] = useState(false);
   const [editando, setEditando] = useState<string | null>(null);
-  const [edit, setEdit] = useState({ nombre: '', dni: '', telefono: '', patente: '' });
+  const [edit, setEdit] = useState({ nombre: '', telefono: '', patente: '' });
 
   const { data: choferes = [] } = useQuery({
     queryKey: ['choferes'],
@@ -32,11 +32,11 @@ export function Choferes() {
     setLoading(true);
     try {
       await api.post('/api/choferes', { ...form, patente: form.patente || undefined });
-      setForm({ nombre: '', dni: '', telefono: '', patente: '' });
+      setForm({ nombre: '', telefono: '', patente: '' });
       cargar();
       show('success', 'Chofer creado', form.nombre);
     } catch (err: any) {
-      show('error', 'Error al crear', err.response?.data?.error || 'DNI o teléfono duplicado');
+      show('error', 'Error al crear', err.response?.data?.error || 'Teléfono duplicado');
     } finally {
       setLoading(false);
     }
@@ -44,21 +44,19 @@ export function Choferes() {
 
   function empezarEdicion(c: Chofer) {
     setEditando(c.id);
-    setEdit({ nombre: c.nombre, dni: c.dni && c.dni !== '••••••' ? c.dni : '', telefono: c.telefono ?? '', patente: c.patente ?? '' });
+    setEdit({ nombre: c.nombre, telefono: c.telefono ?? '', patente: c.patente ?? '' });
   }
 
   async function guardarEdicion(id: string) {
     try {
-      // Si el DNI está enmascarado (rol sin permiso) o no se tocó, no lo mandamos.
-      const { nombre, telefono, dni, patente } = edit;
+      const { nombre, telefono, patente } = edit;
       const payload: Record<string, string | null> = { nombre, telefono, patente: patente || null };
-      if (dni) payload.dni = dni;
       await api.patch(`/api/choferes/${id}`, payload);
       setEditando(null);
       cargar();
       show('success', 'Chofer actualizado', nombre);
     } catch (err: any) {
-      show('error', 'No se pudo actualizar', err.response?.data?.error || 'DNI o teléfono duplicado');
+      show('error', 'No se pudo actualizar', err.response?.data?.error || 'Teléfono duplicado');
     }
   }
 
@@ -109,11 +107,7 @@ export function Choferes() {
               <input className="form-input" placeholder="Ej. Juan Pérez" value={form.nombre} required
                 onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
             </div>
-            <div className="form-group">
-              <label className="form-label">DNI</label>
-              <input className="form-input" placeholder="12345678" value={form.dni} required
-                onChange={(e) => setForm({ ...form, dni: e.target.value })} />
-            </div>
+
             <div className="form-group">
               <label className="form-label">Teléfono</label>
               <input className="form-input" placeholder="Ej. 0261 15-206-2258 (cualquier formato sirve)" value={form.telefono} required
@@ -136,7 +130,7 @@ export function Choferes() {
           <thead>
             <tr>
               <th>Chofer</th>
-              <th>DNI</th>
+
               <th>Teléfono</th>
               <th>Patente</th>
               <th>Estado</th>
@@ -164,22 +158,7 @@ export function Choferes() {
                       </div>
                     )}
                   </td>
-                  <td className="mono">
-                    {enEdicion ? (
-                      <input
-                        className="form-input"
-                        placeholder={c.dni === '••••••' ? '(sin cambios)' : c.dni ?? '(anonimizado — cargar uno nuevo si corresponde)'}
-                        value={edit.dni}
-                        onChange={(e) => setEdit({ ...edit, dni: e.target.value })}
-                      />
-                    ) : c.dni ? (
-                      c.dni
-                    ) : (
-                      <span className="text-muted" title="Se anonimizó automáticamente por retención de datos (chofer inactivo hace más de un año)">
-                        Anonimizado
-                      </span>
-                    )}
-                  </td>
+
                   <td>
                     {enEdicion ? (
                       <input
@@ -251,7 +230,7 @@ export function Choferes() {
             })}
             {choferes.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={5} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No hay choferes registrados
                 </td>
               </tr>
