@@ -11,26 +11,65 @@ clientesRouter.use(requireAuth);
 
 /**
  * GET /api/clientes — listado con totales de viajes (join por teléfono, ver
- * clientes.service.ts). Suma el pago en efectivo más reciente que todavía no
- * se marcó cobrado (si tiene alguno) para poder mostrar/tildar "Pagado" de
- * un vistazo en la tabla, sin tener que entrar al perfil de cada cliente
- * (ver migración 0043 y PATCH /api/pagos/:id/cobrado).
+ * clientes.service.ts) y un único número de "deuda" por cliente para poder
+ * mostrarlo de un vistazo en la tabla, sin entrar al perfil de cada uno:
+ *  - Cuenta corriente (aprobada/pendiente): saldo = cargos - abonos, mismo
+ *    criterio que resumenCuentaCorriente() en reportes.service.ts.
+ *  - Ocasional (sin_pedir/rechazada): suma de pedidos sin pagar, mismo
+ *    criterio que itemsDeuda() en reportes.service.ts (deben mantenerse en
+ *    sync si cambia la definición de "pagado").
  */
 clientesRouter.get('/', async (_req: Request, res: Response) => {
   const rows = await query(
     `SELECT cl.id, cl.nombre, cl.telefono, cl.cuenta_corriente_estado, cl.numero_plan, cl.creado_en,
-            COUNT(v.id)::int AS cantidad_viajes, MAX(v.fecha) AS ultimo_viaje,
-            ep.id AS efectivo_pendiente_id, ep.monto AS efectivo_pendiente_monto
+            COUNT(v.id)::int AS cantidad_viajes,
+            CASE WHEN cl.cuenta_corriente_estado IN ('aprobada', 'pendiente')
+                 THEN COALESCE(cc.saldo, 0)
+                 ELSE COALESCE(oc.deuda, 0)
+            END AS deuda
        FROM clientes cl
        LEFT JOIN viajes v ON v.cliente_telefono = cl.telefono
        LEFT JOIN LATERAL (
-         SELECT p.id, COALESCE(p.monto, pe.precio) AS monto
-           FROM pagos p
-           LEFT JOIN pedidos pe ON pe.id = p.pedido_id
-          WHERE p.cliente_telefono = cl.telefono AND p.medio_pago = 'efectivo' AND p.efectivo_cobrado = FALSE
-          ORDER BY p.creado_en DESC LIMIT 1
-       ) ep ON true
-      GROUP BY cl.id, ep.id, ep.monto
+         SELECT
+           COALESCE((
+             SELECT SUM(monto) FROM (
+               SELECT pe.precio AS monto
+                 FROM pedidos pe
+                WHERE pe.cliente_telefono = cl.telefono
+                  AND EXISTS (SELECT 1 FROM pagos pg WHERE pg.pedido_id = pe.id AND pg.es_cuenta_corriente = TRUE)
+               UNION ALL
+               SELECT v2.importe AS monto FROM viajes v2
+                WHERE v2.cliente_telefono = cl.telefono AND v2.es_cuenta_corriente = TRUE
+               UNION ALL
+               SELECT pg2.monto FROM pagos pg2
+                WHERE pg2.cliente_telefono = cl.telefono AND pg2.tipo = 'alargue_retiro' AND pg2.es_cuenta_corriente = TRUE
+             ) cargos
+           ), 0)
+           -
+           COALESCE((
+             SELECT SUM(monto) FROM pagos
+              WHERE cliente_telefono = cl.telefono AND tipo = 'abono_cc' AND estado = 'validado'
+           ), 0) AS saldo
+       ) cc ON true
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(monto), 0) AS deuda FROM (
+           SELECT v3.importe AS monto
+             FROM viajes v3
+             LEFT JOIN pagos pg3 ON pg3.id = v3.pago_id
+            WHERE v3.cliente_telefono = cl.telefono
+              AND NOT (v3.tipo = 'retiro' AND v3.grupo_id IS NULL)
+              AND v3.es_cuenta_corriente = FALSE
+              AND ((pg3.medio_pago = 'efectivo' AND pg3.efectivo_cobrado = FALSE)
+                   OR (pg3.medio_pago = 'transferencia' AND pg3.estado <> 'validado'))
+           UNION ALL
+           SELECT pg4.monto
+             FROM pagos pg4
+            WHERE pg4.cliente_telefono = cl.telefono AND pg4.tipo = 'alargue_retiro' AND pg4.es_cuenta_corriente = FALSE
+              AND ((pg4.medio_pago = 'efectivo' AND pg4.efectivo_cobrado = FALSE)
+                   OR (pg4.medio_pago = 'transferencia' AND pg4.estado <> 'validado'))
+         ) items
+       ) oc ON true
+      GROUP BY cl.id, cc.saldo, oc.deuda
       ORDER BY cl.nombre`,
   );
   res.json(rows);

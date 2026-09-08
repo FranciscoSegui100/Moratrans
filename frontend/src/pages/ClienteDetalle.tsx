@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Download, Send, Pencil, X, Wallet, Receipt, CircleDollarSign, Plus, Trash2 } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
@@ -105,6 +105,7 @@ function etiquetaMes(mes: string): string {
 
 export function ClienteDetalle() {
   const { telefono = '' } = useParams<{ telefono: string }>();
+  const navigate = useNavigate();
   const { show } = useToast();
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -235,6 +236,20 @@ export function ClienteDetalle() {
     }
   }
 
+  /** Baja definitiva del cliente — mismo endpoint que antes vivía en la lista de Clientes. */
+  async function eliminarCliente() {
+    if (!cliente) return;
+    if (!confirm(`¿Eliminar a ${cliente.nombre}? No se puede deshacer.`)) return;
+    try {
+      await api.delete(`/api/clientes/${cliente.id}`);
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      show('success', 'Cliente eliminado');
+      navigate('/clientes');
+    } catch (err: any) {
+      show('error', 'No se pudo eliminar', err.response?.data?.error);
+    }
+  }
+
   const { data: clientes = [] } = useQuery({
     queryKey: ['clientes'],
     queryFn: () => api.get<Cliente[]>('/api/clientes').then((r) => r.data),
@@ -278,9 +293,16 @@ export function ClienteDetalle() {
   return (
     <div>
       <div className="page-header">
-        <Link to="/clientes" className="btn btn-ghost btn-sm" style={{ marginBottom: '10px' }}>
-          <ArrowLeft size={14} strokeWidth={1.75} /> Volver a Clientes
-        </Link>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+          <Link to="/clientes" className="btn btn-ghost btn-sm" style={{ margin: 0 }}>
+            <ArrowLeft size={14} strokeWidth={1.75} /> Volver a Clientes
+          </Link>
+          <RoleGate roles={['admin', 'operador', 'finanzas']}>
+            <button className="btn btn-danger btn-sm" onClick={eliminarCliente} title="Eliminar cliente">
+              <Trash2 size={13} strokeWidth={1.75} /> Eliminar cliente
+            </button>
+          </RoleGate>
+        </div>
         <h2>{cliente?.nombre ?? telefono}</h2>
         <p>
           {telefono}

@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { Check, X, Download, Pencil, ArrowRight, Send, Plus, Trash2, Banknote } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Check, X, Download, Pencil, Send, Plus } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { useAuth, tieneRol } from '../context/AuthContext';
-import { formatearFecha } from '../lib/fechas';
 
 interface Cliente {
   id: string;
@@ -15,9 +14,7 @@ interface Cliente {
   cuenta_corriente_estado: 'sin_pedir' | 'pendiente' | 'aprobada' | 'rechazada';
   numero_plan: number | null;
   cantidad_viajes: number;
-  ultimo_viaje: string | null;
-  efectivo_pendiente_id: string | null;
-  efectivo_pendiente_monto: string | null;
+  deuda: number;
 }
 
 type Pestana = 'cuenta_corriente' | 'ocasionales';
@@ -32,6 +29,7 @@ function esCuentaCorriente(c: Cliente): boolean {
 export function Clientes() {
   const { show } = useToast();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const puedeEditarPlan = tieneRol(user, 'admin', 'operador', 'finanzas');
   const queryClient = useQueryClient();
   const [editandoPlan, setEditandoPlan] = useState<string | null>(null);
@@ -59,28 +57,6 @@ export function Clientes() {
       show('success', estado === 'aprobada' ? 'Cuenta corriente aprobada' : 'Cuenta corriente rechazada');
     } catch {
       show('error', 'No se pudo actualizar la cuenta corriente');
-    }
-  }
-
-  /** Marca cobrado el pago en efectivo más reciente de este cliente que todavía no lo estaba (ver PATCH /api/pagos/:id/cobrado). */
-  async function marcarCobrado(pagoId: string) {
-    try {
-      await api.patch(`/api/pagos/${pagoId}/cobrado`, { cobrado: true });
-      queryClient.invalidateQueries({ queryKey: ['clientes'] });
-      show('success', 'Marcado como pagado');
-    } catch (err: any) {
-      show('error', 'No se pudo actualizar', err.response?.data?.error);
-    }
-  }
-
-  async function eliminarCliente(c: Cliente) {
-    if (!confirm(`¿Eliminar a ${c.nombre}? No se puede deshacer.`)) return;
-    try {
-      await api.delete(`/api/clientes/${c.id}`);
-      queryClient.invalidateQueries({ queryKey: ['clientes'] });
-      show('success', 'Cliente eliminado');
-    } catch (err: any) {
-      show('error', 'No se pudo eliminar', err.response?.data?.error);
     }
   }
 
@@ -222,20 +198,25 @@ export function Clientes() {
               <th>Cliente</th>
               <th>Teléfono</th>
               <th>Nº plan</th>
-              <th>Viajes</th>
-              <th>Último viaje</th>
-              <th>Pago efectivo</th>
-              <th>Acciones</th>
-              <th></th>
+              <th>Pedidos</th>
+              <th>Deuda</th>
+              {pestana === 'cuenta_corriente' && <th>Acciones</th>}
+              {pestana === 'cuenta_corriente' && <th></th>}
             </tr>
           </thead>
           <tbody>
             {clientes.map((c) => {
+              const debe = Number(c.deuda) > 0;
               return (
-                <tr key={c.id}>
+                <tr
+                  key={c.id}
+                  onClick={() => navigate(`/clientes/${encodeURIComponent(c.telefono)}`)}
+                  style={{ cursor: 'pointer' }}
+                  title="Ver perfil del cliente"
+                >
                   <td className="strong">{c.nombre}</td>
                   <td>{c.telefono}</td>
-                  <td className="mono">
+                  <td className="mono" onClick={(e) => e.stopPropagation()}>
                     {editandoPlan === c.id ? (
                       <div style={{ display: 'flex', gap: '4px' }}>
                         <input
@@ -260,92 +241,58 @@ export function Clientes() {
                     )}
                   </td>
                   <td>{c.cantidad_viajes}</td>
-                  <td style={{ whiteSpace: 'nowrap' }}>{c.ultimo_viaje ? formatearFecha(c.ultimo_viaje) : <span className="text-muted">—</span>}</td>
                   <td>
-                    {c.efectivo_pendiente_id ? (
-                      puedeEditarPlan ? (
-                        <button
-                          className="badge rechazado"
-                          style={{ border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                          onClick={() => marcarCobrado(c.efectivo_pendiente_id!)}
-                          title="Click para marcar como pagado"
-                        >
-                          <Banknote size={11} strokeWidth={1.75} />
-                          No pagado{c.efectivo_pendiente_monto ? ` · $${Number(c.efectivo_pendiente_monto).toLocaleString('es-AR')}` : ''}
-                        </button>
-                      ) : (
-                        <span className="badge rechazado">
-                          ❌ No pagado{c.efectivo_pendiente_monto ? ` · $${Number(c.efectivo_pendiente_monto).toLocaleString('es-AR')}` : ''}
-                        </span>
-                      )
+                    {esCuentaCorriente(c) ? (
+                      debe
+                        ? <span className="badge rechazado">Debe ${Number(c.deuda).toLocaleString('es-AR')}</span>
+                        : <span className="badge disponible">Al día</span>
                     ) : (
-                      <span className="text-muted">—</span>
+                      debe
+                        ? <span className="badge rechazado">Sí · ${Number(c.deuda).toLocaleString('es-AR')}</span>
+                        : <span className="badge disponible">No</span>
                     )}
                   </td>
-                  <td>
-                    <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                      {c.cuenta_corriente_estado === 'pendiente' && (
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                          <button onClick={() => cambiarCuentaCorriente(c.id, 'aprobada')} className="btn btn-success btn-sm">
-                            <Check strokeWidth={2} /> Aprobar
-                          </button>
+                  {pestana === 'cuenta_corriente' && (
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                        {c.cuenta_corriente_estado === 'pendiente' && (
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button onClick={() => cambiarCuentaCorriente(c.id, 'aprobada')} className="btn btn-success btn-sm">
+                              <Check strokeWidth={2} /> Aprobar
+                            </button>
+                            <button onClick={() => cambiarCuentaCorriente(c.id, 'rechazada')} className="btn btn-danger btn-sm">
+                              <X strokeWidth={2} /> Rechazar
+                            </button>
+                          </div>
+                        )}
+                        {c.cuenta_corriente_estado === 'aprobada' && (
                           <button onClick={() => cambiarCuentaCorriente(c.id, 'rechazada')} className="btn btn-danger btn-sm">
-                            <X strokeWidth={2} /> Rechazar
+                            <X strokeWidth={2} /> Dar de baja
                           </button>
-                        </div>
-                      )}
-                      {c.cuenta_corriente_estado === 'aprobada' && (
-                        <button onClick={() => cambiarCuentaCorriente(c.id, 'rechazada')} className="btn btn-danger btn-sm">
-                          <X strokeWidth={2} /> Dar de baja
-                        </button>
-                      )}
-                      {(c.cuenta_corriente_estado === 'sin_pedir' || c.cuenta_corriente_estado === 'rechazada') && (
+                        )}
+                      </RoleGate>
+                    </td>
+                  )}
+                  {pestana === 'cuenta_corriente' && (
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <RoleGate roles={['admin', 'operador', 'finanzas']}>
                         <button
-                          onClick={() => cambiarCuentaCorriente(c.id, 'aprobada')}
-                          className="btn btn-success btn-sm"
-                          style={{ fontSize: '0.76rem', whiteSpace: 'nowrap' }}
+                          className="btn btn-ghost btn-sm"
+                          title="Enviar su Excel de movimientos por WhatsApp"
+                          onClick={() => enviarPorWhatsApp(c.telefono)}
+                          disabled={enviando === c.telefono}
                         >
-                          <Check size={13} strokeWidth={2} /> Dar de alta como cuenta corriente
+                          <Send size={13} strokeWidth={1.75} /> {enviando === c.telefono ? '...' : 'Enviar'}
                         </button>
-                      )}
-                    </RoleGate>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <Link to={`/clientes/${encodeURIComponent(c.telefono)}`} className="btn btn-ghost btn-sm">
-                        Ingresar <ArrowRight size={13} strokeWidth={1.75} />
-                      </Link>
-                      {pestana === 'cuenta_corriente' && (
-                        <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            title="Enviar su Excel de movimientos por WhatsApp"
-                            onClick={() => enviarPorWhatsApp(c.telefono)}
-                            disabled={enviando === c.telefono}
-                          >
-                            <Send size={13} strokeWidth={1.75} /> {enviando === c.telefono ? '...' : 'Enviar'}
-                          </button>
-                        </RoleGate>
-                      )}
-                      {pestana === 'ocasionales' && (
-                        <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                          <button
-                            className="btn btn-danger btn-sm"
-                            title="Eliminar cliente"
-                            onClick={() => eliminarCliente(c)}
-                          >
-                            <Trash2 size={13} strokeWidth={1.75} /> Eliminar
-                          </button>
-                        </RoleGate>
-                      )}
-                    </div>
-                  </td>
+                      </RoleGate>
+                    </td>
+                  )}
                 </tr>
               );
             })}
             {clientes.length === 0 && (
               <tr>
-                <td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={pestana === 'cuenta_corriente' ? 7 : 5} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   {todosLosClientes.length === 0
                     ? 'Todavía no hay clientes registrados (aparecen solos cuando cotizan por WhatsApp).'
                     : pestana === 'cuenta_corriente'
