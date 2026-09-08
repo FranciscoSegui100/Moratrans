@@ -59,11 +59,18 @@ interface MovimientoDetalle {
 }
 
 /**
- * Todos los movimientos facturables de los clientes (entregas, retiros,
- * recambios, extensiones de retiro), con toda la información necesaria para
- * un reporte contable real: quién es el cliente (nombre + teléfono, no solo
- * un Nº de plan interno), qué se movió, con qué medio de pago y en qué
- * estado. Base de las tres hojas de excelClientes().
+ * Todos los movimientos FACTURABLES de los clientes (entregas, recambios,
+ * extensiones de retiro), con toda la información necesaria para un reporte
+ * contable real: quién es el cliente (nombre + teléfono, no solo un Nº de
+ * plan interno), qué se movió, con qué medio de pago y en qué estado. Base
+ * de las tres hojas de excelClientes().
+ *
+ * A pedido se excluye el retiro suelto (v.tipo='retiro' sin grupo_id): es un
+ * movimiento logístico real, pero nunca cobra nada aparte (el costo ya se
+ * cubrió al entregar) — no aporta nada a un reporte pensado para facturación,
+ * así que ni siquiera se trae de la base. El retiro que SÍ es parte de un
+ * recambio (grupo_id) se mantiene: ese sí importa para el detalle del
+ * movimiento, aunque el importe quede en la pata de 'entrega' del mismo par.
  *
  * Dos fuentes, igual que antes (ver comentario original que esto reemplaza):
  *  1. `viajes` con cliente_telefono — el grueso de los movimientos logísticos.
@@ -78,8 +85,7 @@ async function movimientosDetalle(mes?: string, telefono?: string): Promise<Movi
        SELECT v.fecha, v.cliente_telefono,
               CASE
                 WHEN v.grupo_id IS NOT NULL THEN 'Recambio'
-                WHEN v.tipo = 'entrega' THEN 'Entrega'
-                ELSE 'Retiro'
+                ELSE 'Entrega'
               END AS tipo_movimiento,
               v.contenedor_numero, v.zona, v.destino_direccion AS direccion,
               v.patente, ch.nombre AS chofer_nombre, v.remito, v.importe,
@@ -102,6 +108,7 @@ async function movimientosDetalle(mes?: string, telefono?: string): Promise<Movi
          LEFT JOIN choferes ch ON ch.id = v.chofer_id
          LEFT JOIN pagos pg ON pg.id = v.pago_id
         WHERE v.cliente_telefono IS NOT NULL
+          AND NOT (v.tipo = 'retiro' AND v.grupo_id IS NULL)
           AND ($1::text IS NULL OR to_char(v.fecha, 'YYYY-MM') = $1)
           AND ($2::text IS NULL OR v.cliente_telefono = $2)
         UNION ALL
@@ -130,7 +137,6 @@ interface ResumenMesClientes {
   mes: string;
   cantidad: number;
   entregas: number;
-  retiros: number;
   recambios: number;
   extensiones: number;
   total: number;
@@ -142,12 +148,11 @@ function resumenPorMes(movs: MovimientoDetalle[]): ResumenMesClientes[] {
   const porMes = new Map<string, ResumenMesClientes>();
   for (const m of movs) {
     if (!porMes.has(m.mes)) {
-      porMes.set(m.mes, { mes: m.mes, cantidad: 0, entregas: 0, retiros: 0, recambios: 0, extensiones: 0, total: 0, clientesActivos: 0 });
+      porMes.set(m.mes, { mes: m.mes, cantidad: 0, entregas: 0, recambios: 0, extensiones: 0, total: 0, clientesActivos: 0 });
     }
     const acc = porMes.get(m.mes)!;
     const importe = m.importe ? Number(m.importe) : 0;
     if (m.tipo_movimiento === 'Entrega') acc.entregas += importe;
-    else if (m.tipo_movimiento === 'Retiro') acc.retiros += importe;
     else if (m.tipo_movimiento === 'Recambio') acc.recambios += importe;
     else acc.extensiones += importe;
     acc.total += importe;
@@ -310,7 +315,6 @@ export async function excelClientes(mes?: string, telefono?: string): Promise<Bu
   const columnasResumen = [
     { header: 'MES', key: 'mesTexto', width: 16 },
     { header: 'ENTREGAS', key: 'entregas', width: 16 },
-    { header: 'RETIROS', key: 'retiros', width: 16 },
     { header: 'RECAMBIOS', key: 'recambios', width: 16 },
     { header: 'EXTENSIONES', key: 'extensiones', width: 16 },
     { header: 'TOTAL FACTURADO', key: 'total', width: 18 },
@@ -331,7 +335,6 @@ export async function excelClientes(mes?: string, telefono?: string): Promise<Bu
     const filaTotal = wsResumen.addRow({
       mesTexto: 'TOTAL DEL PERÍODO',
       entregas: resumen.reduce((s, r) => s + r.entregas, 0),
-      retiros: resumen.reduce((s, r) => s + r.retiros, 0),
       recambios: resumen.reduce((s, r) => s + r.recambios, 0),
       extensiones: resumen.reduce((s, r) => s + r.extensiones, 0),
       total: resumen.reduce((s, r) => s + r.total, 0),
@@ -341,7 +344,7 @@ export async function excelClientes(mes?: string, telefono?: string): Promise<Bu
     filaTotal.font = { bold: true };
     filaTotal.eachCell((c) => (c.border = { top: { style: 'thin', color: { argb: argb(AZUL) } } }));
   }
-  ['entregas', 'retiros', 'recambios', 'extensiones', 'total'].forEach((k) => (wsResumen.getColumn(k).numFmt = '"$"#,##0.00'));
+  ['entregas', 'recambios', 'extensiones', 'total'].forEach((k) => (wsResumen.getColumn(k).numFmt = '"$"#,##0.00'));
   dibujarPieHojaClientes(wsResumen, columnasResumen.length);
 
   // ---------- Hoja 2: Clientes (todos) o Datos del cliente (uno puntual) ----------
