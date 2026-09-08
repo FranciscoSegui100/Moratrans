@@ -652,6 +652,127 @@ export async function enviarResumenCuentaCorrientePorWhatsApp(telefono: string, 
   );
 }
 
+interface ItemDeuda {
+  fecha: string;
+  contenedor_numero: string | null;
+  concepto: string;
+  monto: string | null;
+}
+
+/**
+ * Pedidos SIN PAGAR de un cliente OCASIONAL (paga por transferencia o
+ * efectivo en cada viaje, no tiene cuenta corriente): a diferencia de
+ * itemsCuentaCorriente (deuda diferida a propósito, de un cliente aprobado),
+ * acá cada pedido debería estar pago de una — así que "sin pagar" es
+ * anómalo, algo para reclamarle al cliente, no un ciclo de facturación
+ * normal. Mismo criterio que movimientosDetalle (ver excelClientes) para
+ * decidir "pagado": transferencia validada, o efectivo ya cobrado por el
+ * chofer. Se excluye es_cuenta_corriente porque ese circuito ya tiene su
+ * propio concepto de deuda (itemsCuentaCorriente).
+ */
+async function itemsDeuda(telefono: string): Promise<ItemDeuda[]> {
+  return query<ItemDeuda>(
+    `SELECT v.fecha::text AS fecha, v.contenedor_numero,
+            CASE WHEN v.grupo_id IS NOT NULL THEN 'Recambio' ELSE 'Entrega' END AS concepto,
+            v.importe::text AS monto
+       FROM viajes v
+       LEFT JOIN pagos pg ON pg.id = v.pago_id
+      WHERE v.cliente_telefono = $1
+        AND NOT (v.tipo = 'retiro' AND v.grupo_id IS NULL)
+        AND v.es_cuenta_corriente = FALSE
+        AND (
+          (pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado = FALSE)
+          OR (pg.medio_pago = 'transferencia' AND pg.estado <> 'validado')
+        )
+     UNION ALL
+     SELECT pg.creado_en::text AS fecha, pg.contenedor_numero,
+            'Extensión de retiro' AS concepto, pg.monto::text AS monto
+       FROM pagos pg
+      WHERE pg.cliente_telefono = $1 AND pg.tipo = 'alargue_retiro' AND pg.es_cuenta_corriente = FALSE
+        AND (
+          (pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado = FALSE)
+          OR (pg.medio_pago = 'transferencia' AND pg.estado <> 'validado')
+        )
+      ORDER BY fecha`,
+    [telefono],
+  );
+}
+
+/** Deuda de un cliente ocasional: items sin pagar + el total — para la ficha del cliente en el panel y el PDF que se le manda por WhatsApp. */
+export async function deudaCliente(telefono: string) {
+  const items = await itemsDeuda(telefono);
+  return { items, total: sumarMontos(items) };
+}
+
+/**
+ * PDF de "Pedidos pendientes de pago" para un cliente OCASIONAL — a
+ * diferencia de pdfResumenCuentaCorriente (pensado para el ciclo normal de
+ * un cliente de cuenta corriente), este solo tiene sentido mandarlo cuando
+ * hay algo sin pagar de verdad (ver POST /:telefono/enviar-resumen-deuda,
+ * que no lo manda si la lista viene vacía).
+ */
+export function pdfDeudaCliente(
+  clienteNombre: string,
+  clienteTelefono: string,
+  items: ItemDeuda[],
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 0 });
+    const chunks: Buffer[] = [];
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    let y = dibujarEncabezado(doc, 'PEDIDOS PENDIENTES DE PAGO', [new Date().toLocaleString('es-AR')]);
+    y += 25;
+
+    y = dibujarTituloSeccion(doc, y, 'Datos del cliente');
+    y = dibujarFila(doc, y, 'Nombre', clienteNombre);
+    y = dibujarFila(doc, y, 'Teléfono', clienteTelefono);
+    y += 15;
+
+    y = dibujarTituloSeccion(doc, y, 'Pedidos sin pagar');
+    items.forEach((it) => {
+      const monto = it.monto ? Number(it.monto) : 0;
+      const detalle = [it.contenedor_numero, it.monto ? '$' + monto.toLocaleString('es-AR') : 's/monto'].filter(Boolean).join('  —  ');
+      y = dibujarFila(doc, y, `${formatearFechaCorta(it.fecha)} · ${it.concepto}`, detalle);
+    });
+    y += 10;
+
+    dibujarMontoDestacado(doc, y, `$${sumarMontos(items).toLocaleString('es-AR')}`, {
+      etiqueta: 'TOTAL PENDIENTE DE PAGO',
+      fontSize: 24,
+      alto: 56,
+    });
+    dibujarPiePagina(doc, 'Para regularizar, escribí "Enviar comprobante" en el menú de WhatsApp.');
+
+    doc.end();
+  });
+}
+
+/**
+ * Genera y manda por WhatsApp el PDF de deuda de un cliente ocasional (ver
+ * pdfDeudaCliente) — lo dispara un operador desde el panel (POST
+ * /:telefono/enviar-resumen-deuda). Tira si no hay nada pendiente: no tiene
+ * sentido mandarle a alguien un PDF diciéndole que no debe nada.
+ */
+export async function enviarDeudaClientePorWhatsApp(telefono: string, clienteNombre: string | null): Promise<void> {
+  const { items, total } = await deudaCliente(telefono);
+  if (items.length === 0 || total <= 0) {
+    throw new Error('Este cliente no tiene pedidos pendientes de pago.');
+  }
+  const nombre = clienteNombre ?? 'Cliente';
+  const buf = await pdfDeudaCliente(nombre, telefono, items);
+  const nombreArchivo = `MORATRANS DEUDA - ${nombreArchivoSeguro(nombre)}.pdf`;
+  const mediaId = await uploadMedia(buf, 'application/pdf', nombreArchivo);
+  await sendDocument(
+    telefono,
+    mediaId,
+    nombreArchivo,
+    `📋 Tenés pedidos pendientes de pago por un total de *$${total.toLocaleString('es-AR')}*.\n\n_Para regularizar, escribí *Enviar comprobante* en el menú._`,
+  );
+}
+
 /**
  * Genera un PDF (buffer) con un resumen de pagos.
  * `verComprobante` controla, según el rol, si se listan las referencias sensibles.

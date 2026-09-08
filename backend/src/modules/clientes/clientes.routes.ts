@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
-import { excelClientes, enviarExcelClientePorWhatsApp, enviarResumenCuentaCorrientePorWhatsApp, resumenCuentaCorriente } from '../reportes/reportes.service';
+import { excelClientes, enviarExcelClientePorWhatsApp, enviarResumenCuentaCorrientePorWhatsApp, resumenCuentaCorriente, deudaCliente, enviarDeudaClientePorWhatsApp } from '../reportes/reportes.service';
 import { motivoErrorWa } from '../whatsapp/graphApi';
 import { normalizarTelefonoAR } from '../../services/telefono.service';
 
@@ -92,6 +92,44 @@ clientesRouter.post(
     } catch (e) {
       const motivo = motivoErrorWa(e);
       console.error('Error enviando resumen de cuenta por WhatsApp:', motivo);
+      res.status(502).json({ error: `No se pudo enviar por WhatsApp: ${motivo}` });
+    }
+  },
+);
+
+/**
+ * GET /api/clientes/:telefono/deuda — pedidos sin pagar de un cliente
+ * OCASIONAL (ver reportes.service.ts::deudaCliente), para mostrar "Posee
+ * deuda: Sí/No" en la ficha del cliente sin tener que abrir cada viaje.
+ */
+clientesRouter.get('/:telefono/deuda', async (req: Request, res: Response) => {
+  const resumen = await deudaCliente(req.params.telefono);
+  res.json(resumen);
+});
+
+/**
+ * POST /api/clientes/:telefono/enviar-resumen-deuda — a diferencia de
+ * enviar-resumen-cuenta (pensado para cuenta corriente), esto es para un
+ * cliente OCASIONAL: le manda solo sus pedidos sin pagar, no un historial
+ * completo que no le corresponde ver. 409 si no tiene nada pendiente (ver
+ * enviarDeudaClientePorWhatsApp) — no es un error de WhatsApp, así que no
+ * pasa por motivoErrorWa.
+ */
+clientesRouter.post(
+  '/:telefono/enviar-resumen-deuda',
+  requireRol('admin', 'operador', 'finanzas'),
+  async (req: Request, res: Response) => {
+    const telefono = req.params.telefono;
+    const [cliente] = await query<{ nombre: string }>('SELECT nombre FROM clientes WHERE telefono = $1', [telefono]);
+    try {
+      await enviarDeudaClientePorWhatsApp(telefono, cliente?.nombre ?? null);
+      res.json({ ok: true });
+    } catch (e: any) {
+      if (e?.message === 'Este cliente no tiene pedidos pendientes de pago.') {
+        return res.status(409).json({ error: e.message });
+      }
+      const motivo = motivoErrorWa(e);
+      console.error('Error enviando resumen de deuda por WhatsApp:', motivo);
       res.status(502).json({ error: `No se pudo enviar por WhatsApp: ${motivo}` });
     }
   },

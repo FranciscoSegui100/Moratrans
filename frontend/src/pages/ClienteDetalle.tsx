@@ -29,6 +29,19 @@ interface Cliente {
   telefono: string;
   cuenta_corriente_estado: 'sin_pedir' | 'pendiente' | 'aprobada' | 'rechazada';
   numero_plan: number | null;
+  cantidad_viajes: number;
+}
+
+interface ItemDeuda {
+  fecha: string;
+  contenedor_numero: string | null;
+  concepto: string;
+  monto: string | null;
+}
+
+interface ResumenDeuda {
+  items: ItemDeuda[];
+  total: number;
 }
 
 interface ItemCuentaCorriente {
@@ -71,10 +84,10 @@ interface ViajeCliente {
 }
 
 const ETIQUETA_CC: Record<Cliente['cuenta_corriente_estado'], { texto: string; clase: string }> = {
-  sin_pedir: { texto: 'Sin pedir', clase: 'retirado' },
-  pendiente: { texto: 'Pendiente', clase: 'pendiente' },
-  aprobada: { texto: 'Aprobada', clase: 'disponible' },
-  rechazada: { texto: 'Rechazada', clase: 'rechazado' },
+  sin_pedir: { texto: 'Ocasional', clase: 'retirado' },
+  pendiente: { texto: 'Cuenta corriente (pendiente de aprobar)', clase: 'pendiente' },
+  aprobada: { texto: 'Cuenta corriente', clase: 'disponible' },
+  rechazada: { texto: 'Ocasional (cta. cte. rechazada)', clase: 'rechazado' },
 };
 
 /** Mismo criterio que excelClientes() en el backend — mantener en sync. */
@@ -190,16 +203,35 @@ export function ClienteDetalle() {
     }
   }
 
-  /** Mismo PDF que el cliente puede pedir él mismo con "📊 Resumen de cuenta" por WhatsApp (ver movimientos.flow.ts). */
+  /**
+   * Un cliente de cuenta corriente recibe el mismo PDF que puede pedir él
+   * mismo con "📊 Resumen de cuenta" por WhatsApp (ver movimientos.flow.ts) —
+   * tiene sentido que vea su historial completo, porque paga a fin de mes.
+   * Un cliente OCASIONAL en cambio paga cada viaje por separado: no le sirve
+   * ver un historial, solo le interesa si le quedó algo sin pagar (ver
+   * enviar-resumen-deuda) — y si no tiene nada pendiente, ni se manda nada.
+   */
   async function enviarResumenPorWhatsApp() {
     setEnviando(true);
     try {
-      await api.post(`/api/clientes/${encodeURIComponent(telefono)}/enviar-resumen-cuenta`);
+      await api.post(`/api/clientes/${encodeURIComponent(telefono)}/${esCC ? 'enviar-resumen-cuenta' : 'enviar-resumen-deuda'}`);
       show('success', 'Enviado por WhatsApp', telefono);
     } catch (err: any) {
       show('error', 'No se pudo enviar', err.response?.data?.error);
     } finally {
       setEnviando(false);
+    }
+  }
+
+  /** Da de alta a un cliente ocasional como cuenta corriente — mismo mecanismo que la pestaña Clientes. */
+  async function cambiarACuentaCorriente() {
+    if (!cliente) return;
+    try {
+      await api.patch(`/api/clientes/${cliente.id}`, { cuenta_corriente_estado: 'aprobada' });
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      show('success', 'Cliente pasado a cuenta corriente');
+    } catch (err: any) {
+      show('error', 'No se pudo actualizar', err.response?.data?.error);
     }
   }
 
@@ -215,6 +247,12 @@ export function ClienteDetalle() {
     enabled: !!telefono,
   });
   const esCC = cliente?.cuenta_corriente_estado === 'aprobada' || cliente?.cuenta_corriente_estado === 'pendiente';
+
+  const { data: deuda } = useQuery({
+    queryKey: ['clientes', telefono, 'deuda'],
+    queryFn: () => api.get<ResumenDeuda>(`/api/clientes/${encodeURIComponent(telefono)}/deuda`).then((r) => r.data),
+    enabled: !!telefono && !esCC,
+  });
 
   const { data: cuentaCorriente } = useQuery({
     queryKey: ['clientes', telefono, 'cuenta-corriente'],
@@ -247,8 +285,37 @@ export function ClienteDetalle() {
         <p>
           {telefono}
           {cliente?.numero_plan != null && <> · Nº plan {cliente.numero_plan}</>}
-          {cc && <> · <span className={`badge ${cc.clase}`}>{cc.texto}</span></>}
         </p>
+      </div>
+
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '20px' }}>
+        <div className="stat" style={{ flex: '1 1 160px' }}>
+          <div className="l">Pedidos</div>
+          <div className="n">{cliente?.cantidad_viajes ?? '—'}</div>
+        </div>
+        <div className="stat" style={{ flex: '1 1 220px' }}>
+          <div className="l">Tipo de cliente</div>
+          {cc && (
+            <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span className={`badge ${cc.clase}`}>{cc.texto}</span>
+              {(cliente?.cuenta_corriente_estado === 'sin_pedir' || cliente?.cuenta_corriente_estado === 'rechazada') && (
+                <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                  <button className="btn btn-ghost btn-sm" onClick={cambiarACuentaCorriente}>
+                    Cambiar a cliente cuenta corriente
+                  </button>
+                </RoleGate>
+              )}
+            </div>
+          )}
+        </div>
+        {!esCC && (
+          <div className="stat" style={{ flex: '1 1 160px' }}>
+            <div className="l">Deuda</div>
+            <div className={`n${deuda && deuda.total > 0 ? ' warn' : ''}`} style={{ fontSize: '1.15rem' }}>
+              {!deuda ? '—' : deuda.total > 0 ? `Sí · $${deuda.total.toLocaleString('es-AR')}` : 'No'}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="form-card" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
@@ -261,7 +328,9 @@ export function ClienteDetalle() {
         <small className="text-muted">Incluye su resumen facturado por mes, su ficha, y el detalle de todos sus pedidos.</small>
         <RoleGate roles={['admin', 'operador', 'finanzas']}>
           <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={enviarResumenPorWhatsApp} disabled={enviando}>
-            <Send strokeWidth={1.75} /> {enviando ? 'Enviando...' : 'Enviar resumen de cuenta por WhatsApp'}
+            <Send strokeWidth={1.75} />
+            {' '}
+            {enviando ? 'Enviando...' : esCC ? 'Enviar resumen de cuenta por WhatsApp' : 'Enviar deuda pendiente por WhatsApp'}
           </button>
         </RoleGate>
       </div>
