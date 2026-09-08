@@ -1,6 +1,6 @@
 /**
  * Rotación de ENCRYPTION_KEY: descifra con la clave vieja lo que ya está
- * guardado (DNI de choferes, comprobantes/facturas, secreto TOTP de MFA) y
+ * guardado (comprobantes/facturas, secreto TOTP de MFA) y
  * lo vuelve a cifrar/indexar con la nueva. También re-encripta el CONTENIDO
  * BINARIO de comprobantes/facturas en Supabase Storage (no solo la ruta en
  * la DB) — desde que ese binario se sube cifrado (sección 9, ver
@@ -163,17 +163,10 @@ async function main() {
     console.warn('⚠ Faltan SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY: no se va a poder rotar el contenido del storage.');
   }
 
-  const choferes = await pool.query<{ id: string; dni_enc: string }>(
-    'SELECT id, dni_enc FROM choferes WHERE dni_enc IS NOT NULL',
-  );
-  await migrarTabla('choferes', choferes.rows, async (c) => {
-    const dni = decryptWith(oldKey, c.dni_enc);
-    await pool.query('UPDATE choferes SET dni_enc = $1, dni_hash = $2 WHERE id = $3', [
-      encryptWith(newKey, dni),
-      blindIndexWith(newKey, dni),
-      c.id,
-    ]);
-  }, confirmar);
+  // Choferes DNI migration removed – DNI columns have been dropped.
+  // Previously, encrypted DNI data would be re‑encrypted with the new key.
+  // This block is no longer needed after the schema change.
+
 
   const pagos = await pool.query<{ id: string; url_comprobante: string | null; factura_url: string | null }>(
     'SELECT id, url_comprobante, factura_url FROM pagos WHERE url_comprobante IS NOT NULL OR factura_url IS NOT NULL',

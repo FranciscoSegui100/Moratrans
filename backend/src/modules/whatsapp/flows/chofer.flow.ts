@@ -2,7 +2,7 @@ import { query } from '../../../config/db';
 import { sendText, sendList } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
-import { blindIndex } from '../../../services/crypto.service';
+
 import { finalizarRetiro } from '../../../services/retiro.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { DIAS_ALQUILER_ANTES_RETIRO } from '../../../config/bot.config';
@@ -25,92 +25,14 @@ export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<
   const to = m.from;
 
   // 1) Identificación por teléfono
-  const chofer = await query<{ id: string; nombre: string }>(
-    'SELECT id, nombre FROM choferes WHERE telefono = $1 AND activo = TRUE',
-    [to],
-  );
-
-  // 1a) No reconocido: pedir DNI para validar
-  if (chofer.length === 0) {
-    if (sesion.paso === 'esperando_dni' && m.tipo === 'text') {
-      const dni = (m.texto ?? '').replace(/\D/g, '');
-      // DNI argentino: 7 u 8 dígitos. Filtra tipeos/mensajes sueltos antes de
-      // consultar o generar una alerta — evita ruido al operador por errores
-      // de tipeo (antes cualquier texto generaba una alerta nueva).
-      if (dni.length < 7 || dni.length > 8) {
-        await sendText(to, '⚠️ Ese número no parece un DNI válido. Por favor, enviá tu *DNI* completo, solo los números.');
-        return;
-      }
-      const match = await query<{ id: string; nombre: string; telefono: string | null }>(
-        'SELECT id, nombre, telefono FROM choferes WHERE dni_hash = $1 AND activo = TRUE',
-        [blindIndex(dni)],
-      );
-      if (match.length > 0) {
-        const chofer = match[0];
-        if (!chofer.telefono) {
-          // Primer vínculo: no hay número previo que pisar, se aplica directo.
-          await query('UPDATE choferes SET telefono = $1 WHERE id = $2', [to, chofer.id]);
-          // Refresca la pestaña Choferes (viene del webhook, no pasa por broadcastCambios).
-          emitRecursoActualizado('choferes');
-          await clearSesion(to);
-          await sendText(
-            to,
-            `✅ Identidad confirmada, ${chofer.nombre}. Tu número quedó vinculado. 🚚\n\n` +
-              'Te voy a avisar por acá cada vez que te asignen una entrega, retiro o recambio, con un botón para marcarla cuando la completes.',
-          );
-          return menuChofer(to);
-        }
-        // Ya tiene otro número vinculado: el DNI solo no alcanza para pisarlo
-        // (evita que alguien con el DNI de un chofer le robe el número). Requiere
-        // que un operador lo revise y lo cambie a mano desde el panel.
-        const [alerta] = await query(
-          `INSERT INTO alertas (tipo, referencia_id, mensaje)
-           VALUES ('chofer_cambio_telefono', $1, $2)
-           ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-           RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-          [
-            chofer.id,
-            `${chofer.nombre} ya tiene el número ${chofer.telefono} vinculado, pero alguien se validó con su DNI desde ${to}. Si es realmente ${chofer.nombre}, cambiá el teléfono desde la ficha del chofer.`,
-          ],
-        );
-        if (alerta) emitAlerta(alerta);
-        await clearSesion(to);
-        await sendText(
-          to,
-          '🔒 Ese DNI ya tiene otro número de WhatsApp vinculado. Avisamos a un operador para que confirme el cambio antes de aplicarlo.',
-        );
-        return;
-      }
-      // No coincide: hasta 2 reintentos sin molestar a nadie (permite corregir
-      // un tipeo); a partir del tercero, se deriva a un operador — y solo se
-      // crea UNA alerta por número (antes cada intento fallido generaba una
-      // fila nueva en alertas, aunque fuera la misma persona reintentando).
-      const intentos = ((sesion.contexto?.intentosDni as number) || 0) + 1;
-      if (intentos < 3) {
-        await setSesion({ telefono: to, flujo: 'chofer', paso: 'esperando_dni', contexto: { intentosDni: intentos } });
-        await sendText(to, '⚠️ No encontramos ese DNI. Revisá el número y enviámelo de nuevo.');
-        return;
-      }
-      const [alerta] = await query(
-        `INSERT INTO alertas (tipo, referencia_id, mensaje)
-         VALUES ('chofer_no_reconocido', $1, $2)
-         ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-         RETURNING id, tipo, referencia_id, mensaje, creado_en`,
-        [to, `Chofer no reconocido (${to}) intentó validarse con DNI ${dni}`],
-      );
-      if (alerta) emitAlerta(alerta);
-      await clearSesion(to);
-      await sendText(
-        to,
-        '🙁 No pudimos validar ese DNI. Ya avisamos a un operador para que se comunique con vos.',
-      );
-      return;
-    }
-    // Primer contacto: pedir DNI
-    await setSesion({ telefono: to, flujo: 'chofer', paso: 'esperando_dni', contexto: {} });
-    await sendText(to, '🚚 Hola. No tengo este número registrado como chofer. Para identificarte, enviame tu *DNI* (solo los números).');
-    return;
-  }
+const chofer = await query<{ id: string; nombre: string }>(
+  'SELECT id, nombre FROM choferes WHERE telefono = $1 AND activo = TRUE',
+  [to],
+);
+if (chofer.length === 0) {
+  await sendText(to, '⚠️ No se reconoce el número de chofer.');
+  return;
+}
 
   // 2) Chofer reconocido: manejar cambio de estado, elección de contenedor,
   // y las dos acciones self-service (vaciado y autoasignación del vacío de

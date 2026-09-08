@@ -133,17 +133,13 @@ CREATE UNIQUE INDEX clientes_numero_plan_key ON clientes(numero_plan) WHERE nume
 CREATE TABLE choferes (
   id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nombre    TEXT    NOT NULL,
-  -- DNI cifrado en reposo (AES-256-GCM en la app). El texto plano nunca toca la DB.
-  -- NULL = anonimizado (retención: 365 días desde desactivado_en, ver limpieza.cron.ts).
-  dni_enc   TEXT,                              -- ciphertext base64 (iv:tag:data)
-  -- Blind index (HMAC determinístico) para poder buscar por DNI sin descifrar.
-  dni_hash  TEXT    UNIQUE,
+
   telefono  TEXT,                             -- se usa para autoidentificar en WA; NULL = desvinculado
   -- Patente del camión que maneja habitualmente. No es UNIQUE: un camión puede
   -- rotar entre choferes en distintos turnos/períodos.
   patente   TEXT,
   activo    BOOLEAN NOT NULL DEFAULT TRUE,
-  -- Desde cuándo activo=false; usado para contar los 365 días de retención del DNI.
+  -- Desde cuándo activo=false.
   desactivado_en TIMESTAMPTZ,
   creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
 );

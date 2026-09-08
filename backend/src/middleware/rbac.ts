@@ -67,8 +67,6 @@ export function requireRol(...roles: Rol[]) {
 
 /**
  * Reglas de visibilidad de datos sensibles según rol.
- * - DNI de choferes: sólo admin y operador.
  * - Comprobantes de pago (url_comprobante): admin y finanzas.
  */
-export const puedeVerDni = (rol: Rol) => rol === 'admin' || rol === 'operador';
 export const puedeVerComprobante = (rol: Rol) => rol === 'admin' || rol === 'finanzas';
