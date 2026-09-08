@@ -118,7 +118,14 @@ async function movimientosDetalle(mes?: string, telefono?: string): Promise<Movi
               NULL::text AS patente, NULL::text AS chofer_nombre, NULL::text AS remito, pg.monto AS importe,
               CASE WHEN pg.es_cuenta_corriente THEN 'Cuenta corriente'
                    WHEN pg.medio_pago = 'efectivo' THEN 'Efectivo' ELSE 'Transferencia' END AS medio_pago,
-              'Pagado' AS estado_pago
+              -- OJO: estado='validado' (filtrado abajo) es "pedido confirmado",
+              -- no "plata en mano" — una extensión en efectivo puede estar
+              -- validada y todavía sin cobrar (efectivo_cobrado=FALSE). Antes
+              -- esto quedaba hardcodeado en 'Pagado' sin mirar ese flag.
+              CASE WHEN pg.es_cuenta_corriente THEN 'A cuenta corriente'
+                   WHEN pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado THEN 'Cobrado'
+                   WHEN pg.medio_pago = 'efectivo' THEN 'Efectivo pendiente de cobrar'
+                   ELSE 'Pagado' END AS estado_pago
          FROM pagos pg
         WHERE pg.tipo = 'alargue_retiro' AND pg.estado = 'validado'
           AND ($1::text IS NULL OR to_char(pg.creado_en, 'YYYY-MM') = $1)

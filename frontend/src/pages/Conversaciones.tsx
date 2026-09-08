@@ -199,7 +199,7 @@ export function Conversaciones() {
               onClick={() => setFiltro('requieren')}
             >
               {requierenVos.length > 0 && <span className="conv-filtro-dot" />}
-              Requieren vos <b>{requierenVos.length}</b>
+              Necesitan asesor <b>{requierenVos.length}</b>
             </button>
           </div>
 
