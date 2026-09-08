@@ -1,10 +1,29 @@
 import { query } from '../../../config/db';
 import { sendText } from '../graphApi';
-import { setSesion } from '../session.store';
+import { setSesion, clearSesion } from '../session.store';
 import { emitAlerta, emitConversacionActualizada } from '../../../config/socket';
 import { INTENTOS_PARA_ESCALAR_ASESOR } from '../../../config/bot.config';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
+
+/**
+ * Contraparte de escalarAAsesor: resuelve la alerta 'solicita_asesor' abierta
+ * para este teléfono (si hay una) y le devuelve el control al bot (limpia la
+ * sesión: modoHumano, asignación, flujo/paso quedan de nuevo en blanco).
+ * Compartida por alertas.routes.ts (resolver desde la bandeja de Alertas) y
+ * chat.routes.ts (resolver desde la pestaña Conversaciones) — antes cada uno
+ * tenía su propia versión y solo la de Alertas resolvía la alerta de verdad;
+ * la otra dejaba la fila abierta para siempre (el próximo pedido de asesor
+ * del mismo cliente no generaba alerta nueva por el ON CONFLICT DO NOTHING).
+ */
+export async function resolverAsesor(telefono: string): Promise<void> {
+  await query(
+    `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'solicita_asesor' AND referencia_id = $1 AND estado <> 'resuelta'`,
+    [telefono],
+  );
+  await clearSesion(telefono);
+  emitConversacionActualizada({ telefono, modo_humano: false, asignado_a: null, asignado_a_nombre: null });
+}
 
 /**
  * Genera la alerta para el panel, marca la conversación como tomada por un

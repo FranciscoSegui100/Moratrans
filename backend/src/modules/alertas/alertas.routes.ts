@@ -1,8 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
-import { clearSesion } from '../whatsapp/session.store';
-import { emitAlertaActualizada, emitConversacionActualizada } from '../../config/socket';
+import { resolverAsesor } from '../whatsapp/flows/asesor.flow';
+import { emitAlertaActualizada } from '../../config/socket';
 
 export const alertasRouter = Router();
 alertasRouter.use(requireAuth);
@@ -42,10 +42,9 @@ alertasRouter.patch('/:id', requireRol('admin', 'operador', 'finanzas'), async (
   const [row] = await query('UPDATE alertas SET estado = $1 WHERE id = $2 RETURNING *', [estado, req.params.id]);
 
   // Al resolver un pedido de asesor, le devolvemos el control al bot
-  // (borra la sesión: modoHumano, flujo/paso quedan limpios de nuevo).
+  // (borra la sesión: modoHumano, asignación, flujo/paso quedan limpios de nuevo).
   if (row && row.tipo === 'solicita_asesor' && estado === 'resuelta') {
-    await clearSesion(row.referencia_id).catch((e) => console.error('Error liberando sesión:', e));
-    emitConversacionActualizada({ telefono: row.referencia_id, modo_humano: false });
+    await resolverAsesor(row.referencia_id).catch((e) => console.error('Error liberando sesión:', e));
   }
   if (row) emitAlertaActualizada({ tipo: row.tipo, referencia_id: row.referencia_id, estado: row.estado });
 

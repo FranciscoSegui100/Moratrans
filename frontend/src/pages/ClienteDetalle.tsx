@@ -251,15 +251,16 @@ export function ClienteDetalle() {
         </p>
       </div>
 
-      <div className="form-card" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <div className="form-card" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <button
           className="btn btn-primary"
-          onClick={() => descargarArchivo(`/api/clientes/export.xlsx?telefono=${encodeURIComponent(telefono)}`, `${cliente?.nombre ?? telefono}.xlsx`)}
+          onClick={() => descargarArchivo(`/api/clientes/export.xlsx?telefono=${encodeURIComponent(telefono)}`, `pedidos-${cliente?.nombre ?? telefono}.xlsx`)}
         >
-          <Download strokeWidth={1.75} /> Exportar a Excel
+          <Download strokeWidth={1.75} /> Exportar pedidos de este cliente a Excel
         </button>
+        <small className="text-muted">Incluye su resumen facturado por mes, su ficha, y el detalle de todos sus pedidos.</small>
         <RoleGate roles={['admin', 'operador', 'finanzas']}>
-          <button className="btn btn-ghost" onClick={enviarResumenPorWhatsApp} disabled={enviando}>
+          <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={enviarResumenPorWhatsApp} disabled={enviando}>
             <Send strokeWidth={1.75} /> {enviando ? 'Enviando...' : 'Enviar resumen de cuenta por WhatsApp'}
           </button>
         </RoleGate>
