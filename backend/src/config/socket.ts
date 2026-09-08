@@ -84,8 +84,19 @@ export function emitAlertaActualizada(payload: { tipo: string; referencia_id: st
   io?.to('alertas').emit('alerta_actualizada', payload);
 }
 
-/** Avisa que se pausó/reanudó el bot para un teléfono, para que la lista de "Conversaciones" se actualice en todos los operadores conectados. */
-export function emitConversacionActualizada(payload: { telefono: string; modo_humano: boolean }): void {
+/**
+ * Avisa que se pausó/reanudó el bot para un teléfono, o que cambió quién la
+ * está atendiendo, para que la lista de "Conversaciones" se actualice en
+ * todos los operadores conectados. `asignado_a`/`asignado_a_nombre` son
+ * opcionales: los call sites que no tocan la asignación (ninguno hasta
+ * ahora) simplemente no los mandan y el front no pisa lo que ya tenía.
+ */
+export function emitConversacionActualizada(payload: {
+  telefono: string;
+  modo_humano: boolean;
+  asignado_a?: string | null;
+  asignado_a_nombre?: string | null;
+}): void {
   io?.to('alertas').emit('conversacion_actualizada', payload);
 }
 

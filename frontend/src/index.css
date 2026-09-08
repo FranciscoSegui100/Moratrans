@@ -1123,6 +1123,11 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 }
 .asesoria-item:hover { background: var(--bg-card-hover); }
 .asesoria-item.active { background: var(--accent-tint); border-color: var(--accent-tint-strong); }
+/* Misma identidad que "Requieren vos" (--danger), para que salte a la vista
+   incluso mirando "Todas" sin cambiar de pestaña — borde izquierdo + tinte,
+   se combina con .active (fila seleccionada) sin pisarlo. */
+.asesoria-item--alerta { border-left: 3px solid var(--danger); background: var(--danger-bg); }
+.asesoria-item--alerta.active { background: var(--accent-tint); border-left-color: var(--danger); border-top-color: var(--accent-tint-strong); border-right-color: var(--accent-tint-strong); border-bottom-color: var(--accent-tint-strong); }
 .asesoria-item-top { display: flex; align-items: center; gap: 9px; }
 .asesoria-item-quien { flex: 1; min-width: 0; }
 .asesoria-item-nombre {
@@ -1143,7 +1148,32 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   white-space: nowrap;
 }
 .asesoria-item-time { font-size: 0.68rem; color: var(--text-muted); flex-shrink: 0; }
-.asesoria-item-pie { display: flex; align-items: center; gap: 6px; }
+.asesoria-item-pie { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.asesoria-item-asignado { font-size: 0.68rem; color: var(--text-muted); }
+/* Botón chico dentro de la fila (que ahora es un div, no un button, para
+   poder anidarlo sin romper semántica HTML) — toma la conversación en un
+   solo click sin tener que entrar al panel de detalle primero. */
+.btn-responder-ahora {
+  margin-left: auto;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-tint-strong);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+}
+.btn-responder-ahora:hover { background: var(--accent-tint-strong); }
+.asesoria-motivo {
+  font-size: 0.8rem;
+  color: var(--warning);
+  background: var(--warning-bg);
+  border: 1px solid rgba(173,127,36,0.25);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin: 10px 0;
+}
+.asesoria-atendida-por { font-size: 0.76rem; color: var(--text-muted); font-style: italic; }
 
 .asesoria-avatar {
   width: 30px;
@@ -1209,6 +1239,13 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .conv-filtro:hover { border-color: var(--border-light); }
 .conv-filtro.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .conv-filtro.active b { opacity: 0.85; }
+/* "Requieren vos" rompe a propósito con la paleta terracota del resto del
+   panel (--accent) — usa --danger para que salte a la vista aunque no se
+   esté mirando esa parte de la pantalla, incluso sin estar seleccionada. */
+.conv-filtro--alerta { display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: var(--danger); border-color: rgba(179,69,61,0.3); }
+.conv-filtro--alerta:hover { border-color: var(--danger); }
+.conv-filtro--alerta.active { background: var(--danger); border-color: var(--danger); color: #fff; }
+.conv-filtro-dot { width: 6px; height: 6px; flex-shrink: 0; background: currentColor; border-radius: 50%; animation: pulse-dot 1.4s infinite; }
 
 /* ===== CHIPS DE ESTADO DE CONVERSACIÓN ===== */
 .chip {
@@ -1225,6 +1262,25 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .chip--bot { background: var(--bg-surface); border-color: var(--border-light); color: var(--text-secondary); }
 .chip--espera { background: var(--warning-bg); border-color: rgba(173,127,36,0.25); color: var(--warning); }
 .chip--cerrada { background: var(--purple-bg); border-color: rgba(125,106,158,0.25); color: var(--purple); }
+
+/* ===== TIMER DE ESPERA (SLA) — verde/ámbar/rojo según hace cuánto espera una conversación a un humano ===== */
+.sla-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.66rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid;
+  font-family: var(--font-mono);
+}
+.sla-chip--verde { background: var(--success-bg); border-color: rgba(77,124,98,0.25); color: var(--success); }
+.sla-chip--ambar { background: var(--warning-bg); border-color: rgba(173,127,36,0.25); color: var(--warning); }
+.sla-chip--rojo  { background: var(--danger-bg);  border-color: rgba(179,69,61,0.3);   color: var(--danger); animation: pulse-sla-rojo 2s infinite; }
+@keyframes pulse-sla-rojo {
+  0%, 100% { box-shadow: 0 0 0 0 var(--danger-bg); }
+  50%      { box-shadow: 0 0 0 4px var(--danger-bg); }
+}
 
 /* ===== VENTANA DE 24HS DE WHATSAPP ===== */
 .ventana { padding-bottom: 12px; border-bottom: 1px solid var(--border); }

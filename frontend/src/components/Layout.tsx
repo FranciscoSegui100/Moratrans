@@ -201,6 +201,16 @@ export function Layout({ children }: { children: ReactNode }) {
     if (loc.pathname === '/pagos') setPagosCount(0);
   }, [loc.pathname]);
 
+  // Contador en el título de la pestaña: para que un pedido de asesor se
+  // note aunque el operador tenga el panel minimizado o en otra pestaña del
+  // navegador — el badge del sidebar y el toast ya existen, esto suma
+  // visibilidad cuando ni siquiera está mirando la ventana.
+  useEffect(() => {
+    document.title = conversacionesCount > 0
+      ? `(${conversacionesCount}) Moratrans - Panel Logístico`
+      : 'Moratrans - Panel Logístico';
+  }, [conversacionesCount]);
+
   return (
     <div className={`layout ${sidebarOculta ? 'sidebar-hidden' : ''}`}>
       <button
