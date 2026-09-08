@@ -467,7 +467,7 @@ export function ClienteDetalle() {
                 <thead>
                   <tr>
                     <th>FECHA</th><th>CHA/EQU</th><th>PAT</th><th>POSICIÓN</th>
-                    <th>TIPO BULTO</th><th>CANTIDAD</th><th>Nº REMITO</th>
+                    <th>TIPO BULTO</th><th>Nº REMITO</th>
                     <th>IMPORTE</th><th>COMPROBANTES</th><th>CHOFER</th><th>ESTADO</th>
                   </tr>
                 </thead>
@@ -483,7 +483,6 @@ export function ClienteDetalle() {
                           : (v.zona ?? '—')}
                       </td>
                       <td>{tipoBulto(v)}</td>
-                      <td>1</td>
                       <td className="mono">
                         {editandoRemito === v.id ? (
                           <div style={{ display: 'flex', gap: '4px' }}>
