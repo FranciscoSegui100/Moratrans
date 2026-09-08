@@ -166,9 +166,17 @@ function prioridadParada(tipoParada: 'viaje' | 'vaciado', viajeTipo?: string): n
  * Corre la simulación dentro de la transacción y, mientras haya una parada de
  * retiro/recambio marcada "lleno_sin_vaciar" (más llenos a bordo que la
  * capacidad del camión), inserta automáticamente una parada de vaciado justo
- * después — así el operador no tiene que acordarse de agregarla a mano en
+ * antes — así el operador no tiene que acordarse de agregarla a mano en
  * cada recambio. Tope de 5 iteraciones: cada inserción resuelve al menos una
  * advertencia, así que en la práctica converge en 1-2 vueltas.
+ *
+ * Tiene que ir ANTES (en `faltante.orden`, empujando esa parada y el resto
+ * para atrás), no después: la advertencia depende de cuántos llenos ya
+ * estaban a bordo ANTES de esa parada — insertarlo después nunca la
+ * resolvía, así que la misma parada volvía a marcar la advertencia en cada
+ * vuelta del loop y cada llamada apilaba hasta 5 vaciados de más sin
+ * arreglar nada (bug real: "se agregan vaciados infinitamente" cada vez que
+ * se tocaba la ruta).
  */
 async function resolverVaciadosAutomaticos(c: PoolClient, rutaId: string): Promise<void> {
   const ejecutar = async (sql: string, params: any[]) => (await c.query(sql, params)).rows;
@@ -176,7 +184,7 @@ async function resolverVaciadosAutomaticos(c: PoolClient, rutaId: string): Promi
     const { advertencias } = await calcularDisponibilidadRuta(rutaId, ejecutar);
     const faltante = advertencias.find((a) => a.tipo === 'lleno_sin_vaciar');
     if (!faltante) return;
-    await insertarVaciadoAutomatico(c, rutaId, faltante.orden + 1);
+    await insertarVaciadoAutomatico(c, rutaId, faltante.orden);
   }
 }
 
