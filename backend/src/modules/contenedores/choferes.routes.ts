@@ -1,8 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query } from '../../config/db';
-import { requireAuth, requireRol, puedeVerDni, Rol } from '../../middleware/rbac';
-import { encrypt, decrypt, blindIndex } from '../../services/crypto.service';
+import { requireAuth, requireRol, Rol } from '../../middleware/rbac';
+
 import { normalizarTelefonoAR } from '../../services/telefono.service';
 
 export const choferesRouter = Router();
@@ -17,19 +17,17 @@ function presentar(row: any, rol: Rol) {
     telefono: row.telefono,
     patente: row.patente,
     activo: row.activo,
-    dni: row.dni_enc ? (puedeVerDni(rol) ? decrypt(row.dni_enc) : '••••••') : null,
   };
 }
 
 /** GET /api/choferes — DNI descifrado solo para admin/operador. */
 choferesRouter.get('/', async (req: Request, res: Response) => {
-  const rows = await query('SELECT id, nombre, dni_enc, telefono, patente, activo FROM choferes ORDER BY nombre');
+  const rows = await query('SELECT id, nombre, telefono, patente, activo FROM choferes ORDER BY nombre');
   res.json(rows.map((r) => presentar(r, req.user!.rol)));
 });
 
 const nuevoSchema = z.object({
   nombre: z.string().min(2),
-  dni: z.string().min(4),
   telefono: z.string().min(6),
   patente: z.string().min(1).optional(),
 });
@@ -38,12 +36,12 @@ const nuevoSchema = z.object({
 choferesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = nuevoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const { nombre, dni, telefono, patente } = parsed.data;
+  const { nombre, telefono, patente } = parsed.data;
   try {
     const [row] = await query(
-      `INSERT INTO choferes (nombre, dni_enc, dni_hash, telefono, patente)
-       VALUES ($1,$2,$3,$4,$5) RETURNING id, nombre, dni_enc, telefono, patente, activo`,
-      [nombre, encrypt(dni), blindIndex(dni), normalizarTelefonoAR(telefono), patente?.toUpperCase() ?? null],
+      `INSERT INTO choferes (nombre, telefono, patente)
+       VALUES ($1,$2,$3) RETURNING id, nombre, telefono, patente, activo`,
+      [nombre, normalizarTelefonoAR(telefono), patente?.toUpperCase() ?? null],
     );
     res.status(201).json(presentar(row, req.user!.rol));
   } catch (e: any) {
@@ -54,7 +52,6 @@ choferesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, r
 const patchSchema = z.object({
   nombre: z.string().min(2).optional(),
   telefono: z.string().min(6).optional(),
-  dni: z.string().min(4).optional(),
   patente: z.string().min(1).nullable().optional(),
   activo: z.boolean().optional(),
 });
@@ -64,7 +61,7 @@ choferesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Reques
   const parsed = patchSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
 
-  const { dni, ...resto } = parsed.data;
+  const { ...resto } = parsed.data;
   const sets: string[] = [];
   const params: any[] = [];
 
@@ -79,20 +76,13 @@ choferesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Reques
   } else if (resto.activo === true) {
     sets.push('desactivado_en = NULL');
   }
-  // El DNI no es una columna directa: se guarda cifrado + su blind index de búsqueda.
-  if (dni) {
-    params.push(encrypt(dni));
-    sets.push(`dni_enc = $${params.length}`);
-    params.push(blindIndex(dni));
-    sets.push(`dni_hash = $${params.length}`);
-  }
 
   if (sets.length === 0) return res.status(400).json({ error: 'Nada para actualizar' });
   params.push(req.params.id);
 
   try {
     const [row] = await query(
-      `UPDATE choferes SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id, nombre, dni_enc, telefono, activo`,
+      `UPDATE choferes SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id, nombre, telefono, patente, activo, desactivado_en`,
       params,
     );
     if (!row) return res.status(404).json({ error: 'Chofer inexistente' });
@@ -111,7 +101,7 @@ choferesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Reques
  */
 choferesRouter.post('/:id/desvincular', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const [row] = await query(
-    `UPDATE choferes SET telefono = NULL WHERE id = $1 RETURNING id, nombre, dni_enc, telefono, activo`,
+    `UPDATE choferes SET telefono = NULL WHERE id = $1 RETURNING id, nombre, telefono, patente, activo, desactivado_en`,
     [req.params.id],
   );
   if (!row) return res.status(404).json({ error: 'Chofer inexistente' });

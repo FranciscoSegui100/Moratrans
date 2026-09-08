@@ -84,32 +84,12 @@ async function purgarComprobantesViejos(): Promise<void> {
   }
 }
 
-/**
- * Anonimiza el DNI de choferes que llevan más de un año inactivos (sección
- * 9, caso "retención de DNI"): sin esto quedaba colgado en la base para
- * siempre apenas se desactivaba a alguien. Se conserva el resto de la fila
- * (nombre, viajes, historial) para trazabilidad operativa.
- */
-async function anonimizarChoferesInactivos(): Promise<void> {
-  const anonimizados = await query(
-    `UPDATE choferes SET dni_enc = NULL, dni_hash = NULL
-      WHERE activo = FALSE
-        AND desactivado_en < now() - make_interval(days => $1)
-        AND dni_hash IS NOT NULL
-      RETURNING 1`,
-    [RETENCION_DNI_INACTIVO_DIAS],
-  );
-  if (anonimizados.length > 0) {
-    console.log(`[limpieza] choferes: ${anonimizados.length} DNIs anonimizados (inactivos > ${RETENCION_DNI_INACTIVO_DIAS} días)`);
-  }
-}
-
 /** Corre una vez por mes (madrugada del día 1). */
 export function iniciarCronLimpieza(): void {
   cron.schedule('0 4 1 * *', () => {
     limpiarTablasViejas().catch((e) => console.error('[limpieza] error:', e));
     purgarComprobantesViejos().catch((e) => console.error('[limpieza] error purgando comprobantes:', e));
-    anonimizarChoferesInactivos().catch((e) => console.error('[limpieza] error anonimizando choferes:', e));
+
   });
   console.log('🧹 Cron de limpieza activo (mensual, día 1 04:00)');
 }
