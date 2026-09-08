@@ -24,10 +24,16 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
                                        OR (medio_pago = 'efectivo' AND estado = 'validado' AND efectivo_cobrado = FALSE))::int
                                                                                           AS cobros_pendientes,
        -- Incluye pagos pendientes de validación + efectivo validado pero aún
-       -- no cobrado por el chofer. El monto puede faltar si todavía no se
-       -- cargó (se asigna al validar, ver pagos.routes.ts).
-       (SELECT COALESCE(SUM(monto), 0) FROM pagos WHERE estado = 'pendiente'
-                                       OR (medio_pago = 'efectivo' AND estado = 'validado' AND efectivo_cobrado = FALSE))
+       -- no cobrado por el chofer. pagos.monto solo se carga para
+       -- alargues/abonos — un flete normal nace sin monto propio y el precio
+       -- vive en pedidos.precio (mismo criterio que ya usan GET /api/clientes
+       -- y el aviso de cobro en efectivo al chofer, ver medioPagoDeViaje en
+       -- viajes.routes.ts). Sin este COALESCE, la suma daba prácticamente $0
+       -- aunque hubiera varios cobros pendientes reales.
+       (SELECT COALESCE(SUM(COALESCE(p.monto, pe.precio)), 0)
+          FROM pagos p LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+         WHERE p.estado = 'pendiente'
+            OR (p.medio_pago = 'efectivo' AND p.estado = 'validado' AND p.efectivo_cobrado = FALSE))
                                                                                           AS cobros_pendientes_monto,
        -- Antes contaba historial_contenedores con estado='entregado' creado
        -- hoy: eso son confirmaciones de entrega, no "viajes de hoy" — excluía
