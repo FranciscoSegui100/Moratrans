@@ -208,17 +208,27 @@ function dibujarEncabezadoHojaClientes(ws: ExcelJS.Worksheet, wb: ExcelJS.Workbo
   } catch {
     // Sin logo disponible, el resto de la planilla sigue igual.
   }
-  ws.mergeCells(1, 2, 1, Math.max(3, Math.ceil(ultimaCol / 2)));
+  // Fórmula genérica pensada para tablas anchas — en una tabla angosta (ej.
+  // la hoja "Datos del cliente", de solo 2 columnas) `finTitulo` puede
+  // terminar igualando o pasando a `ultimaCol`, dejando un rango de merge
+  // inválido (inicio > fin) que ExcelJS tira como excepción. Se acota todo a
+  // `ultimaCol` y, si no queda lugar para el título de la hoja a la derecha,
+  // directamente se omite esa celda (el nombre de la pestaña ya lo dice).
+  const finTitulo = Math.max(2, Math.min(ultimaCol, Math.ceil(ultimaCol / 2)));
+  ws.mergeCells(1, 2, 1, finTitulo);
   const celdaTitulo = ws.getCell(1, 2);
   celdaTitulo.value = 'MORATRANS';
   celdaTitulo.font = { bold: true, size: 16, color: { argb: argb(AZUL) } };
   celdaTitulo.alignment = { vertical: 'middle' };
 
-  ws.mergeCells(1, Math.max(4, Math.ceil(ultimaCol / 2) + 1), 1, ultimaCol);
-  const celdaSubtitulo = ws.getCell(1, Math.max(4, Math.ceil(ultimaCol / 2) + 1));
-  celdaSubtitulo.value = titulo;
-  celdaSubtitulo.font = { bold: true, size: 12, color: { argb: argb(ROJO) } };
-  celdaSubtitulo.alignment = { vertical: 'middle', horizontal: 'right' };
+  const inicioSubtitulo = Math.min(ultimaCol, finTitulo + 1);
+  if (inicioSubtitulo > finTitulo) {
+    ws.mergeCells(1, inicioSubtitulo, 1, ultimaCol);
+    const celdaSubtitulo = ws.getCell(1, inicioSubtitulo);
+    celdaSubtitulo.value = titulo;
+    celdaSubtitulo.font = { bold: true, size: 12, color: { argb: argb(ROJO) } };
+    celdaSubtitulo.alignment = { vertical: 'middle', horizontal: 'right' };
+  }
 
   const colCorte = Math.round(ultimaCol * 0.7);
   ws.getRow(2).height = 5;
