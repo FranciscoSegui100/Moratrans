@@ -42,10 +42,18 @@ export interface MovimientoIngreso {
 async function movimientosIngreso(anio: number): Promise<MovimientoIngreso[]> {
   return query<MovimientoIngreso>(
     `WITH ingresos AS (
-       SELECT p.creado_en::date AS fecha, p.monto::numeric AS importe, p.pedido_id, p.contenedor_numero,
+       -- pagos.monto solo se carga para alargues (ver alargarRetiro.flow.ts) —
+       -- un flete normal nace sin monto propio y el precio vive en
+       -- pedidos.precio (mismo criterio que ya usan GET /api/clientes y el
+       -- aviso de cobro en efectivo al chofer). Sin este COALESCE, toda
+       -- entrega pagada por transferencia sumaba $0 acá — el caso más común
+       -- de todos, y el único que no tiene la segunda fuente (viajes) como
+       -- respaldo.
+       SELECT p.creado_en::date AS fecha, COALESCE(p.monto, pe2.precio)::numeric AS importe, p.pedido_id, p.contenedor_numero,
               p.cliente_telefono, p.es_cuenta_corriente, NULL::uuid AS grupo_id,
               CASE WHEN p.tipo = 'alargue_retiro' THEN 'alargue' ELSE 'entrega' END AS origen
          FROM pagos p
+         LEFT JOIN pedidos pe2 ON pe2.id = p.pedido_id
         WHERE p.estado = 'validado' AND p.tipo IN ('flete', 'alargue_retiro')
           AND EXTRACT(YEAR FROM p.creado_en) = $1
         UNION ALL
