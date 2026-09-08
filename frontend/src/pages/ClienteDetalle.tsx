@@ -467,7 +467,7 @@ export function ClienteDetalle() {
                 <thead>
                   <tr>
                     <th>FECHA</th><th>DIRECCIÓN</th>
-                    <th>TIPO BULTO</th><th>Nº REMITO</th>
+                    <th>TIPO BULTO</th><th>Nº CONTENEDOR</th><th>Nº REMITO</th>
                     <th>IMPORTE</th><th>TIPO DE PAGO</th><th>PAGADO</th><th>VENCIMIENTO</th>
                     <th>CHOFER</th><th>ESTADO</th>
                   </tr>
@@ -489,6 +489,7 @@ export function ClienteDetalle() {
                         ) : (v.zona ?? '—')}
                       </td>
                       <td>{tipoBulto(v)}</td>
+                      <td className="mono">{v.contenedor_numero ?? '—'}</td>
                       <td className="mono">
                         {editandoRemito === v.id ? (
                           <div style={{ display: 'flex', gap: '4px' }}>
@@ -569,69 +570,51 @@ export function ClienteDetalle() {
         ))
       )}
 
-      {viajeComprobantes && (
-        <div className="modal-overlay" onClick={() => setViajeComprobantes(null)}>
-          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <div className="section-title" style={{ margin: 0 }}>
-                Comprobantes · {viajeComprobantes.contenedor_numero ?? viajeComprobantes.tipo}
+      {viajeComprobantes && (() => {
+        const inicial = (viajeComprobantes.comprobantes ?? []).find((c) => c.tipo !== 'alargue_retiro');
+        return (
+          <div className="modal-overlay" onClick={() => setViajeComprobantes(null)}>
+            <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <div className="section-title" style={{ margin: 0 }}>Comprobante de pago</div>
+                <button className="modal-close" onClick={() => setViajeComprobantes(null)}>
+                  <X size={18} strokeWidth={2} />
+                </button>
               </div>
-              <button className="modal-close" onClick={() => setViajeComprobantes(null)}>
-                <X size={18} strokeWidth={2} />
-              </button>
+              <p className="text-muted" style={{ marginTop: 0, marginBottom: 4 }}>
+                {formatearFecha(viajeComprobantes.fecha)} · {tipoBulto(viajeComprobantes)}
+                {viajeComprobantes.destino_direccion
+                  ? ` · ${viajeComprobantes.destino_direccion}`
+                  : viajeComprobantes.zona ? ` · ${viajeComprobantes.zona}` : ''}
+              </p>
+              {viajeComprobantes.importe && (
+                <p className="text-muted" style={{ marginTop: 0 }}>
+                  Importe: ${Number(viajeComprobantes.importe).toLocaleString('es-AR')}
+                </p>
+              )}
+              {inicial?.titular && <p className="text-muted" style={{ margin: '0 0 6px' }}>Titular: {inicial.titular}</p>}
+              {inicial?.tiene_comprobante ? (
+                <ComprobanteViewer pagoId={inicial.id} />
+              ) : (
+                <p className="text-muted">Sin archivo de comprobante adjunto.</p>
+              )}
+              {inicial?.estado === 'validado' && (
+                <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ marginTop: 10 }}
+                    onClick={() => reenviarAviso(inicial.id)}
+                    disabled={reenviando === inicial.id}
+                    title="Si el cliente dice que todavía no le llegó la confirmación por WhatsApp"
+                  >
+                    <Send size={12} strokeWidth={1.75} /> Reenviar aviso
+                  </button>
+                </RoleGate>
+              )}
             </div>
-            <p className="text-muted" style={{ marginTop: 0 }}>
-              {formatearFecha(viajeComprobantes.fecha)} · {viajeComprobantes.destino_direccion ?? viajeComprobantes.zona ?? '—'}
-            </p>
-            {(viajeComprobantes.comprobantes ?? []).length === 0 && (
-              <p className="text-muted">Sin comprobantes asociados a este viaje.</p>
-            )}
-            {(viajeComprobantes.comprobantes ?? []).map((c) => (
-              <div key={c.id} style={{ marginBottom: 18 }}>
-                <div className="section-title" style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span>
-                    {c.tipo === 'alargue_retiro' ? '⏳ Extensión de retiro' : '🧾 Pago inicial'}
-                    {c.monto && ` · $${Number(c.monto).toLocaleString('es-AR')}`}
-                    {' · '}<span className={`badge ${c.estado}`}>{c.estado}</span>
-                  </span>
-                  {c.estado === 'validado' && (
-                    <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => reenviarAviso(c.id)}
-                        disabled={reenviando === c.id}
-                        title="Si el cliente dice que todavía no le llegó la confirmación por WhatsApp"
-                      >
-                        <Send size={12} strokeWidth={1.75} /> Reenviar aviso
-                      </button>
-                    </RoleGate>
-                  )}
-                </div>
-                {c.titular && <p className="text-muted" style={{ margin: '0 0 6px' }}>Titular: {c.titular}</p>}
-                {c.tiene_comprobante ? (
-                  <ComprobanteViewer pagoId={c.id} />
-                ) : c.medio_pago === 'efectivo' ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span className="text-muted">💵 Paga en efectivo — sin archivo adjunto</span>
-                    <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                      <button
-                        className={`badge ${c.efectivo_cobrado ? 'disponible' : 'rechazado'}`}
-                        style={{ border: 'none', cursor: 'pointer' }}
-                        onClick={() => marcarCobrado(c.id, !c.efectivo_cobrado)}
-                        title="Click para cambiar"
-                      >
-                        {c.efectivo_cobrado ? '✅ Pagado' : '❌ No pagado'}
-                      </button>
-                    </RoleGate>
-                  </div>
-                ) : (
-                  <span className="text-muted">Sin archivo adjunto (cuenta corriente)</span>
-                )}
-              </div>
-            ))}
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
