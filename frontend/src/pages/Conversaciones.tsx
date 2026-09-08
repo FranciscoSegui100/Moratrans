@@ -37,7 +37,9 @@ function formatHora(iso: string): string {
 function ChipEstado({ c }: { c: Conversacion }) {
   const ventana = calcularVentana(c.ultimo_cliente_en);
   if (ventana.cerrada) return <span className="chip chip--cerrada">Ventana cerrada</span>;
-  if (c.modo_humano) return <span className="chip chip--espera">Requiere vos</span>;
+  // Modo humano ya lo marca el resaltado rojo de la fila + el chip de SLA
+  // ("esperando hace X") — este chip de texto quedaba redundante con esos dos.
+  if (c.modo_humano) return null;
   return <span className="chip chip--bot">Bot</span>;
 }
 
