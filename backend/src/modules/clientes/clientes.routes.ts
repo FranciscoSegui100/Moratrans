@@ -152,9 +152,9 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
   const mes = (req.query.mes as string) || null;
   const rows = await query(
     `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
-            v.destino_lat, v.destino_lng, v.patente,
+            v.destino_lat, v.destino_lng,
             v.remito, v.importe, v.grupo_id, ch.nombre AS chofer_nombre,
-            v.es_cuenta_corriente,
+            v.es_cuenta_corriente, co.vence_en,
             -- Mismo criterio que GET /api/viajes (ver viajes.routes.ts): inicial
             -- vinculado por pago_id, extensiones de alargue_retiro del mismo
             -- contenedor+cliente creadas después de este viaje.
@@ -180,6 +180,7 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
             ), '[]'::json) AS comprobantes
        FROM viajes v
        LEFT JOIN choferes ch ON ch.id = v.chofer_id
+       LEFT JOIN contenedores co ON co.numero = v.contenedor_numero
       WHERE v.cliente_telefono = $1
         AND ($2::text IS NULL OR to_char(v.fecha, 'YYYY-MM') = $2)
       ORDER BY v.fecha DESC`,

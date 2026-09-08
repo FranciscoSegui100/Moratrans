@@ -74,12 +74,12 @@ interface ViajeCliente {
   destino_direccion: string | null;
   destino_lat?: string | null;
   destino_lng?: string | null;
-  patente: string | null;
   remito: string | null;
   importe: string | null;
   grupo_id: string | null;
   chofer_nombre: string | null;
   es_cuenta_corriente?: boolean;
+  vence_en: string | null;
   comprobantes?: Comprobante[];
 }
 
@@ -466,21 +466,27 @@ export function ClienteDetalle() {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>FECHA</th><th>CHA/EQU</th><th>PAT</th><th>POSICIÓN</th>
+                    <th>FECHA</th><th>DIRECCIÓN</th>
                     <th>TIPO BULTO</th><th>Nº REMITO</th>
-                    <th>IMPORTE</th><th>COMPROBANTES</th><th>CHOFER</th><th>ESTADO</th>
+                    <th>IMPORTE</th><th>TIPO DE PAGO</th><th>PAGADO</th><th>VENCIMIENTO</th>
+                    <th>CHOFER</th><th>ESTADO</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {viajesDelMes.map((v) => (
+                  {viajesDelMes.map((v) => {
+                    const comprobantes = v.comprobantes ?? [];
+                    const inicial = comprobantes.find((c) => c.tipo !== 'alargue_retiro');
+                    const esCC = v.es_cuenta_corriente || inicial?.es_cuenta_corriente;
+                    return (
                     <tr key={v.id}>
                       <td style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
-                      <td>Contenedor</td>
-                      <td className="mono">{v.patente ?? '—'}</td>
                       <td>
-                        {v.destino_direccion
-                          ? <DireccionMaps direccion={v.destino_direccion} lat={v.destino_lat} lng={v.destino_lng} />
-                          : (v.zona ?? '—')}
+                        {v.destino_direccion ? (
+                          <>
+                            <DireccionMaps direccion={v.destino_direccion} lat={v.destino_lat} lng={v.destino_lng} />
+                            {v.zona && <div className="text-muted" style={{ fontSize: '11px' }}>{v.zona}</div>}
+                          </>
+                        ) : (v.zona ?? '—')}
                       </td>
                       <td>{tipoBulto(v)}</td>
                       <td className="mono">
@@ -509,46 +515,53 @@ export function ClienteDetalle() {
                       </td>
                       <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>
                       <td>
-                        {(() => {
-                          const comprobantes = v.comprobantes ?? [];
-                          const inicial = comprobantes.find((c) => c.tipo !== 'alargue_retiro');
-                          const esCC = v.es_cuenta_corriente || inicial?.es_cuenta_corriente;
-                          if (!esCC && !inicial) {
-                            return <span className="text-muted">—</span>;
-                          }
-                          return (
-                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
-                              {esCC ? (
-                                <span className="badge pendiente">📋 Cuenta corriente</span>
-                              ) : inicial?.medio_pago === 'efectivo' ? (
-                                <>
-                                  <span className="badge pendiente">💵 Efectivo</span>
-                                  <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                                    <button
-                                      className={`badge ${inicial.efectivo_cobrado ? 'disponible' : 'rechazado'}`}
-                                      style={{ border: 'none', cursor: 'pointer' }}
-                                      onClick={() => marcarCobrado(inicial.id, !inicial.efectivo_cobrado)}
-                                      title="Click para cambiar"
-                                    >
-                                      {inicial.efectivo_cobrado ? '✅ Pagado' : '❌ No pagado'}
-                                    </button>
-                                  </RoleGate>
-                                </>
-                              ) : inicial && (
-                                <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                                  <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
-                                    🧾 Inicial
-                                  </button>
-                                </RoleGate>
-                              )}
-                            </div>
-                          );
-                        })()}
+                        {esCC ? (
+                          <span className="badge pendiente">📋 Cuenta corriente</span>
+                        ) : inicial?.medio_pago === 'efectivo' ? (
+                          <span className="badge pendiente">💵 Efectivo</span>
+                        ) : inicial ? (
+                          <span className="badge pendiente">🏦 Transferencia</span>
+                        ) : (
+                          <span className="text-muted">—</span>
+                        )}
                       </td>
+                      <td>
+                        {esCC ? (
+                          <span className="text-muted">—</span>
+                        ) : inicial?.medio_pago === 'efectivo' ? (
+                          puedeEditarRemito ? (
+                            <button
+                              className={`badge ${inicial.efectivo_cobrado ? 'disponible' : 'rechazado'}`}
+                              style={{ border: 'none', cursor: 'pointer' }}
+                              onClick={() => marcarCobrado(inicial.id, !inicial.efectivo_cobrado)}
+                              title="Click para cambiar"
+                            >
+                              {inicial.efectivo_cobrado ? '✅ Pagado' : '❌ No pagado'}
+                            </button>
+                          ) : (
+                            <span className={`badge ${inicial.efectivo_cobrado ? 'disponible' : 'rechazado'}`}>
+                              {inicial.efectivo_cobrado ? '✅ Pagado' : '❌ No pagado'}
+                            </span>
+                          )
+                        ) : inicial ? (
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span className={`badge ${inicial.estado === 'validado' ? 'disponible' : inicial.estado === 'rechazado' ? 'rechazado' : 'pendiente'}`}>
+                              {inicial.estado === 'validado' ? '✅ Pagado' : inicial.estado === 'rechazado' ? '❌ Rechazado' : '⏳ Pendiente'}
+                            </span>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
+                              Ver comprobante
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-muted">—</span>
+                        )}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{v.vence_en ? formatearFecha(v.vence_en) : <span className="text-muted">—</span>}</td>
                       <td>{v.chofer_nombre ?? '—'}</td>
                       <td><span className={`badge ${v.estado}`}>{v.estado}</span></td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
