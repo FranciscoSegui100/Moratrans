@@ -20,11 +20,15 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
        -- 'reservado' ya representa "asignado, todavía no entregado".
        (SELECT count(*) FROM contenedores WHERE estado = 'reservado')::int               AS contenedores_activos,
        (SELECT count(*) FROM contenedores WHERE estado = 'disponible')::int              AS contenedores_disponibles,
-       (SELECT count(*) FROM pagos WHERE estado = 'pendiente')::int                       AS cobros_pendientes,
-       -- Efectivo pendiente de cobro puede no tener monto todavía (se carga
-       -- recién al validar, ver pagos.routes.ts), así que esto es la suma de
-       -- lo que ya se conoce, no necesariamente el total real adeudado.
-       (SELECT COALESCE(SUM(monto), 0) FROM pagos WHERE estado = 'pendiente')             AS cobros_pendientes_monto,
+       (SELECT count(*) FROM pagos WHERE estado = 'pendiente'
+                                       OR (medio_pago = 'efectivo' AND estado = 'validado' AND efectivo_cobrado = FALSE))::int
+                                                                                          AS cobros_pendientes,
+       -- Incluye pagos pendientes de validación + efectivo validado pero aún
+       -- no cobrado por el chofer. El monto puede faltar si todavía no se
+       -- cargó (se asigna al validar, ver pagos.routes.ts).
+       (SELECT COALESCE(SUM(monto), 0) FROM pagos WHERE estado = 'pendiente'
+                                       OR (medio_pago = 'efectivo' AND estado = 'validado' AND efectivo_cobrado = FALSE))
+                                                                                          AS cobros_pendientes_monto,
        -- Antes contaba historial_contenedores con estado='entregado' creado
        -- hoy: eso son confirmaciones de entrega, no "viajes de hoy" — excluía
        -- todos los retiros y no tenía relación con viajes.fecha (la fecha
