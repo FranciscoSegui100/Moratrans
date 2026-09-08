@@ -183,11 +183,18 @@ export function Layout({ children }: { children: ReactNode }) {
       // viajes...): se refresca ante cualquier cambio, no solo el suyo.
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       // Recursos cuyo cambio impacta otra pantalla que usa otra queryKey:
-      // - validar/rechazar un pago mueve los números de Finanzas
+      // - validar/rechazar un pago (o marcar efectivo cobrado, o un abono)
+      //   mueve los números de Finanzas Y la deuda/cuenta corriente que se ve
+      //   en la ficha de un cliente (ClienteDetalle.tsx, queryKey ['clientes',
+      //   telefono, ...]) — antes esta pantalla se quedaba con el monto viejo
+      //   hasta que alguien la refrescara a mano.
       // - los cambios de /api/chat se listan bajo ['conversaciones']
       // invalidateQueries solo re-consulta lo que está montado, así que si
       // nadie está en esa pantalla es un no-op.
-      if (recurso === 'pagos') queryClient.invalidateQueries({ queryKey: ['finanzas'] });
+      if (recurso === 'pagos') {
+        queryClient.invalidateQueries({ queryKey: ['finanzas'] });
+        queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      }
       if (recurso === 'chat') queryClient.invalidateQueries({ queryKey: ['conversaciones'] });
     };
     socket.on('recurso_actualizado', onRecursoActualizado);
