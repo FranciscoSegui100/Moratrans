@@ -1,9 +1,15 @@
+import { randomUUID } from 'crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { query } from '../../config/db';
+import { query, withTx } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { excelClientes, enviarExcelClientePorWhatsApp, enviarResumenCuentaCorrientePorWhatsApp, resumenCuentaCorriente, deudaCliente, enviarDeudaClientePorWhatsApp } from '../reportes/reportes.service';
-import { motivoErrorWa } from '../whatsapp/graphApi';
+import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
+import { datosBancarios } from '../whatsapp/flows/pago.flow';
+import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
+import { emitAlerta, emitRecursoActualizado } from '../../config/socket';
+import { encrypt, encryptBuffer } from '../../services/crypto.service';
+import { subirArchivo } from '../../services/storage.service';
 import { normalizarTelefonoAR } from '../../services/telefono.service';
 
 export const clientesRouter = Router();
@@ -153,6 +159,205 @@ clientesRouter.post(
 clientesRouter.get('/:telefono/deuda', async (req: Request, res: Response) => {
   const resumen = await deudaCliente(req.params.telefono);
   res.json(resumen);
+});
+
+const viajeManualSchema = z.object({
+  tipo: z.enum(['entrega', 'recambio', 'alargue_retiro']),
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida'),
+  // Recambio: el contenedor lleno que se retira (o el único, si no es recambio).
+  contenedor_numero: z.string().trim().min(1, 'Falta el número de contenedor'),
+  // Solo recambio: el vacío que se deja. Opcional (carga histórica: a veces no se sabe).
+  contenedor_numero_entrega: z.string().trim().min(1).optional(),
+  importe: z.coerce.number().positive('El importe tiene que ser mayor a 0'),
+  medio_pago: z.enum(['efectivo', 'transferencia']),
+  pagado: z.boolean(),
+  // Solo si pagado=true y medio_pago='transferencia'.
+  comprobante_base64: z.string().optional(),
+  comprobante_content_type: z.string().optional(),
+});
+
+const TIPO_LABEL: Record<string, string> = { entrega: 'Entrega', recambio: 'Recambio', alargue_retiro: 'Extensión de retiro' };
+
+/**
+ * POST /api/clientes/:telefono/viaje-manual — carga a mano un viaje/recambio/
+ * extensión de retiro que YA se hizo fuera del sistema (ej. un pedido por
+ * teléfono que nunca pasó por el bot), para no perder el registro de fechas,
+ * contenedores y cobros. A propósito NO toca el estado del contenedor en la
+ * pestaña Contenedores — es solo el registro de plata/fechas del cliente.
+ *
+ * Reglas de plata (confirmadas con el dueño del negocio):
+ *  - Pagado -> nunca se agrega como cargo de cuenta corriente (ya está
+ *    saldado), sea o no el cliente de cuenta corriente. Efectivo no pide
+ *    nada más; transferencia pide el comprobante, que se sube y cifra con
+ *    el mismo criterio que los que llegan por WhatsApp (ver pago.flow.ts).
+ *  - No pagado + cliente OCASIONAL -> el pago queda 'pendiente' como
+ *    cualquiera del bot (aparece en Validar pagos/Alertas) y se le manda
+ *    automático por WhatsApp la solicitud de pago (datos bancarios si es
+ *    transferencia, recordatorio si es efectivo).
+ *  - No pagado + cliente CUENTA CORRIENTE -> se agrega directo como cargo
+ *    (es_cuenta_corriente=TRUE, 'validado') — mismo criterio que un alargue
+ *    de retiro pedido por cuenta corriente (ver alargarRetiro.flow.ts): no
+ *    hay nada que un operador tenga que aprobar, y no se le manda nada al
+ *    cliente porque la cuenta corriente se cobra junta, no pedido a pedido.
+ */
+clientesRouter.post('/:telefono/viaje-manual', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+  const parsed = viajeManualSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Datos inválidos' });
+  const v = parsed.data;
+  const telefono = req.params.telefono;
+
+  const [cliente] = await query<{ id: string; nombre: string; cuenta_corriente_estado: string }>(
+    'SELECT id, nombre, cuenta_corriente_estado FROM clientes WHERE telefono = $1',
+    [telefono],
+  );
+  if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+  const esCC = cliente.cuenta_corriente_estado === 'aprobada' || cliente.cuenta_corriente_estado === 'pendiente';
+  const cargoCC = esCC && !v.pagado;
+
+  let urlComprobanteCifrada: string | null = null;
+  if (v.pagado && v.medio_pago === 'transferencia' && v.comprobante_base64) {
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(v.comprobante_base64, 'base64');
+    } catch {
+      return res.status(400).json({ error: 'Comprobante inválido' });
+    }
+    if (buffer.length > 8 * 1024 * 1024) return res.status(400).json({ error: 'El comprobante no puede pesar más de 8MB' });
+    const mime = v.comprobante_content_type || 'image/jpeg';
+    const ext = mime.includes('pdf') ? 'pdf' : mime.split('/')[1] || 'jpg';
+    const rutaStorage = `comprobantes/manual_${telefono}_${Date.now()}.${ext}`;
+    try {
+      // Mismo criterio que un comprobante que llega por WhatsApp: el binario
+      // se cifra ANTES de subirlo (ver pago.flow.ts), y solo la referencia
+      // cifrada queda en pagos.url_comprobante.
+      await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
+    } catch (e) {
+      console.error('Error subiendo comprobante manual:', e);
+      return res.status(502).json({ error: 'No se pudo guardar el comprobante' });
+    }
+    urlComprobanteCifrada = encrypt(rutaStorage);
+  }
+
+  /** Solicitud de pago por WhatsApp de un viaje ya realizado (solo cliente ocasional, no pagado). */
+  async function pedirPagoPorWhatsApp(): Promise<void> {
+    const montoTexto = `$${v.importe.toLocaleString('es-AR')}`;
+    const cuerpo =
+      `📋 Tenés un pago pendiente de *${montoTexto}* — ${TIPO_LABEL[v.tipo].toLowerCase()} del contenedor ${v.contenedor_numero} (${v.fecha}).\n\n` +
+      (v.medio_pago === 'transferencia'
+        ? `${datosBancarios()}\n\nCuando hagas la transferencia, mandanos la foto del comprobante por acá. 📎`
+        : '💵 Coordiná con nosotros el pago en efectivo cuando puedas.');
+    try {
+      await sendText(telefono, cuerpo);
+    } catch (e) {
+      const motivo = motivoErrorWa(e);
+      console.error('Error mandando solicitud de pago manual:', motivo);
+      notificarEnvioFallido(telefono, telefono, 'solicitud de pago de un viaje cargado a mano', motivo).catch((e2) =>
+        console.error('Error registrando alerta de envío fallido:', e2),
+      );
+    }
+  }
+
+  try {
+    if (v.tipo === 'alargue_retiro') {
+      // 'validado' (pagado, o cargo de cuenta corriente ya aplicado) refleja
+      // la fecha real en que pasó (v.fecha); 'pendiente' (solicitud recién
+      // mandada) arranca a envejecer desde hoy, no desde la fecha del viaje
+      // — si no, un backfill viejo aparecería como "vencido" de entrada.
+      const estadoPago = cargoCC || v.pagado ? 'validado' : 'pendiente';
+      const creadoEn = estadoPago === 'validado' ? v.fecha : null;
+      const [pago] = await query<{ id: string }>(
+        `INSERT INTO pagos (cliente_telefono, tipo, contenedor_numero, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante, creado_en)
+         VALUES ($1, 'alargue_retiro', $2, $3, $4, $5, $6, $7, $8, COALESCE($9::date + interval '12 hours', now()))
+         RETURNING id`,
+        [telefono, v.contenedor_numero, v.importe, v.medio_pago, estadoPago,
+         v.pagado && v.medio_pago === 'efectivo', cargoCC, urlComprobanteCifrada, creadoEn],
+      );
+
+      if (!v.pagado && !esCC) {
+        const [alerta] = await query(
+          `INSERT INTO alertas (tipo, referencia_id, mensaje)
+           VALUES ('pago_pendiente_validacion', $1, $2)
+           ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+           RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+          [pago.id, `Extensión de retiro cargada a mano para ${telefono} — contenedor ${v.contenedor_numero}`],
+        );
+        if (alerta) {
+          emitAlerta({
+            ...alerta, cliente_telefono: telefono, monto: String(v.importe), pago_estado: 'pendiente',
+            tiene_comprobante: false, medio_pago: v.medio_pago, zona: null, precio: null,
+          });
+        }
+        await pedirPagoPorWhatsApp();
+      }
+      emitRecursoActualizado('pagos');
+      return res.json({ ok: true, pago_id: pago.id });
+    }
+
+    // tipo 'entrega' o 'recambio': van a la tabla viajes. Se crean ya
+    // 'completado' (a diferencia de un viaje real armado desde el panel,
+    // que arranca 'programado' — acá el hecho ya pasó, no hay nada que
+    // programar ni asignarle a un chofer).
+    const resultado = await withTx(async (c) => {
+      let pagoId: string | null = null;
+      if (!cargoCC) {
+        // Mismo criterio que en la rama de alargue: 'validado' toma la
+        // fecha real del viaje, 'pendiente' arranca a envejecer desde hoy.
+        const { rows } = await c.query<{ id: string }>(
+          `INSERT INTO pagos (cliente_telefono, tipo, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante, creado_en)
+           VALUES ($1, 'flete', $2, $3, $4, $5, FALSE, $6, COALESCE($7::date + interval '12 hours', now()))
+           RETURNING id`,
+          [telefono, v.importe, v.medio_pago, v.pagado ? 'validado' : 'pendiente',
+           v.pagado && v.medio_pago === 'efectivo', urlComprobanteCifrada, v.pagado ? v.fecha : null],
+        );
+        pagoId = rows[0].id;
+      }
+
+      if (v.tipo === 'recambio') {
+        const grupoId = randomUUID();
+        await c.query(
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, importe, estado, es_cuenta_corriente, pago_id, grupo_id, notas)
+           VALUES ('retiro', $1, $2, $3, NULL, 'completado', $4, $5, $6, 'Cargado a mano desde el perfil del cliente')`,
+          [v.fecha, v.contenedor_numero, telefono, cargoCC, pagoId, grupoId],
+        );
+        await c.query(
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, importe, estado, es_cuenta_corriente, pago_id, grupo_id, notas)
+           VALUES ('entrega', $1, $2, $3, $4, 'completado', $5, $6, $7, 'Cargado a mano desde el perfil del cliente')`,
+          [v.fecha, v.contenedor_numero_entrega ?? null, telefono, v.importe, cargoCC, pagoId, grupoId],
+        );
+      } else {
+        await c.query(
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, importe, estado, es_cuenta_corriente, pago_id, notas)
+           VALUES ('entrega', $1, $2, $3, $4, 'completado', $5, $6, 'Cargado a mano desde el perfil del cliente')`,
+          [v.fecha, v.contenedor_numero, telefono, v.importe, cargoCC, pagoId],
+        );
+      }
+      return { pagoId };
+    });
+
+    if (!v.pagado && !esCC && resultado.pagoId) {
+      const [alerta] = await query(
+        `INSERT INTO alertas (tipo, referencia_id, mensaje)
+         VALUES ('pago_pendiente_validacion', $1, $2)
+         ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+         RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+        [resultado.pagoId, `${TIPO_LABEL[v.tipo]} cargada a mano para ${telefono} — contenedor ${v.contenedor_numero}`],
+      );
+      if (alerta) {
+        emitAlerta({
+          ...alerta, cliente_telefono: telefono, monto: null, pago_estado: 'pendiente',
+          tiene_comprobante: false, medio_pago: v.medio_pago, zona: null, precio: String(v.importe),
+        });
+      }
+      await pedirPagoPorWhatsApp();
+    }
+    emitRecursoActualizado('viajes');
+    emitRecursoActualizado('pagos');
+    res.json({ ok: true, pago_id: resultado.pagoId });
+  } catch (e: any) {
+    console.error('Error cargando viaje manual:', e);
+    if (e.code === '23503') return res.status(400).json({ error: 'Ese número de contenedor no existe — cargalo primero en la pestaña Contenedores.' });
+    res.status(500).json({ error: 'No se pudo cargar el viaje' });
+  }
 });
 
 /**

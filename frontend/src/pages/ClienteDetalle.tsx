@@ -104,6 +104,38 @@ function etiquetaMes(mes: string): string {
   return texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 
+interface ViajeManualForm {
+  tipo: 'entrega' | 'recambio' | 'alargue_retiro';
+  fecha: string;
+  contenedor_numero: string;
+  contenedor_numero_entrega: string;
+  importe: string;
+  medio_pago: 'efectivo' | 'transferencia';
+  pagado: boolean;
+}
+
+function formularioViajeVacio(): ViajeManualForm {
+  return {
+    tipo: 'entrega',
+    fecha: new Date().toISOString().slice(0, 10),
+    contenedor_numero: '',
+    contenedor_numero_entrega: '',
+    importe: '',
+    medio_pago: 'transferencia',
+    pagado: true,
+  };
+}
+
+/** Lee un File como base64 puro (sin el prefijo "data:mime;base64,") para mandarlo en el body del POST. */
+function archivoABase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
 export function ClienteDetalle() {
   const { telefono = '' } = useParams<{ telefono: string }>();
   const navigate = useNavigate();
@@ -122,6 +154,10 @@ export function ClienteDetalle() {
   const [agregandoPago, setAgregandoPago] = useState(false);
   const [montoPagoForm, setMontoPagoForm] = useState('');
   const [guardandoPago, setGuardandoPago] = useState(false);
+  const [mostrarCargarViaje, setMostrarCargarViaje] = useState(false);
+  const [viajeForm, setViajeForm] = useState<ViajeManualForm>(formularioViajeVacio());
+  const [comprobanteFile, setComprobanteFile] = useState<File | null>(null);
+  const [guardandoViaje, setGuardandoViaje] = useState(false);
 
   /**
    * Para el caso borde en que un pago (o alargue) quedó validado pero el
@@ -223,6 +259,53 @@ export function ClienteDetalle() {
       show('error', 'No se pudo enviar', err.response?.data?.error);
     } finally {
       setEnviando(false);
+    }
+  }
+
+  /**
+   * Carga a mano un viaje/recambio/extensión de retiro ya realizado que no
+   * pasó por el sistema (ver POST /api/clientes/:telefono/viaje-manual en el
+   * backend para las reglas de plata: pagado nunca suma a cuenta corriente,
+   * no pagado + ocasional manda la solicitud por WhatsApp, no pagado + cta.
+   * cte. se agrega directo al resumen sin avisar nada).
+   */
+  async function cargarViajeManual() {
+    if (!viajeForm.contenedor_numero.trim()) return show('error', 'Falta el número de contenedor');
+    const importe = Number(viajeForm.importe);
+    if (!(importe > 0)) return show('error', 'El importe tiene que ser mayor a 0');
+    setGuardandoViaje(true);
+    try {
+      let comprobante_base64: string | undefined;
+      let comprobante_content_type: string | undefined;
+      if (viajeForm.pagado && viajeForm.medio_pago === 'transferencia' && comprobanteFile) {
+        comprobante_base64 = await archivoABase64(comprobanteFile);
+        comprobante_content_type = comprobanteFile.type;
+      }
+      await api.post(`/api/clientes/${encodeURIComponent(telefono)}/viaje-manual`, {
+        tipo: viajeForm.tipo,
+        fecha: viajeForm.fecha,
+        contenedor_numero: viajeForm.contenedor_numero.trim(),
+        contenedor_numero_entrega: viajeForm.tipo === 'recambio' && viajeForm.contenedor_numero_entrega.trim()
+          ? viajeForm.contenedor_numero_entrega.trim() : undefined,
+        importe,
+        medio_pago: viajeForm.medio_pago,
+        pagado: viajeForm.pagado,
+        comprobante_base64,
+        comprobante_content_type,
+      });
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      show(
+        'success',
+        'Viaje cargado',
+        !viajeForm.pagado && !esCC ? 'Se le mandó la solicitud de pago por WhatsApp.' : undefined,
+      );
+      setMostrarCargarViaje(false);
+      setViajeForm(formularioViajeVacio());
+      setComprobanteFile(null);
+    } catch (err: any) {
+      show('error', 'No se pudo cargar el viaje', err.response?.data?.error);
+    } finally {
+      setGuardandoViaje(false);
     }
   }
 
@@ -383,7 +466,12 @@ export function ClienteDetalle() {
         </button>
         <small className="text-muted">Incluye su resumen facturado por mes, su ficha, y el detalle de todos sus pedidos.</small>
         <RoleGate roles={['admin', 'operador', 'finanzas']}>
-          <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={enviarResumenPorWhatsApp} disabled={enviando}>
+          <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => setMostrarCargarViaje(true)}>
+            <Plus strokeWidth={1.75} /> Cargar viaje
+          </button>
+        </RoleGate>
+        <RoleGate roles={['admin', 'operador', 'finanzas']}>
+          <button className="btn btn-ghost" onClick={enviarResumenPorWhatsApp} disabled={enviando}>
             <Send strokeWidth={1.75} />
             {' '}
             {enviando ? 'Enviando...' : esCC ? 'Enviar resumen de cuenta por WhatsApp' : 'Enviar deuda pendiente por WhatsApp'}
@@ -694,6 +782,151 @@ export function ClienteDetalle() {
               {formatearFecha(comprobanteAbono.fecha)} · Abono a cuenta corriente · ${comprobanteAbono.monto.toLocaleString('es-AR')}
             </p>
             <ComprobanteViewer pagoId={comprobanteAbono.id} />
+          </div>
+        </div>
+      )}
+
+      {mostrarCargarViaje && (
+        <div className="modal-overlay" onClick={() => !guardandoViaje && setMostrarCargarViaje(false)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="section-title" style={{ margin: 0 }}>Cargar viaje ya realizado</div>
+              <button className="modal-close" onClick={() => setMostrarCargarViaje(false)}>
+                <X size={18} strokeWidth={2} />
+              </button>
+            </div>
+            <p className="text-muted" style={{ marginTop: 0 }}>
+              Para un viaje, recambio o extensión de retiro que ya pasó pero no quedó cargado en el sistema.
+            </p>
+
+            <div className="form-group">
+              <label className="form-label">Tipo</label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {([
+                  ['entrega', 'Entrega'],
+                  ['recambio', 'Recambio'],
+                  ['alargue_retiro', 'Extensión de retiro'],
+                ] as const).map(([valor, etiqueta]) => (
+                  <button
+                    key={valor}
+                    type="button"
+                    className={`btn btn-sm ${viajeForm.tipo === valor ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setViajeForm({ ...viajeForm, tipo: valor })}
+                  >
+                    {etiqueta}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <div className="form-group" style={{ flex: '1 1 160px' }}>
+                <label className="form-label">Fecha</label>
+                <input
+                  type="date"
+                  className="form-input"
+                  value={viajeForm.fecha}
+                  onChange={(e) => setViajeForm({ ...viajeForm, fecha: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ flex: '1 1 160px' }}>
+                <label className="form-label">Importe</label>
+                <input
+                  type="number" min="0" step="0.01"
+                  className="form-input"
+                  placeholder="$"
+                  value={viajeForm.importe}
+                  onChange={(e) => setViajeForm({ ...viajeForm, importe: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <div className="form-group" style={{ flex: '1 1 160px' }}>
+                <label className="form-label">{viajeForm.tipo === 'recambio' ? 'Contenedor retirado' : 'Contenedor'}</label>
+                <input
+                  className="form-input mono"
+                  value={viajeForm.contenedor_numero}
+                  onChange={(e) => setViajeForm({ ...viajeForm, contenedor_numero: e.target.value })}
+                />
+              </div>
+              {viajeForm.tipo === 'recambio' && (
+                <div className="form-group" style={{ flex: '1 1 160px' }}>
+                  <label className="form-label">Contenedor entregado <span className="text-muted">(si se sabe)</span></label>
+                  <input
+                    className="form-input mono"
+                    value={viajeForm.contenedor_numero_entrega}
+                    onChange={(e) => setViajeForm({ ...viajeForm, contenedor_numero_entrega: e.target.value })}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Medio de pago</label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${viajeForm.medio_pago === 'efectivo' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setViajeForm({ ...viajeForm, medio_pago: 'efectivo' })}
+                >
+                  Efectivo
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${viajeForm.medio_pago === 'transferencia' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setViajeForm({ ...viajeForm, medio_pago: 'transferencia' })}
+                >
+                  Transferencia
+                </button>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">¿Ya está pagado?</label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${viajeForm.pagado ? 'btn-success' : 'btn-ghost'}`}
+                  onClick={() => setViajeForm({ ...viajeForm, pagado: true })}
+                >
+                  Sí
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${!viajeForm.pagado ? 'btn-danger' : 'btn-ghost'}`}
+                  onClick={() => setViajeForm({ ...viajeForm, pagado: false })}
+                >
+                  No
+                </button>
+              </div>
+            </div>
+
+            {viajeForm.pagado && viajeForm.medio_pago === 'transferencia' && (
+              <div className="form-group">
+                <label className="form-label">Comprobante de la transferencia</label>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,application/pdf"
+                  onChange={(e) => setComprobanteFile(e.target.files?.[0] ?? null)}
+                />
+              </div>
+            )}
+
+            <p className="text-muted" style={{ fontSize: '0.8rem' }}>
+              {viajeForm.pagado
+                ? 'No suma a la cuenta corriente ni pide nada: ya está saldado.'
+                : esCC
+                  ? 'Se agrega directo como cargo a su cuenta corriente. No se le manda nada por WhatsApp.'
+                  : 'Va a quedar pendiente de validar y se le manda automáticamente la solicitud de pago por WhatsApp.'}
+            </p>
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '10px' }}>
+              <button className="btn btn-ghost" onClick={() => setMostrarCargarViaje(false)} disabled={guardandoViaje}>Cancelar</button>
+              <button className="btn btn-success" onClick={cargarViajeManual} disabled={guardandoViaje}>
+                {guardandoViaje ? 'Guardando...' : 'Cargar viaje'}
+              </button>
+            </div>
           </div>
         </div>
       )}
