@@ -32,6 +32,12 @@ interface Cliente {
   cantidad_viajes: number;
 }
 
+interface Tarifa {
+  departamento: string;
+  precio: string;
+  activo: boolean;
+}
+
 interface ItemDeuda {
   fecha: string;
   contenedor_numero: string | null;
@@ -352,6 +358,12 @@ export function ClienteDetalle() {
     queryFn: () => api.get<Cliente[]>('/api/clientes').then((r) => r.data),
   });
   const cliente = clientes.find((c) => c.telefono === telefono);
+
+  // Para autocompletar el importe al cargar un viaje a mano (ver modal más abajo).
+  const { data: tarifas = [] } = useQuery({
+    queryKey: ['tarifas'],
+    queryFn: () => api.get<Tarifa[]>('/api/tarifas').then((r) => r.data),
+  });
 
   const { data: viajesReales = [] } = useQuery({
     queryKey: ['clientes', telefono, 'viajes'],
@@ -830,15 +842,31 @@ export function ClienteDetalle() {
                 />
               </div>
               <div className="form-group" style={{ flex: '1 1 160px' }}>
-                <label className="form-label">Importe</label>
-                <input
-                  type="number" min="0" step="0.01"
+                <label className="form-label">Tarifa <span className="text-muted">(opcional)</span></label>
+                <select
                   className="form-input"
-                  placeholder="$"
-                  value={viajeForm.importe}
-                  onChange={(e) => setViajeForm({ ...viajeForm, importe: e.target.value })}
-                />
+                  value=""
+                  onChange={(e) => { if (e.target.value) setViajeForm({ ...viajeForm, importe: e.target.value }); }}
+                >
+                  <option value="">Completar importe a mano...</option>
+                  {tarifas.filter((t) => t.activo).map((t) => (
+                    <option key={t.departamento} value={t.precio}>
+                      {t.departamento} — ${Number(t.precio).toLocaleString('es-AR')}
+                    </option>
+                  ))}
+                </select>
               </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Importe</label>
+              <input
+                type="number" min="0" step="0.01"
+                className="form-input"
+                placeholder="$"
+                value={viajeForm.importe}
+                onChange={(e) => setViajeForm({ ...viajeForm, importe: e.target.value })}
+              />
             </div>
 
             <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
