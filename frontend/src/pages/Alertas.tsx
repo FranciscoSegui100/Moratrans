@@ -1,11 +1,41 @@
 import { useState } from 'react';
-import { Check, X, RotateCcw, CircleCheck } from 'lucide-react';
-import { useAlertas } from '../hooks/useAlertas';
+import { Link } from 'react-router-dom';
+import { Check, X, RotateCcw, CircleCheck, ArrowRight } from 'lucide-react';
+import { useAlertas, Alerta } from '../hooks/useAlertas';
 import { RoleGate } from '../components/RoleGate';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
 import { useToast } from '../components/Toast';
 import { tipoLabel } from '../lib/alertLabels';
 import { formatearFechaHora } from '../lib/fechas';
+
+/**
+ * A dónde tiene que ir un operador para ACTUAR sobre esta alerta (a
+ * diferencia de "Resolver", que solo la archiva). `null` cuando no hay una
+ * pestaña puntual asociada (ver notificarEnvioFallido: la referencia varía
+ * demasiado — viaje, ruta, pago, contenedor — como para adivinar un destino
+ * confiable).
+ */
+function rutaAlerta(a: Alerta): { to: string; label: string } | null {
+  switch (a.tipo) {
+    case 'contenedor_por_vencer':
+    case 'stock_bajo':
+      return { to: '/contenedores', label: 'Ir a Contenedores' };
+    case 'pago_vencido':
+    case 'alargue_solicitado':
+      return { to: '/pagos', label: 'Ir a Validar pagos' };
+    case 'solicita_asesor':
+    case 'factura_solicitada':
+      return { to: `/conversaciones?tel=${encodeURIComponent(a.referencia_id)}`, label: 'Ir a Conversaciones' };
+    case 'recambio_solicitado':
+    case 'retiro_solicitado':
+      return { to: '/viajes', label: 'Ir a Viajes' };
+    case 'chofer_no_reconocido':
+    case 'chofer_cambio_telefono':
+      return { to: '/choferes', label: 'Ir a Choferes' };
+    default:
+      return null;
+  }
+}
 
 export function Alertas() {
   const { alertas, resolver, validarPago, rechazarPago, confirmarRetiro } = useAlertas();
@@ -120,9 +150,16 @@ export function Alertas() {
                   </div>
                   {!esPago && !esRetiro && (
                     <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                      <button onClick={() => onResolver(a.id)} className="btn btn-ghost btn-sm" disabled={procesando === a.id}>
-                        <Check strokeWidth={2} /> Resolver
-                      </button>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {rutaAlerta(a) && (
+                          <Link to={rutaAlerta(a)!.to} className="btn btn-primary btn-sm">
+                            {rutaAlerta(a)!.label} <ArrowRight size={13} strokeWidth={1.75} />
+                          </Link>
+                        )}
+                        <button onClick={() => onResolver(a.id)} className="btn btn-ghost btn-sm" disabled={procesando === a.id}>
+                          <Check strokeWidth={2} /> Resolver
+                        </button>
+                      </div>
                     </RoleGate>
                   )}
                   {esRetiro && (

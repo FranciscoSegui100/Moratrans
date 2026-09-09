@@ -1512,7 +1512,7 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 /* ===== TOAST ===== */
 .toast-container {
   position: fixed;
-  bottom: 20px;
+  top: 64px;
   right: 20px;
   z-index: 9999;
   display: flex;

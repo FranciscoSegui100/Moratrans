@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { MessageCircle, Pause, Play, UserPlus } from 'lucide-react';
 import { useConversaciones, Conversacion } from '../hooks/useConversaciones';
 import { RoleGate } from '../components/RoleGate';
@@ -106,7 +107,10 @@ export function Conversaciones() {
   const { conversaciones, setModoHumano, reclamar } = useConversaciones();
   const { user } = useAuth();
   const { show } = useToast();
-  const [seleccionado, setSeleccionado] = useState<string | null>(null);
+  // Deep-link desde la Bandeja de alertas (ver rutaAlerta en Alertas.tsx):
+  // /conversaciones?tel=5492611234567 abre directo ese chat.
+  const [searchParams] = useSearchParams();
+  const [seleccionado, setSeleccionado] = useState<string | null>(() => searchParams.get('tel'));
   const [filtro, setFiltro] = useState<'todas' | 'requieren'>('todas');
   // Fuerza un re-render por minuto para que los chips de "ventana cerrada" de
   // la lista se actualicen solos aunque no llegue ningún mensaje nuevo.
@@ -131,8 +135,10 @@ export function Conversaciones() {
   const visibles = filtro === 'requieren' ? requierenVosOrdenadas : conversaciones;
 
   // Si la seleccionada ya no está en la lista (o no hay ninguna elegida todavía), autoseleccioná la primera.
+  // El guard de largo > 0 evita pisar el ?tel= del deep-link mientras la
+  // lista todavía está cargando (conversaciones = [] antes de que responda la API).
   useEffect(() => {
-    if (!conversaciones.find((c) => c.telefono === seleccionado)) {
+    if (conversaciones.length > 0 && !conversaciones.find((c) => c.telefono === seleccionado)) {
       setSeleccionado(conversaciones[0]?.telefono ?? null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
