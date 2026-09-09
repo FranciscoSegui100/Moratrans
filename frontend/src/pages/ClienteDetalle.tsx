@@ -110,6 +110,9 @@ function etiquetaMes(mes: string): string {
   return texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 
+/** Mismo valor que PORCENTAJE_ALARGUE en backend/src/config/bot.config.ts — mantener en sync. */
+const PORCENTAJE_ALARGUE = 0.5;
+
 interface ViajeManualForm {
   tipo: 'entrega' | 'recambio' | 'alargue_retiro';
   fecha: string;
@@ -276,7 +279,9 @@ export function ClienteDetalle() {
    * cte. se agrega directo al resumen sin avisar nada).
    */
   async function cargarViajeManual() {
-    if (!viajeForm.contenedor_numero.trim()) return show('error', 'Falta el número de contenedor');
+    if (viajeForm.tipo !== 'alargue_retiro' && !viajeForm.contenedor_numero.trim()) {
+      return show('error', 'Falta el número de contenedor');
+    }
     const importe = Number(viajeForm.importe);
     if (!(importe > 0)) return show('error', 'El importe tiene que ser mayor a 0');
     setGuardandoViaje(true);
@@ -290,7 +295,7 @@ export function ClienteDetalle() {
       await api.post(`/api/clientes/${encodeURIComponent(telefono)}/viaje-manual`, {
         tipo: viajeForm.tipo,
         fecha: viajeForm.fecha,
-        contenedor_numero: viajeForm.contenedor_numero.trim(),
+        contenedor_numero: viajeForm.contenedor_numero.trim() || undefined,
         contenedor_numero_entrega: viajeForm.tipo === 'recambio' && viajeForm.contenedor_numero_entrega.trim()
           ? viajeForm.contenedor_numero_entrega.trim() : undefined,
         importe,
@@ -479,7 +484,7 @@ export function ClienteDetalle() {
         <small className="text-muted">Incluye su resumen facturado por mes, su ficha, y el detalle de todos sus pedidos.</small>
         <RoleGate roles={['admin', 'operador', 'finanzas']}>
           <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => setMostrarCargarViaje(true)}>
-            <Plus strokeWidth={1.75} /> Cargar viaje
+            <Plus strokeWidth={1.75} /> Cargar viaje finalizado
           </button>
         </RoleGate>
         <RoleGate roles={['admin', 'operador', 'finanzas']}>
@@ -802,7 +807,7 @@ export function ClienteDetalle() {
         <div className="modal-overlay" onClick={() => !guardandoViaje && setMostrarCargarViaje(false)}>
           <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div className="section-title" style={{ margin: 0 }}>Cargar viaje ya realizado</div>
+              <div className="section-title" style={{ margin: 0 }}>Cargar viaje finalizado</div>
               <button className="modal-close" onClick={() => setMostrarCargarViaje(false)}>
                 <X size={18} strokeWidth={2} />
               </button>
@@ -849,11 +854,19 @@ export function ClienteDetalle() {
                   onChange={(e) => { if (e.target.value) setViajeForm({ ...viajeForm, importe: e.target.value }); }}
                 >
                   <option value="">Completar importe a mano...</option>
-                  {tarifas.filter((t) => t.activo).map((t) => (
-                    <option key={t.departamento} value={t.precio}>
-                      {t.departamento} — ${Number(t.precio).toLocaleString('es-AR')}
-                    </option>
-                  ))}
+                  {tarifas.filter((t) => t.activo).map((t) => {
+                    // Extensión de retiro cuesta PORCENTAJE_ALARGUE de la tarifa
+                    // de la zona (ver bot.config.ts) — no el precio completo.
+                    const precio = viajeForm.tipo === 'alargue_retiro'
+                      ? Math.round(Number(t.precio) * PORCENTAJE_ALARGUE)
+                      : Number(t.precio);
+                    return (
+                      <option key={t.departamento} value={precio}>
+                        {t.departamento} — ${precio.toLocaleString('es-AR')}
+                        {viajeForm.tipo === 'alargue_retiro' ? ` (${Math.round(PORCENTAJE_ALARGUE * 100)}% de $${Number(t.precio).toLocaleString('es-AR')})` : ''}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
             </div>
@@ -871,7 +884,11 @@ export function ClienteDetalle() {
 
             <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
               <div className="form-group" style={{ flex: '1 1 160px' }}>
-                <label className="form-label">{viajeForm.tipo === 'recambio' ? 'Contenedor retirado' : 'Contenedor'}</label>
+                <label className="form-label">
+                  {viajeForm.tipo === 'recambio' ? 'Contenedor retirado'
+                    : viajeForm.tipo === 'alargue_retiro' ? <>Contenedor <span className="text-muted">(opcional)</span></>
+                    : 'Contenedor'}
+                </label>
                 <input
                   className="form-input mono"
                   value={viajeForm.contenedor_numero}
@@ -943,10 +960,12 @@ export function ClienteDetalle() {
 
             <p className="text-muted" style={{ fontSize: '0.8rem' }}>
               {viajeForm.pagado
-                ? 'No suma a la cuenta corriente ni pide nada: ya está saldado.'
+                ? esCC
+                  ? 'Ya está saldado: no se agrega a la cuenta corriente.'
+                  : 'Ya está saldado, no hace falta nada más.'
                 : esCC
                   ? 'Se agrega directo como cargo a su cuenta corriente. No se le manda nada por WhatsApp.'
-                  : 'Va a quedar pendiente de validar y se le manda automáticamente la solicitud de pago por WhatsApp.'}
+                  : 'Se suma a sus montos pendientes y se le manda automáticamente la solicitud de pago por WhatsApp.'}
             </p>
 
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '10px' }}>
