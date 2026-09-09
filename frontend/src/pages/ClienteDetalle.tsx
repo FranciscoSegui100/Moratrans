@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Download, Send, Pencil, X, Wallet, Receipt, CircleDollarSign, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Download, Send, Pencil, Check, X, Wallet, Receipt, CircleDollarSign, Plus, Trash2 } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -224,13 +224,25 @@ export function ClienteDetalle() {
     }
   }
 
-  /** Da de alta a un cliente ocasional como cuenta corriente — mismo mecanismo que la pestaña Clientes. */
-  async function cambiarACuentaCorriente() {
+  /**
+   * Cambia el tipo de cliente (aprobar/rechazar solicitud, dar de alta o
+   * mover a ocasional) — antes vivía en la pestaña Clientes, ahora todo eso
+   * se maneja desde acá. No borra ni recalcula nada de plata: el saldo de
+   * cuenta corriente y la deuda ocasional quedan grabados en cada pago/viaje
+   * (es_cuenta_corriente), así que cambiar el tipo no hace desaparecer
+   * ninguna deuda vieja (ver GET /api/clientes en el backend).
+   */
+  async function cambiarCuentaCorriente(estado: Cliente['cuenta_corriente_estado']) {
     if (!cliente) return;
     try {
-      await api.patch(`/api/clientes/${cliente.id}`, { cuenta_corriente_estado: 'aprobada' });
+      await api.patch(`/api/clientes/${cliente.id}`, { cuenta_corriente_estado: estado });
       queryClient.invalidateQueries({ queryKey: ['clientes'] });
-      show('success', 'Cliente pasado a cuenta corriente');
+      show(
+        'success',
+        estado === 'aprobada' ? 'Cliente pasado a cuenta corriente'
+          : estado === 'rechazada' ? 'Cliente pasado a ocasional'
+          : 'Cliente actualizado',
+      );
     } catch (err: any) {
       show('error', 'No se pudo actualizar', err.response?.data?.error);
     }
@@ -263,17 +275,24 @@ export function ClienteDetalle() {
   });
   const esCC = cliente?.cuenta_corriente_estado === 'aprobada' || cliente?.cuenta_corriente_estado === 'pendiente';
 
+  // Se piden SIEMPRE las dos, sin importar el tipo actual del cliente: el
+  // saldo de cuenta corriente y la deuda ocasional son cálculos
+  // independientes del estado actual (ver comentario de cambiarCuentaCorriente
+  // más arriba) — si un cliente cambió de tipo alguna vez, puede tener las
+  // dos a la vez, y ninguna de las dos se puede dejar de mostrar.
   const { data: deuda } = useQuery({
     queryKey: ['clientes', telefono, 'deuda'],
     queryFn: () => api.get<ResumenDeuda>(`/api/clientes/${encodeURIComponent(telefono)}/deuda`).then((r) => r.data),
-    enabled: !!telefono && !esCC,
+    enabled: !!telefono,
   });
 
   const { data: cuentaCorriente } = useQuery({
     queryKey: ['clientes', telefono, 'cuenta-corriente'],
     queryFn: () => api.get<ResumenCuentaCorriente>(`/api/clientes/${encodeURIComponent(telefono)}/cuenta-corriente`).then((r) => r.data),
-    enabled: !!telefono && esCC,
+    enabled: !!telefono,
   });
+
+  const deudaTotal = Math.max(cuentaCorriente?.saldo ?? 0, 0) + (deuda?.total ?? 0);
   const viajes = viajesReales;
 
   // Ya vienen ordenados por fecha DESC desde el backend: agrupar preservando
@@ -320,24 +339,37 @@ export function ClienteDetalle() {
           {cc && (
             <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span className={`badge ${cc.clase}`}>{cc.texto}</span>
-              {(cliente?.cuenta_corriente_estado === 'sin_pedir' || cliente?.cuenta_corriente_estado === 'rechazada') && (
-                <RoleGate roles={['admin', 'operador', 'finanzas']}>
-                  <button className="btn btn-ghost btn-sm" onClick={cambiarACuentaCorriente}>
+              <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                {(cliente?.cuenta_corriente_estado === 'sin_pedir' || cliente?.cuenta_corriente_estado === 'rechazada') && (
+                  <button className="btn btn-ghost btn-sm" onClick={() => cambiarCuentaCorriente('aprobada')}>
                     Cambiar a cliente cuenta corriente
                   </button>
-                </RoleGate>
-              )}
+                )}
+                {cliente?.cuenta_corriente_estado === 'pendiente' && (
+                  <>
+                    <button className="btn btn-success btn-sm" onClick={() => cambiarCuentaCorriente('aprobada')}>
+                      <Check size={13} strokeWidth={2} /> Aprobar
+                    </button>
+                    <button className="btn btn-danger btn-sm" onClick={() => cambiarCuentaCorriente('rechazada')}>
+                      <X size={13} strokeWidth={2} /> Rechazar
+                    </button>
+                  </>
+                )}
+                {cliente?.cuenta_corriente_estado === 'aprobada' && (
+                  <button className="btn btn-ghost btn-sm" onClick={() => cambiarCuentaCorriente('rechazada')}>
+                    Mover a cliente ocasional
+                  </button>
+                )}
+              </RoleGate>
             </div>
           )}
         </div>
-        {!esCC && (
-          <div className="stat" style={{ flex: '1 1 160px' }}>
-            <div className="l">Deuda</div>
-            <div className={`n${deuda && deuda.total > 0 ? ' warn' : ''}`} style={{ fontSize: '1.15rem' }}>
-              {!deuda ? '—' : deuda.total > 0 ? `Sí · $${deuda.total.toLocaleString('es-AR')}` : 'No'}
-            </div>
+        <div className="stat" style={{ flex: '1 1 160px' }}>
+          <div className="l">Deuda</div>
+          <div className={`n${deudaTotal > 0 ? ' warn' : ''}`} style={{ fontSize: '1.15rem' }}>
+            {!deuda && !cuentaCorriente ? '—' : deudaTotal > 0 ? `Sí · $${deudaTotal.toLocaleString('es-AR')}` : 'No'}
           </div>
-        )}
+        </div>
       </div>
 
       <div className="form-card" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
@@ -357,7 +389,7 @@ export function ClienteDetalle() {
         </RoleGate>
       </div>
 
-      {esCC && cuentaCorriente && (
+      {cuentaCorriente && (esCC || cuentaCorriente.cargos.length > 0 || cuentaCorriente.abonos.length > 0) && (
         <div style={{ marginTop: '20px' }}>
           <div className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span>Cuenta corriente</span>

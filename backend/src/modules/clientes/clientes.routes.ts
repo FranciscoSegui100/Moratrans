@@ -12,21 +12,30 @@ clientesRouter.use(requireAuth);
 /**
  * GET /api/clientes — listado con totales de viajes (join por teléfono, ver
  * clientes.service.ts) y un único número de "deuda" por cliente para poder
- * mostrarlo de un vistazo en la tabla, sin entrar al perfil de cada uno:
- *  - Cuenta corriente (aprobada/pendiente): saldo = cargos - abonos, mismo
- *    criterio que resumenCuentaCorriente() en reportes.service.ts.
- *  - Ocasional (sin_pedir/rechazada): suma de pedidos sin pagar, mismo
- *    criterio que itemsDeuda() en reportes.service.ts (deben mantenerse en
- *    sync si cambia la definición de "pagado").
+ * mostrarlo de un vistazo en la tabla, sin entrar al perfil de cada uno.
+ *
+ * Sale de sumar DOS cálculos independientes, sin importar el
+ * cuenta_corriente_estado ACTUAL del cliente:
+ *  - cc.saldo: cargos - abonos de cuenta corriente (mismo criterio que
+ *    resumenCuentaCorriente() en reportes.service.ts).
+ *  - oc.deuda: pedidos ocasionales sin pagar (mismo criterio que
+ *    itemsDeuda() en reportes.service.ts — mantener en sync si cambia la
+ *    definición de "pagado").
+ * Por qué sumar y no elegir uno según el estado actual: el flag
+ * es_cuenta_corriente queda grabado en cada pago/viaje al momento de
+ * crearse y no se toca si después el cliente pasa de cuenta corriente a
+ * ocasional (o viceversa) — así que un cliente puede tener las dos deudas
+ * a la vez. Elegir una sola según el estado actual hacía que la otra
+ * desapareciera de la vista apenas se cambiaba el tipo de cliente, aunque
+ * la plata siguiera sin cobrarse. GREATEST(...,0) evita que un saldo a
+ * favor (cliente que pagó de más su cuenta corriente) tape una deuda
+ * ocasional real.
  */
 clientesRouter.get('/', async (_req: Request, res: Response) => {
   const rows = await query(
     `SELECT cl.id, cl.nombre, cl.telefono, cl.cuenta_corriente_estado, cl.numero_plan, cl.creado_en,
             COUNT(v.id)::int AS cantidad_viajes,
-            CASE WHEN cl.cuenta_corriente_estado IN ('aprobada', 'pendiente')
-                 THEN COALESCE(cc.saldo, 0)
-                 ELSE COALESCE(oc.deuda, 0)
-            END AS deuda
+            GREATEST(COALESCE(cc.saldo, 0), 0) + COALESCE(oc.deuda, 0) AS deuda
        FROM clientes cl
        LEFT JOIN viajes v ON v.cliente_telefono = cl.telefono
        LEFT JOIN LATERAL (
