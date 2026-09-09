@@ -114,6 +114,12 @@ function etiquetaMes(mes: string): string {
 /** Mismo valor que PORCENTAJE_ALARGUE en backend/src/config/bot.config.ts — mantener en sync. */
 const PORCENTAJE_ALARGUE = 0.5;
 
+// "Cargar viaje finalizado" queda armado (backend + modal) pero oculto a
+// pedido del dueño del negocio — todavía no lo quiere activo en el panel.
+// El endpoint sigue existiendo; para reactivar la función alcanza con
+// volver esto a `true`.
+const CARGAR_VIAJE_HABILITADO = false;
+
 interface ViajeManualForm {
   tipo: 'entrega' | 'recambio' | 'alargue_retiro';
   fecha: string;
@@ -483,13 +489,15 @@ export function ClienteDetalle() {
           <Download strokeWidth={1.75} /> Exportar pedidos de este cliente a Excel
         </button>
         <small className="text-muted">Incluye su resumen facturado por mes, su ficha, y el detalle de todos sus pedidos.</small>
+        {CARGAR_VIAJE_HABILITADO && (
+          <RoleGate roles={['admin', 'operador', 'finanzas']}>
+            <button className="btn btn-ghost" onClick={() => setMostrarCargarViaje(true)}>
+              <Plus strokeWidth={1.75} /> Cargar viaje finalizado
+            </button>
+          </RoleGate>
+        )}
         <RoleGate roles={['admin', 'operador', 'finanzas']}>
-          <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => setMostrarCargarViaje(true)}>
-            <Plus strokeWidth={1.75} /> Cargar viaje finalizado
-          </button>
-        </RoleGate>
-        <RoleGate roles={['admin', 'operador', 'finanzas']}>
-          <button className="btn btn-ghost" onClick={enviarResumenPorWhatsApp} disabled={enviando}>
+          <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={enviarResumenPorWhatsApp} disabled={enviando}>
             <Send strokeWidth={1.75} />
             {' '}
             {enviando ? 'Enviando...' : esCC ? 'Enviar resumen de cuenta por WhatsApp' : 'Enviar deuda pendiente por WhatsApp'}
