@@ -28,9 +28,6 @@ export interface CapacidadCamion {
 
 export const CAPACIDAD_CAMION_DEFAULT: CapacidadCamion = { llenos: 1, vacios: 6 };
 
-/** A partir de cuántos vacíos a bordo se empieza a advertir (aunque no se supere la capacidad todavía). */
-const UMBRAL_ADVERTENCIA_VACIOS = 3;
-
 export interface AdvertenciaCapacidad {
   orden: number;
   tipo: 'lleno_sin_vaciar' | 'vacios_exceso';
@@ -86,12 +83,6 @@ export function simularDisponibilidad(
         orden,
         tipo: 'vacios_exceso',
         mensaje: `Hay ${disponibles.size} contenedores vacíos a bordo, por encima de la capacidad del camión (${capacidad.vacios}).`,
-      });
-    } else if (disponibles.size >= UMBRAL_ADVERTENCIA_VACIOS) {
-      advertencias.push({
-        orden,
-        tipo: 'vacios_exceso',
-        mensaje: `Hay ${disponibles.size} contenedores vacíos a bordo — cerca del límite del camión (${capacidad.vacios}).`,
       });
     }
   };
