@@ -54,6 +54,7 @@ interface AbonoCuentaCorriente {
   id: string;
   fecha: string;
   monto: string | null;
+  tiene_comprobante: boolean;
 }
 
 interface ResumenCuentaCorriente {
@@ -114,6 +115,7 @@ export function ClienteDetalle() {
   const [editandoRemito, setEditandoRemito] = useState<string | null>(null);
   const [remitoForm, setRemitoForm] = useState('');
   const [viajeComprobantes, setViajeComprobantes] = useState<ViajeCliente | null>(null);
+  const [comprobanteAbono, setComprobanteAbono] = useState<{ id: string; fecha: string; monto: number } | null>(null);
   const [reenviando, setReenviando] = useState<string | null>(null);
   const [editandoAbono, setEditandoAbono] = useState<string | null>(null);
   const [montoAbonoForm, setMontoAbonoForm] = useState('');
@@ -447,8 +449,8 @@ export function ClienteDetalle() {
                 </thead>
                 <tbody>
                   {[
-                    ...cuentaCorriente.cargos.map((c) => ({ id: null as string | null, fecha: c.fecha, texto: c.zona ?? 'Sin zona', monto: c.monto ? Number(c.monto) : 0, signo: 1 })),
-                    ...cuentaCorriente.abonos.map((a) => ({ id: a.id, fecha: a.fecha, texto: 'Pago acreditado', monto: a.monto ? Number(a.monto) : 0, signo: -1 })),
+                    ...cuentaCorriente.cargos.map((c) => ({ id: null as string | null, fecha: c.fecha, texto: c.zona ?? 'Sin zona', monto: c.monto ? Number(c.monto) : 0, signo: 1, tieneComprobante: false })),
+                    ...cuentaCorriente.abonos.map((a) => ({ id: a.id, fecha: a.fecha, texto: 'Pago acreditado', monto: a.monto ? Number(a.monto) : 0, signo: -1, tieneComprobante: a.tiene_comprobante })),
                   ]
                     .sort((a, b) => a.fecha.localeCompare(b.fecha))
                     .reverse()
@@ -475,6 +477,15 @@ export function ClienteDetalle() {
                           ) : (
                             <>
                               {m.signo > 0 ? '' : '− '}${m.monto.toLocaleString('es-AR')}
+                              {m.tieneComprobante && m.id && (
+                                <button
+                                  className="btn btn-ghost btn-sm"
+                                  style={{ marginLeft: '6px' }}
+                                  onClick={() => setComprobanteAbono({ id: m.id!, fecha: m.fecha, monto: m.monto })}
+                                >
+                                  Ver comprobante
+                                </button>
+                              )}
                               {m.id && (
                                 <RoleGate roles={['admin', 'operador', 'finanzas']}>
                                   <button
@@ -669,6 +680,23 @@ export function ClienteDetalle() {
           </div>
         );
       })()}
+
+      {comprobanteAbono && (
+        <div className="modal-overlay" onClick={() => setComprobanteAbono(null)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="section-title" style={{ margin: 0 }}>Comprobante de pago</div>
+              <button className="modal-close" onClick={() => setComprobanteAbono(null)}>
+                <X size={18} strokeWidth={2} />
+              </button>
+            </div>
+            <p className="text-muted" style={{ marginTop: 0, marginBottom: 4 }}>
+              {formatearFecha(comprobanteAbono.fecha)} · Abono a cuenta corriente · ${comprobanteAbono.monto.toLocaleString('es-AR')}
+            </p>
+            <ComprobanteViewer pagoId={comprobanteAbono.id} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
