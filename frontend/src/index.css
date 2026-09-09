@@ -867,7 +867,6 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .data-table tr { transition: transform 180ms var(--ease-pop); }
 .data-table tr:hover td {
   background: var(--bg-card-hover);
-  box-shadow: inset 3px 0 0 var(--accent);
 }
 .data-table tr:hover { transform: scale(1.006); position: relative; z-index: 1; }
 .data-table .mono { font-family: var(--font-mono); font-size: 0.76rem; color: var(--text-primary); }
