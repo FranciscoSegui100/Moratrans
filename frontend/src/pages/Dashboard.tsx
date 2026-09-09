@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, Power, TriangleAlert, type LucideIcon } from 'lucide-react';
+import {
+  Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, Power, TriangleAlert,
+  Wallet, Bell, type LucideIcon,
+} from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -30,26 +33,25 @@ function useCountUp(target: number | null, duration = 700) {
   return value;
 }
 
-function KpiCard({ icon: Icon, tint, fg, label, value, extra }: {
-  icon: LucideIcon; tint: string; fg: string; label: string; value: number | null; extra?: React.ReactNode;
-}) {
-  const shown = useCountUp(value);
-  return (
-    <div className="kpi-card">
-      <div className="kpi-icon" style={{ background: tint, color: fg }}><Icon strokeWidth={1.75} /></div>
-      <div className="kpi-value">{value === null ? '—' : shown}</div>
-      <div className="kpi-label">{label}</div>
-      {extra}
-    </div>
-  );
-}
-
 interface Kpis {
   contenedores_activos: number;
+  contenedores_reservados: number;
   contenedores_disponibles: number;
   cobros_pendientes: number;
   cobros_pendientes_monto: string;
+  cobros_vencidos: number;
   viajes_hoy: number;
+  viajes_ayer: number;
+  entregas_hoy: number;
+  alertas_activas: number;
+  deuda_total: string;
+  clientes_con_deuda: number;
+}
+
+interface TendenciaDia {
+  fecha: string;
+  viajes: number;
+  entregas: number;
 }
 
 interface EstadoDist {
@@ -63,20 +65,14 @@ interface EstadoBot {
 }
 
 interface ActividadItem {
-  tipo: string;
-  entidad_id: string;
+  tipo: 'contenedor' | 'pago';
+  entidad_id: string | null;
   accion: string;
   actor: string;
+  cliente_telefono: string | null;
   fecha: string;
   detalle: string | null;
 }
-
-const kpiConfig = [
-  { key: 'contenedores_activos',    label: 'Contenedores activos', icon: Package,          tint: 'var(--accent-tint)',  fg: 'var(--accent-dark)' },
-  { key: 'contenedores_disponibles',label: 'Disponibles',          icon: CircleCheck,       tint: 'var(--success-bg)',   fg: 'var(--success)' },
-  { key: 'cobros_pendientes',       label: 'Cobros pendientes',    icon: CircleDollarSign,  tint: 'var(--warning-bg)',   fg: 'var(--warning)' },
-  { key: 'viajes_hoy',              label: 'Viajes de hoy',        icon: Truck,             tint: 'var(--purple-bg)',    fg: 'var(--purple)' },
-] as const;
 
 const estadoColors: Record<string, string> = {
   disponible:     'var(--success)',
@@ -86,12 +82,75 @@ const estadoColors: Record<string, string> = {
   mantenimiento:  'var(--danger)',
 };
 
+// Orden fijo (no alfabético) para que la leyenda y la dona sigan el flujo
+// natural del contenedor: disponible -> reservado -> con el cliente -> volviendo.
+const estadoOrden = ['disponible', 'reservado', 'entregado', 'retirado', 'mantenimiento'];
+const estadoLabels: Record<string, string> = {
+  disponible:    'Disponible',
+  reservado:     'Reservado',
+  entregado:     'Con el cliente',
+  retirado:      'Volviendo al depósito',
+  mantenimiento: 'En mantenimiento',
+};
+
+const accionContenedorLabels: Record<string, string> = {
+  disponible:    'liberó',
+  reservado:     'reservó',
+  entregado:     'entregó',
+  retirado:      'retiró',
+  mantenimiento: 'puso en mantenimiento',
+};
+const accionPagoLabels: Record<string, string> = {
+  pendiente: 'envió un comprobante',
+  validado:  'tiene un pago validado',
+  rechazado: 'tiene un pago rechazado',
+};
+
+function KpiCard({
+  icon: Icon, tint, fg, label, value, formato = 'entero', trend, caption, sparkline,
+}: {
+  icon: LucideIcon; tint: string; fg: string; label: string;
+  value: number | null; formato?: 'entero' | 'dinero';
+  trend?: { texto: string; tono: 'positivo' | 'negativo' | 'neutro' };
+  caption?: ReactNode;
+  sparkline?: number[];
+}) {
+  const shown = useCountUp(value);
+  const trendColor = trend?.tono === 'positivo' ? 'var(--success)' : trend?.tono === 'negativo' ? 'var(--danger)' : 'var(--text-secondary)';
+  const maxSpark = sparkline && sparkline.length > 0 ? Math.max(1, ...sparkline) : 1;
+
+  return (
+    <div className="kpi-card">
+      <div className="kpi-header">
+        <div className="kpi-icon" style={{ background: tint, color: fg }}><Icon strokeWidth={1.75} /></div>
+        {trend && <div className="kpi-trend" style={{ color: trendColor }}>{trend.texto}</div>}
+      </div>
+      <div className="kpi-value">
+        {value === null ? '—' : formato === 'dinero' ? `$${shown.toLocaleString('es-AR')}` : shown}
+      </div>
+      <div className="kpi-label">{label}</div>
+      {caption && <div className="kpi-caption">{caption}</div>}
+      {sparkline && sparkline.length > 0 && (
+        <div className="kpi-sparkline">
+          {sparkline.map((v, i) => (
+            <div key={i} className="spark-bar" style={{ height: `${Math.round((v / maxSpark) * 100)}%`, background: tint }} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Dashboard() {
   const { show } = useToast();
   const queryClient = useQueryClient();
   const { data: kpis = null, isError: kpisError, refetch: refetchKpis } = useQuery({
     queryKey: ['dashboard', 'kpis'],
     queryFn: () => api.get<Kpis>('/api/dashboard/kpis').then((r) => r.data),
+  });
+  const { data: tendencia = [] } = useQuery({
+    queryKey: ['dashboard', 'tendencia'],
+    queryFn: () => api.get<TendenciaDia[]>('/api/dashboard/tendencia').then((r) => r.data),
   });
   const { data: distribucion = [], isError: distribucionError, refetch: refetchDistribucion } = useQuery({
     queryKey: ['dashboard', 'contenedores'],
@@ -106,7 +165,25 @@ export function Dashboard() {
     queryKey: ['config', 'bot'],
     queryFn: () => api.get<EstadoBot>('/api/config/bot').then((r) => r.data),
   });
-  const totalContenedores = distribucion.reduce((s, d) => s + d.total, 0) || 1;
+
+  const totalContenedores = distribucion.reduce((s, d) => s + d.total, 0);
+
+  // Segmentos reales de la dona: orden fijo, arrancan donde termina el
+  // anterior (dashoffset acumulado negativo) — nada hardcodeado.
+  let acumuladoPct = 0;
+  const segmentosDona = estadoOrden
+    .map((estado) => distribucion.find((d) => d.estado === estado))
+    .filter((d): d is EstadoDist => !!d && d.total > 0)
+    .map((d) => {
+      const pct = totalContenedores > 0 ? (d.total / totalContenedores) * 100 : 0;
+      const offset = -acumuladoPct;
+      acumuladoPct += pct;
+      return { estado: d.estado, pct, offset };
+    });
+
+  const viajesTrend = tendencia.map((d) => d.viajes);
+  const entregasTrend = tendencia.map((d) => d.entregas);
+  const diffViajes = kpis ? kpis.viajes_hoy - kpis.viajes_ayer : 0;
 
   async function toggleBot() {
     const activarlo = estadoBot?.bot_activo === false;
@@ -172,74 +249,59 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* KPI Cards */}
+      {/* KPI Cards — todo sale de datos reales, sin números ni gráficas de ejemplo. */}
       <div className="kpi-grid">
-        <div className="kpi-card">
-          <div className="kpi-header">
-            <div className="kpi-icon" style={{ background: 'var(--accent-tint)', color: 'var(--accent-dark)' }}><Package strokeWidth={1.75} /></div>
-            <div className="kpi-trend" style={{ color: 'var(--success)' }}>▲ 1 hoy</div>
-          </div>
-          <div className="kpi-value">{kpis ? kpis.contenedores_activos : '—'}</div>
-          <div className="kpi-label">Contenedores activos</div>
-          <div className="kpi-sparkline">
-            {[4, 6, 4, 5, 8, 7, 9].map((v, i) => (
-              <div key={i} className="spark-bar" style={{ height: `${v * 10}%`, background: 'var(--accent-tint)' }} />
-            ))}
-          </div>
-        </div>
-
-        <div className="kpi-card">
-          <div className="kpi-header">
-            <div className="kpi-icon" style={{ background: 'var(--success-bg)', color: 'var(--success)' }}><CircleCheck strokeWidth={1.75} /></div>
-            <div className="kpi-trend" style={{ color: 'var(--text-secondary)' }}>= est.</div>
-          </div>
-          <div className="kpi-value">{kpis ? kpis.contenedores_disponibles : '—'}</div>
-          <div className="kpi-label">Disponibles</div>
-          <div className="kpi-sparkline">
-             {[3, 3, 4, 4, 3, 3, 4].map((v, i) => (
-              <div key={i} className="spark-bar" style={{ height: `${v * 10}%`, background: 'var(--success-bg)' }} />
-            ))}
-          </div>
-        </div>
-
-        <div className="kpi-card">
-          <div className="kpi-header">
-            <div className="kpi-icon" style={{ background: 'var(--warning-bg)', color: 'var(--warning)' }}><CircleDollarSign strokeWidth={1.75} /></div>
-            <div className="kpi-trend" style={{ color: 'var(--text-secondary)' }}>al día</div>
-          </div>
-          <div className="kpi-value">{kpis ? kpis.cobros_pendientes : '—'}</div>
-          <div className="kpi-label">Cobros pendientes</div>
-          {kpis && kpis.cobros_pendientes > 0 && (
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-              ${Number(kpis.cobros_pendientes_monto).toLocaleString('es-AR')} adeudado
-            </div>
-          )}
-          <div className="kpi-sparkline">
-             {[1, 1, 1, 1, 1, 1, 1].map((v, i) => (
-              <div key={i} className="spark-bar" style={{ height: `10%`, background: 'var(--warning-bg)' }} />
-            ))}
-          </div>
-        </div>
-
-        <div className="kpi-card">
-          <div className="kpi-header">
-            <div className="kpi-icon" style={{ background: 'var(--purple-bg)', color: 'var(--purple)' }}><Truck strokeWidth={1.75} /></div>
-            <div className="kpi-trend" style={{ color: 'var(--success)' }}>▲ 2 vs ayer</div>
-          </div>
-          <div className="kpi-value">{kpis ? kpis.viajes_hoy : '—'}</div>
-          <div className="kpi-label">Viajes de hoy</div>
-          <div className="kpi-sparkline">
-            {[2, 3, 2, 5, 4, 6, 8].map((v, i) => (
-              <div key={i} className="spark-bar" style={{ height: `${v * 10}%`, background: 'var(--purple-bg)' }} />
-            ))}
-          </div>
-        </div>
+        <KpiCard
+          icon={Package} tint="var(--accent-tint)" fg="var(--accent-dark)"
+          label="Contenedores con el cliente" value={kpis ? kpis.contenedores_activos : null}
+          caption={kpis ? `${kpis.entregas_hoy} entregados hoy` : undefined}
+          sparkline={entregasTrend}
+        />
+        <KpiCard
+          icon={CircleCheck} tint="var(--success-bg)" fg="var(--success)"
+          label="Disponibles" value={kpis ? kpis.contenedores_disponibles : null}
+          caption={kpis ? `${kpis.contenedores_reservados} reservados` : undefined}
+        />
+        <KpiCard
+          icon={Truck} tint="var(--purple-bg)" fg="var(--purple)"
+          label="Viajes de hoy" value={kpis ? kpis.viajes_hoy : null}
+          trend={kpis ? {
+            texto: diffViajes === 0 ? '= que ayer' : `${diffViajes > 0 ? '▲' : '▼'} ${Math.abs(diffViajes)} vs ayer`,
+            tono: 'neutro',
+          } : undefined}
+          sparkline={viajesTrend}
+        />
+        <KpiCard
+          icon={CircleDollarSign} tint="var(--warning-bg)" fg="var(--warning)"
+          label="Cobros pendientes" value={kpis ? kpis.cobros_pendientes : null}
+          caption={kpis ? (
+            <>
+              <span>${Number(kpis.cobros_pendientes_monto).toLocaleString('es-AR')} adeudado</span>
+              {kpis.cobros_vencidos > 0 && <span style={{ color: 'var(--danger)' }}>· {kpis.cobros_vencidos} vencidos (+24h)</span>}
+            </>
+          ) : undefined}
+        />
+        <KpiCard
+          icon={Wallet} tint="var(--neutral-bg)" fg="var(--neutral)"
+          label="Deuda de clientes" value={kpis ? Number(kpis.deuda_total) : null} formato="dinero"
+          caption={kpis ? (
+            <>
+              <span>{kpis.clientes_con_deuda} cliente{kpis.clientes_con_deuda !== 1 ? 's' : ''} con saldo pendiente</span>
+              <Link to="/clientes" style={{ fontWeight: 600 }}>Ver →</Link>
+            </>
+          ) : undefined}
+        />
+        <KpiCard
+          icon={TriangleAlert} tint="var(--danger-bg)" fg="var(--danger)"
+          label="Alertas activas" value={kpis ? kpis.alertas_activas : null}
+          caption={<Link to="/alertas" style={{ fontWeight: 600 }}>Ver bandeja →</Link>}
+        />
       </div>
 
       {/* Distribución de contenedores */}
       <div className="chart-grid">
         <div className="card">
-          <div className="section-title">Distribución por estado</div>
+          <div className="section-title">Distribución de contenedores por estado</div>
           <div style={{ display: 'flex', gap: '20px', alignItems: 'center', marginTop: '16px' }}>
             <div className="donut-chart">
                <div className="donut-center">
@@ -247,36 +309,46 @@ export function Dashboard() {
                  <div className="donut-label">totales</div>
                </div>
                <svg viewBox="0 0 36 36" className="circular-chart">
-                 {/* Círculo base */}
                  <path className="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="var(--bg-surface)" strokeWidth="4" />
-                 {/* Representación estática por ahora del anillo */}
-                 <path className="circle" strokeDasharray="60, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="var(--success)" strokeWidth="4" />
-                 <path className="circle" strokeDasharray="25, 100" strokeDashoffset="-60" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="var(--purple)" strokeWidth="4" />
+                 {segmentosDona.map((s) => (
+                   <path
+                     key={s.estado}
+                     strokeDasharray={`${s.pct}, 100`}
+                     strokeDashoffset={s.offset}
+                     d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                     fill="none"
+                     stroke={estadoColors[s.estado] || 'var(--accent)'}
+                     strokeWidth="4"
+                   />
+                 ))}
                </svg>
             </div>
-            
+
             <div style={{ flex: 1 }}>
               {distribucion.length === 0 ? (
                 <div className="empty-state-text">No hay contenedores cargados</div>
               ) : (
-                distribucion.map((d) => (
-                  <div key={d.estado} className="estado-bar">
-                    <div className="estado-name">
-                      <span className="badge-dot" style={{ background: estadoColors[d.estado] || 'var(--accent)' }} />
-                      {d.estado.replace('_', ' ')}
+                estadoOrden
+                  .map((estado) => distribucion.find((d) => d.estado === estado))
+                  .filter((d): d is EstadoDist => !!d)
+                  .map((d) => (
+                    <div key={d.estado} className="estado-bar">
+                      <div className="estado-name">
+                        <span className="badge-dot" style={{ background: estadoColors[d.estado] || 'var(--accent)' }} />
+                        {estadoLabels[d.estado] ?? d.estado}
+                      </div>
+                      <div className="bar-track">
+                        <div
+                          className="bar-fill"
+                          style={{
+                            width: `${totalContenedores > 0 ? Math.round((d.total / totalContenedores) * 100) : 0}%`,
+                            background: estadoColors[d.estado] || 'var(--accent)',
+                          }}
+                        />
+                      </div>
+                      <div className="estado-count">{d.total}</div>
                     </div>
-                    <div className="bar-track">
-                      <div
-                        className="bar-fill"
-                        style={{
-                          width: `${Math.round((d.total / totalContenedores) * 100)}%`,
-                          background: estadoColors[d.estado] || 'var(--accent)',
-                        }}
-                      />
-                    </div>
-                    <div className="estado-count">{d.total}</div>
-                  </div>
-                ))
+                  ))
               )}
             </div>
           </div>
@@ -286,16 +358,20 @@ export function Dashboard() {
           <div className="section-title">Accesos rápidos</div>
           <div className="space-y">
             {[
-              { href: '/pagos',       icon: CreditCard, label: 'Validar pagos pendientes' },
-              { href: '/viajes',      icon: Truck,      label: 'Programar viaje' },
-              { href: '/contenedores',icon: Package,    label: 'Gestionar contenedores' },
-              { href: '/choferes',    icon: Users,      label: 'Alta de chofer' },
+              { href: '/pagos',       icon: CreditCard, label: 'Validar pagos pendientes', badge: kpis?.cobros_pendientes },
+              { href: '/alertas',     icon: Bell,       label: 'Bandeja de alertas',        badge: kpis?.alertas_activas },
+              { href: '/viajes',      icon: Truck,      label: 'Viajes y rutas del día' },
+              { href: '/clientes',    icon: Users,      label: 'Clientes' },
+              { href: '/contenedores',icon: Package,    label: 'Contenedores' },
             ].map((item) => {
               const Icon = item.icon;
               return (
                 <Link key={item.href} to={item.href} className="quick-access-btn">
                   <div className="quick-access-icon"><Icon size={16} strokeWidth={1.75} /></div>
-                  {item.label}
+                  <span style={{ flex: 1 }}>{item.label}</span>
+                  {!!item.badge && (
+                    <span className="badge rechazado" style={{ fontSize: '0.7rem' }}>{item.badge}</span>
+                  )}
                 </Link>
               );
             })}
@@ -305,24 +381,38 @@ export function Dashboard() {
 
       <div className="card" style={{ marginTop: '16px' }}>
          <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
-           <span>Actividad Reciente</span>
+           <span>Actividad reciente</span>
            <Link to="/viajes" style={{ fontSize: '0.8rem', fontWeight: 600 }}>Ver más →</Link>
          </div>
          <div className="activity-list">
            {actividad.length === 0 ? (
              <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>No hay actividad reciente.</div>
            ) : (
-             actividad.map((act, i) => (
-               <div key={i} className="activity-item">
-                 <div className="activity-dot" style={{ background: act.tipo === 'pago' ? 'var(--warning)' : 'var(--success)' }} />
-                 <div className="activity-text">
-                   <strong>{act.actor}</strong> {act.tipo === 'pago' ? 'registró un pago' : `marcó un contenedor como ${act.accion.replace('_', ' ')}`} {act.entidad_id}
+             actividad.map((act, i) => {
+               const esPago = act.tipo === 'pago';
+               const texto = esPago
+                 ? (accionPagoLabels[act.accion] ?? `pago ${act.accion}`)
+                 : `${accionContenedorLabels[act.accion] ?? act.accion.replace('_', ' ')} el contenedor ${act.entidad_id}`;
+               const actorNode = act.cliente_telefono ? (
+                 <Link to={`/clientes/${encodeURIComponent(act.cliente_telefono)}`} style={{ fontWeight: 600, color: 'inherit' }}>
+                   {act.actor}
+                 </Link>
+               ) : (
+                 <strong>{act.actor}</strong>
+               );
+               return (
+                 <div key={i} className="activity-item">
+                   <div className="activity-dot" style={{ background: esPago ? 'var(--warning)' : 'var(--success)' }} />
+                   <div className="activity-text">
+                     {actorNode} {texto}
+                     {esPago && act.detalle && <span className="text-muted"> · {act.detalle}</span>}
+                   </div>
+                   <div className="activity-time">
+                     {new Date(act.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                   </div>
                  </div>
-                 <div className="activity-time">
-                   {new Date(act.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
-                 </div>
-               </div>
-             ))
+               );
+             })
            )}
          </div>
       </div>

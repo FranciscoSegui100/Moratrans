@@ -617,7 +617,7 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 /* ===== KPI CARDS ===== */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 14px;
   margin-bottom: 24px;
 }
@@ -635,6 +635,8 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .kpi-card:nth-child(2) { animation-delay: 70ms; }
 .kpi-card:nth-child(3) { animation-delay: 140ms; }
 .kpi-card:nth-child(4) { animation-delay: 210ms; }
+.kpi-card:nth-child(5) { animation-delay: 280ms; }
+.kpi-card:nth-child(6) { animation-delay: 350ms; }
 .kpi-card:hover {
   transform: translateY(-8px) scale(1.02);
   box-shadow: var(--shadow-hover);
@@ -668,6 +670,7 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 }
 .spark-bar {
   flex: 1;
+  min-height: 2px;
   border-radius: 2px 2px 0 0;
   opacity: 0.6;
   transition: height 0.3s ease;
@@ -688,6 +691,15 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   font-size: 0.78rem;
   color: var(--text-muted);
   font-weight: 500;
+}
+.kpi-caption {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 /* ===== CONTENEDOR DISTRIBUTION CHART ===== */
