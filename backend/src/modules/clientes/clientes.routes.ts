@@ -40,10 +40,25 @@ clientesRouter.use(requireAuth);
 clientesRouter.get('/', async (_req: Request, res: Response) => {
   const rows = await query(
     `SELECT cl.id, cl.nombre, cl.telefono, cl.cuenta_corriente_estado, cl.numero_plan, cl.creado_en,
-            COUNT(v.id)::int AS cantidad_viajes,
+            COUNT(v.id)::int + COALESCE(alr.cnt, 0) AS cantidad_viajes,
             GREATEST(COALESCE(cc.saldo, 0), 0) + COALESCE(oc.deuda, 0) AS deuda
        FROM clientes cl
        LEFT JOIN viajes v ON v.cliente_telefono = cl.telefono
+       -- Extensiones de retiro sueltas (sin un viaje del mismo contenedor
+       -- donde anidarse, ver GET /:telefono/viajes) también cuentan como
+       -- pedido — si no, un cliente podía tener plata cargada sin que
+       -- "Pedidos" se moviera ni aparecer en ningún lado del perfil.
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS cnt
+           FROM pagos p
+          WHERE p.cliente_telefono = cl.telefono AND p.tipo = 'alargue_retiro'
+            AND NOT EXISTS (
+              SELECT 1 FROM viajes v2
+               WHERE v2.cliente_telefono = p.cliente_telefono
+                 AND v2.contenedor_numero = p.contenedor_numero
+                 AND p.creado_en >= v2.creado_en
+            )
+       ) alr ON true
        LEFT JOIN LATERAL (
          SELECT
            COALESCE((
@@ -84,7 +99,7 @@ clientesRouter.get('/', async (_req: Request, res: Response) => {
                    OR (pg4.medio_pago = 'transferencia' AND pg4.estado <> 'validado'))
          ) items
        ) oc ON true
-      GROUP BY cl.id, cc.saldo, oc.deuda
+      GROUP BY cl.id, cc.saldo, oc.deuda, alr.cnt
       ORDER BY cl.nombre`,
   );
   res.json(rows);
@@ -387,11 +402,22 @@ clientesRouter.get('/:telefono/cuenta-corriente', async (req: Request, res: Resp
   res.json(resumen);
 });
 
-/** GET /api/clientes/:telefono/viajes?mes=YYYY-MM — detalle de viajes de un cliente. */
+/**
+ * GET /api/clientes/:telefono/viajes?mes=YYYY-MM — detalle de viajes de un
+ * cliente. Además de la tabla `viajes`, suma las extensiones de retiro
+ * (pagos.tipo='alargue_retiro') que no quedaron anidadas bajo ningún viaje
+ * — el mismo NOT EXISTS que decide esto abajo es el criterio inverso del
+ * OR de la subconsulta de comprobantes más abajo, para no duplicar: una
+ * extensión se anida dentro de la entrega/recambio si hay una con el mismo
+ * contenedor+cliente creada antes; si no hay ninguna (ej. cargada a mano
+ * sin contenedor, o un contenedor que ya no tiene otros viajes), antes
+ * quedaba invisible en el perfil del cliente — ahora aparece como su
+ * propia fila.
+ */
 clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
   const mes = (req.query.mes as string) || null;
   const rows = await query(
-    `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
+    `SELECT v.id, v.tipo::text AS tipo, v.fecha, v.estado::text AS estado, v.zona, v.contenedor_numero, v.destino_direccion,
             v.destino_lat, v.destino_lng,
             v.remito, v.importe, v.grupo_id, ch.nombre AS chofer_nombre,
             v.es_cuenta_corriente, co.vence_en,
@@ -423,7 +449,32 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
        LEFT JOIN contenedores co ON co.numero = v.contenedor_numero
       WHERE v.cliente_telefono = $1
         AND ($2::text IS NULL OR to_char(v.fecha, 'YYYY-MM') = $2)
-      ORDER BY v.fecha DESC`,
+
+     UNION ALL
+
+     SELECT p.id, 'alargue_retiro' AS tipo, p.creado_en::date AS fecha, 'completado' AS estado,
+            NULL::text AS zona, p.contenedor_numero, NULL::text AS destino_direccion,
+            NULL::numeric AS destino_lat, NULL::numeric AS destino_lng,
+            NULL::text AS remito, p.monto AS importe, NULL::uuid AS grupo_id, NULL::text AS chofer_nombre,
+            p.es_cuenta_corriente, co.vence_en,
+            json_build_array(json_build_object(
+              'id', p.id, 'tipo', p.tipo, 'monto', p.monto, 'estado', p.estado,
+              'es_cuenta_corriente', p.es_cuenta_corriente,
+              'tiene_comprobante', (p.url_comprobante IS NOT NULL),
+              'titular', p.titular_transferencia, 'medio_pago', p.medio_pago,
+              'efectivo_cobrado', p.efectivo_cobrado, 'creado_en', p.creado_en
+            )) AS comprobantes
+       FROM pagos p
+       LEFT JOIN contenedores co ON co.numero = p.contenedor_numero
+      WHERE p.cliente_telefono = $1 AND p.tipo = 'alargue_retiro'
+        AND ($2::text IS NULL OR to_char(p.creado_en, 'YYYY-MM') = $2)
+        AND NOT EXISTS (
+          SELECT 1 FROM viajes v2
+           WHERE v2.cliente_telefono = p.cliente_telefono
+             AND v2.contenedor_numero = p.contenedor_numero
+             AND p.creado_en >= v2.creado_en
+        )
+      ORDER BY fecha DESC`,
     [req.params.telefono, mes],
   );
   res.json(rows);

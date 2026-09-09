@@ -73,7 +73,7 @@ interface ResumenCuentaCorriente {
 
 interface ViajeCliente {
   id: string;
-  tipo: 'entrega' | 'retiro';
+  tipo: 'entrega' | 'retiro' | 'alargue_retiro';
   fecha: string;
   estado: string;
   zona: string | null;
@@ -99,6 +99,7 @@ const ETIQUETA_CC: Record<Cliente['cuenta_corriente_estado'], { texto: string; c
 
 /** Mismo criterio que excelClientes() en el backend — mantener en sync. */
 function tipoBulto(v: ViajeCliente): string {
+  if (v.tipo === 'alargue_retiro') return 'Extensión de retiro';
   if (v.tipo === 'entrega') return 'VACIO';
   if (v.grupo_id) return 'Recambio';
   return 'Retiro';
@@ -645,7 +646,13 @@ export function ClienteDetalle() {
                 <tbody>
                   {viajesDelMes.map((v) => {
                     const comprobantes = v.comprobantes ?? [];
-                    const inicial = comprobantes.find((c) => c.tipo !== 'alargue_retiro');
+                    // Una fila de extensión de retiro suelta (ver GET /:telefono/viajes
+                    // en el backend) es su propio comprobante, no algo anidado bajo
+                    // una entrega/recambio — ahí sí hay que tomar el alargue como
+                    // "inicial" en vez de filtrarlo.
+                    const inicial = v.tipo === 'alargue_retiro'
+                      ? comprobantes.find((c) => c.tipo === 'alargue_retiro')
+                      : comprobantes.find((c) => c.tipo !== 'alargue_retiro');
                     const esCC = v.es_cuenta_corriente || inicial?.es_cuenta_corriente;
                     return (
                     <tr key={v.id}>
@@ -673,7 +680,7 @@ export function ClienteDetalle() {
                             <button className="btn btn-success btn-sm" onClick={() => guardarRemito(v.id)}>OK</button>
                             <button className="btn btn-ghost btn-sm" onClick={() => setEditandoRemito(null)}>✕</button>
                           </div>
-                        ) : puedeEditarRemito ? (
+                        ) : puedeEditarRemito && v.tipo !== 'alargue_retiro' ? (
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => { setEditandoRemito(v.id); setRemitoForm(v.remito ?? ''); }}
@@ -741,7 +748,10 @@ export function ClienteDetalle() {
       )}
 
       {viajeComprobantes && (() => {
-        const inicial = (viajeComprobantes.comprobantes ?? []).find((c) => c.tipo !== 'alargue_retiro');
+        const comprobantesModal = viajeComprobantes.comprobantes ?? [];
+        const inicial = viajeComprobantes.tipo === 'alargue_retiro'
+          ? comprobantesModal.find((c) => c.tipo === 'alargue_retiro')
+          : comprobantesModal.find((c) => c.tipo !== 'alargue_retiro');
         return (
           <div className="modal-overlay" onClick={() => setViajeComprobantes(null)}>
             <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
