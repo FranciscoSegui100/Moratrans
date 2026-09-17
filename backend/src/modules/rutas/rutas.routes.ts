@@ -964,12 +964,12 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
         // Recambio: un solo aviso consolidado (mismo criterio que POST /api/viajes).
         aviso = avisarChoferRecambio(
           resultado.choferId, retiro.contenedor_numero!, entrega.contenedor_numero, entrega.ubicacion_id, entrega.destino_direccion,
-          undefined, undefined, retiro.pago_id ?? entrega.pago_id,
+          entrega.cliente_telefono ?? retiro.cliente_telefono, undefined, retiro.pago_id ?? entrega.pago_id,
         );
         referenciaId = retiro.id;
       } else {
         const v = entrega ?? retiro!;
-        aviso = avisarChoferViaje(resultado.choferId, v.tipo, v.contenedor_numero, v.destino_direccion, undefined, undefined, v.pago_id);
+        aviso = avisarChoferViaje(resultado.choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, undefined, v.pago_id);
         referenciaId = v.id;
       }
       aviso.catch((e: any) => {

@@ -10,6 +10,7 @@ import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { reservarParaEntrega } from '../../services/contenedorReserva.service';
 import { emitRecursoActualizado } from '../../config/socket';
 import { avisoEfectivoChofer } from '../whatsapp/avisoEfectivo';
+import { normalizarDestinoWhatsApp } from '../../services/telefono.service';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -133,6 +134,11 @@ async function nombreClientePara(clienteTelefono: string | null): Promise<string
   return c?.nombre && c.nombre !== 'Sin nombre' ? c.nombre : null;
 }
 
+/** Número del cliente en formato dialable (clásico AR), para que el chofer lo pueda llamar. */
+function telefonoLegible(clienteTelefono: string | null): string | null {
+  return clienteTelefono ? normalizarDestinoWhatsApp(clienteTelefono) : null;
+}
+
 /** "14:30:00" (formato TIME de Postgres) -> "14:30". */
 function formatearHora(horaEstimada: string | null): string | null {
   return horaEstimada ? horaEstimada.slice(0, 5) : null;
@@ -189,6 +195,7 @@ export async function avisarChoferViaje(
     ? `${destinoDireccion}\nhttps://www.google.com/maps?q=${encodeURIComponent(destinoDireccion)}`
     : 'Sin dirección registrada. Coordiná con el cliente antes de salir.';
   const cliente = await nombreClientePara(clienteTelefono);
+  const telefonoCliente = telefonoLegible(clienteTelefono);
   const hora = formatearHora(horaEstimada);
   const { medioPago, monto } = await medioPagoDeViaje(pagoId);
 
@@ -206,6 +213,7 @@ export async function avisarChoferViaje(
     `🚚 *${titulo}*\n\n` +
     (contenedorNumero ? `Contenedor: *${contenedorNumero}*\n` : '') +
     (cliente ? `Cliente: *${cliente}*\n` : '') +
+    (telefonoCliente ? `📞 Tel: ${telefonoCliente}\n` : '') +
     (hora ? `Horario estimado: *${hora} hs*\n` : '') +
     `📍 Dirección:\n${destino}\n\n` +
     (boton ? 'Cuando la completes, tocá el botón de abajo.' : `Cuando la completes, escribime *${tipo === 'entrega' ? 'entregué' : 'retiré'}*.`) +
@@ -249,6 +257,7 @@ export async function avisarChoferRecambio(
     ? `${destinoDireccion}\nhttps://www.google.com/maps?q=${encodeURIComponent(destinoDireccion)}`
     : 'Sin dirección registrada. Coordiná con el cliente antes de salir.';
   const cliente = await nombreClientePara(clienteTelefono);
+  const telefonoCliente = telefonoLegible(clienteTelefono);
   const hora = formatearHora(horaEstimada);
 
   const lineaVacio = vacioNumero
@@ -284,6 +293,7 @@ export async function avisarChoferRecambio(
   const cuerpo =
     `🔄 *Recambio de contenedor*\n\n${lineaVacio}` +
     (cliente ? `Cliente: *${cliente}*\n` : '') +
+    (telefonoCliente ? `📞 Tel: ${telefonoCliente}\n` : '') +
     (hora ? `Horario estimado: *${hora} hs*\n` : '') +
     `📍 Dirección:\n${destino}\n\n` +
     (boton ? 'Cuando lo completes, tocá el botón de abajo.' : 'Cuando lo completes, escribime *retiré*.') +
