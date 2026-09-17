@@ -32,6 +32,12 @@ interface Cliente {
   cantidad_viajes: number;
 }
 
+interface Tarifa {
+  departamento: string;
+  precio: string;
+  activo: boolean;
+}
+
 interface ItemDeuda {
   fecha: string;
   contenedor_numero: string | null;
@@ -67,7 +73,7 @@ interface ResumenCuentaCorriente {
 
 interface ViajeCliente {
   id: string;
-  tipo: 'entrega' | 'retiro';
+  tipo: 'entrega' | 'retiro' | 'alargue_retiro';
   fecha: string;
   estado: string;
   zona: string | null;
@@ -93,6 +99,7 @@ const ETIQUETA_CC: Record<Cliente['cuenta_corriente_estado'], { texto: string; c
 
 /** Mismo criterio que excelClientes() en el backend — mantener en sync. */
 function tipoBulto(v: ViajeCliente): string {
+  if (v.tipo === 'alargue_retiro') return 'Extensión de retiro';
   if (v.tipo === 'entrega') return 'VACIO';
   if (v.grupo_id) return 'Recambio';
   return 'Retiro';
@@ -102,6 +109,47 @@ function etiquetaMes(mes: string): string {
   const [anio, m] = mes.split('-');
   const texto = new Date(Number(anio), Number(m) - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
   return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
+
+/** Mismo valor que PORCENTAJE_ALARGUE en backend/src/config/bot.config.ts — mantener en sync. */
+const PORCENTAJE_ALARGUE = 0.5;
+
+// "Cargar viaje finalizado" queda armado (backend + modal) pero oculto a
+// pedido del dueño del negocio — todavía no lo quiere activo en el panel.
+// El endpoint sigue existiendo; para reactivar la función alcanza con
+// volver esto a `true`.
+const CARGAR_VIAJE_HABILITADO = false;
+
+interface ViajeManualForm {
+  tipo: 'entrega' | 'recambio' | 'alargue_retiro';
+  fecha: string;
+  contenedor_numero: string;
+  contenedor_numero_entrega: string;
+  importe: string;
+  medio_pago: 'efectivo' | 'transferencia';
+  pagado: boolean;
+}
+
+function formularioViajeVacio(): ViajeManualForm {
+  return {
+    tipo: 'entrega',
+    fecha: new Date().toISOString().slice(0, 10),
+    contenedor_numero: '',
+    contenedor_numero_entrega: '',
+    importe: '',
+    medio_pago: 'transferencia',
+    pagado: true,
+  };
+}
+
+/** Lee un File como base64 puro (sin el prefijo "data:mime;base64,") para mandarlo en el body del POST. */
+function archivoABase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
 
 export function ClienteDetalle() {
@@ -122,6 +170,10 @@ export function ClienteDetalle() {
   const [agregandoPago, setAgregandoPago] = useState(false);
   const [montoPagoForm, setMontoPagoForm] = useState('');
   const [guardandoPago, setGuardandoPago] = useState(false);
+  const [mostrarCargarViaje, setMostrarCargarViaje] = useState(false);
+  const [viajeForm, setViajeForm] = useState<ViajeManualForm>(formularioViajeVacio());
+  const [comprobanteFile, setComprobanteFile] = useState<File | null>(null);
+  const [guardandoViaje, setGuardandoViaje] = useState(false);
 
   /**
    * Para el caso borde en que un pago (o alargue) quedó validado pero el
@@ -227,6 +279,55 @@ export function ClienteDetalle() {
   }
 
   /**
+   * Carga a mano un viaje/recambio/extensión de retiro ya realizado que no
+   * pasó por el sistema (ver POST /api/clientes/:telefono/viaje-manual en el
+   * backend para las reglas de plata: pagado nunca suma a cuenta corriente,
+   * no pagado + ocasional manda la solicitud por WhatsApp, no pagado + cta.
+   * cte. se agrega directo al resumen sin avisar nada).
+   */
+  async function cargarViajeManual() {
+    if (viajeForm.tipo !== 'alargue_retiro' && !viajeForm.contenedor_numero.trim()) {
+      return show('error', 'Falta el número de contenedor');
+    }
+    const importe = Number(viajeForm.importe);
+    if (!(importe > 0)) return show('error', 'El importe tiene que ser mayor a 0');
+    setGuardandoViaje(true);
+    try {
+      let comprobante_base64: string | undefined;
+      let comprobante_content_type: string | undefined;
+      if (viajeForm.pagado && viajeForm.medio_pago === 'transferencia' && comprobanteFile) {
+        comprobante_base64 = await archivoABase64(comprobanteFile);
+        comprobante_content_type = comprobanteFile.type;
+      }
+      await api.post(`/api/clientes/${encodeURIComponent(telefono)}/viaje-manual`, {
+        tipo: viajeForm.tipo,
+        fecha: viajeForm.fecha,
+        contenedor_numero: viajeForm.contenedor_numero.trim() || undefined,
+        contenedor_numero_entrega: viajeForm.tipo === 'recambio' && viajeForm.contenedor_numero_entrega.trim()
+          ? viajeForm.contenedor_numero_entrega.trim() : undefined,
+        importe,
+        medio_pago: viajeForm.medio_pago,
+        pagado: viajeForm.pagado,
+        comprobante_base64,
+        comprobante_content_type,
+      });
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      show(
+        'success',
+        'Viaje cargado',
+        !viajeForm.pagado && !esCC ? 'Se le mandó la solicitud de pago por WhatsApp.' : undefined,
+      );
+      setMostrarCargarViaje(false);
+      setViajeForm(formularioViajeVacio());
+      setComprobanteFile(null);
+    } catch (err: any) {
+      show('error', 'No se pudo cargar el viaje', err.response?.data?.error);
+    } finally {
+      setGuardandoViaje(false);
+    }
+  }
+
+  /**
    * Cambia el tipo de cliente (aprobar/rechazar solicitud, dar de alta o
    * mover a ocasional) — antes vivía en la pestaña Clientes, ahora todo eso
    * se maneja desde acá. No borra ni recalcula nada de plata: el saldo de
@@ -269,6 +370,12 @@ export function ClienteDetalle() {
     queryFn: () => api.get<Cliente[]>('/api/clientes').then((r) => r.data),
   });
   const cliente = clientes.find((c) => c.telefono === telefono);
+
+  // Para autocompletar el importe al cargar un viaje a mano (ver modal más abajo).
+  const { data: tarifas = [] } = useQuery({
+    queryKey: ['tarifas'],
+    queryFn: () => api.get<Tarifa[]>('/api/tarifas').then((r) => r.data),
+  });
 
   const { data: viajesReales = [] } = useQuery({
     queryKey: ['clientes', telefono, 'viajes'],
@@ -382,6 +489,13 @@ export function ClienteDetalle() {
           <Download strokeWidth={1.75} /> Exportar pedidos de este cliente a Excel
         </button>
         <small className="text-muted">Incluye su resumen facturado por mes, su ficha, y el detalle de todos sus pedidos.</small>
+        {CARGAR_VIAJE_HABILITADO && (
+          <RoleGate roles={['admin', 'operador', 'finanzas']}>
+            <button className="btn btn-ghost" onClick={() => setMostrarCargarViaje(true)}>
+              <Plus strokeWidth={1.75} /> Cargar viaje finalizado
+            </button>
+          </RoleGate>
+        )}
         <RoleGate roles={['admin', 'operador', 'finanzas']}>
           <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={enviarResumenPorWhatsApp} disabled={enviando}>
             <Send strokeWidth={1.75} />
@@ -540,7 +654,13 @@ export function ClienteDetalle() {
                 <tbody>
                   {viajesDelMes.map((v) => {
                     const comprobantes = v.comprobantes ?? [];
-                    const inicial = comprobantes.find((c) => c.tipo !== 'alargue_retiro');
+                    // Una fila de extensión de retiro suelta (ver GET /:telefono/viajes
+                    // en el backend) es su propio comprobante, no algo anidado bajo
+                    // una entrega/recambio — ahí sí hay que tomar el alargue como
+                    // "inicial" en vez de filtrarlo.
+                    const inicial = v.tipo === 'alargue_retiro'
+                      ? comprobantes.find((c) => c.tipo === 'alargue_retiro')
+                      : comprobantes.find((c) => c.tipo !== 'alargue_retiro');
                     const esCC = v.es_cuenta_corriente || inicial?.es_cuenta_corriente;
                     return (
                     <tr key={v.id}>
@@ -568,7 +688,7 @@ export function ClienteDetalle() {
                             <button className="btn btn-success btn-sm" onClick={() => guardarRemito(v.id)}>OK</button>
                             <button className="btn btn-ghost btn-sm" onClick={() => setEditandoRemito(null)}>✕</button>
                           </div>
-                        ) : puedeEditarRemito ? (
+                        ) : puedeEditarRemito && v.tipo !== 'alargue_retiro' ? (
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => { setEditandoRemito(v.id); setRemitoForm(v.remito ?? ''); }}
@@ -636,7 +756,10 @@ export function ClienteDetalle() {
       )}
 
       {viajeComprobantes && (() => {
-        const inicial = (viajeComprobantes.comprobantes ?? []).find((c) => c.tipo !== 'alargue_retiro');
+        const comprobantesModal = viajeComprobantes.comprobantes ?? [];
+        const inicial = viajeComprobantes.tipo === 'alargue_retiro'
+          ? comprobantesModal.find((c) => c.tipo === 'alargue_retiro')
+          : comprobantesModal.find((c) => c.tipo !== 'alargue_retiro');
         return (
           <div className="modal-overlay" onClick={() => setViajeComprobantes(null)}>
             <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
@@ -694,6 +817,181 @@ export function ClienteDetalle() {
               {formatearFecha(comprobanteAbono.fecha)} · Abono a cuenta corriente · ${comprobanteAbono.monto.toLocaleString('es-AR')}
             </p>
             <ComprobanteViewer pagoId={comprobanteAbono.id} />
+          </div>
+        </div>
+      )}
+
+      {mostrarCargarViaje && (
+        <div className="modal-overlay" onClick={() => !guardandoViaje && setMostrarCargarViaje(false)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="section-title" style={{ margin: 0 }}>Cargar viaje finalizado</div>
+              <button className="modal-close" onClick={() => setMostrarCargarViaje(false)}>
+                <X size={18} strokeWidth={2} />
+              </button>
+            </div>
+            <p className="text-muted" style={{ marginTop: 0 }}>
+              Para un viaje, recambio o extensión de retiro que ya pasó pero no quedó cargado en el sistema.
+            </p>
+
+            <div className="form-group">
+              <label className="form-label">Tipo</label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {([
+                  ['entrega', 'Entrega'],
+                  ['recambio', 'Recambio'],
+                  ['alargue_retiro', 'Extensión de retiro'],
+                ] as const).map(([valor, etiqueta]) => (
+                  <button
+                    key={valor}
+                    type="button"
+                    className={`btn btn-sm ${viajeForm.tipo === valor ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setViajeForm({ ...viajeForm, tipo: valor })}
+                  >
+                    {etiqueta}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <div className="form-group" style={{ flex: '1 1 160px' }}>
+                <label className="form-label">Fecha</label>
+                <input
+                  type="date"
+                  className="form-input"
+                  value={viajeForm.fecha}
+                  onChange={(e) => setViajeForm({ ...viajeForm, fecha: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ flex: '1 1 160px' }}>
+                <label className="form-label">Tarifa <span className="text-muted">(opcional)</span></label>
+                <select
+                  className="form-input"
+                  value=""
+                  onChange={(e) => { if (e.target.value) setViajeForm({ ...viajeForm, importe: e.target.value }); }}
+                >
+                  <option value="">Completar importe a mano...</option>
+                  {tarifas.filter((t) => t.activo).map((t) => {
+                    // Extensión de retiro cuesta PORCENTAJE_ALARGUE de la tarifa
+                    // de la zona (ver bot.config.ts) — no el precio completo.
+                    const precio = viajeForm.tipo === 'alargue_retiro'
+                      ? Math.round(Number(t.precio) * PORCENTAJE_ALARGUE)
+                      : Number(t.precio);
+                    return (
+                      <option key={t.departamento} value={precio}>
+                        {t.departamento} — ${precio.toLocaleString('es-AR')}
+                        {viajeForm.tipo === 'alargue_retiro' ? ` (${Math.round(PORCENTAJE_ALARGUE * 100)}% de $${Number(t.precio).toLocaleString('es-AR')})` : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Importe</label>
+              <input
+                type="number" min="0" step="0.01"
+                className="form-input"
+                placeholder="$"
+                value={viajeForm.importe}
+                onChange={(e) => setViajeForm({ ...viajeForm, importe: e.target.value })}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <div className="form-group" style={{ flex: '1 1 160px' }}>
+                <label className="form-label">
+                  {viajeForm.tipo === 'recambio' ? 'Contenedor retirado'
+                    : viajeForm.tipo === 'alargue_retiro' ? <>Contenedor <span className="text-muted">(opcional)</span></>
+                    : 'Contenedor'}
+                </label>
+                <input
+                  className="form-input mono"
+                  value={viajeForm.contenedor_numero}
+                  onChange={(e) => setViajeForm({ ...viajeForm, contenedor_numero: e.target.value })}
+                />
+              </div>
+              {viajeForm.tipo === 'recambio' && (
+                <div className="form-group" style={{ flex: '1 1 160px' }}>
+                  <label className="form-label">Contenedor entregado <span className="text-muted">(si se sabe)</span></label>
+                  <input
+                    className="form-input mono"
+                    value={viajeForm.contenedor_numero_entrega}
+                    onChange={(e) => setViajeForm({ ...viajeForm, contenedor_numero_entrega: e.target.value })}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Medio de pago</label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${viajeForm.medio_pago === 'efectivo' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setViajeForm({ ...viajeForm, medio_pago: 'efectivo' })}
+                >
+                  Efectivo
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${viajeForm.medio_pago === 'transferencia' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setViajeForm({ ...viajeForm, medio_pago: 'transferencia' })}
+                >
+                  Transferencia
+                </button>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">¿Ya está pagado?</label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${viajeForm.pagado ? 'btn-success' : 'btn-ghost'}`}
+                  onClick={() => setViajeForm({ ...viajeForm, pagado: true })}
+                >
+                  Sí
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${!viajeForm.pagado ? 'btn-danger' : 'btn-ghost'}`}
+                  onClick={() => setViajeForm({ ...viajeForm, pagado: false })}
+                >
+                  No
+                </button>
+              </div>
+            </div>
+
+            {viajeForm.pagado && viajeForm.medio_pago === 'transferencia' && (
+              <div className="form-group">
+                <label className="form-label">Comprobante de la transferencia</label>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,application/pdf"
+                  onChange={(e) => setComprobanteFile(e.target.files?.[0] ?? null)}
+                />
+              </div>
+            )}
+
+            <p className="text-muted" style={{ fontSize: '0.8rem' }}>
+              {viajeForm.pagado
+                ? esCC
+                  ? 'Ya está saldado: no se agrega a la cuenta corriente.'
+                  : 'Ya está saldado, no hace falta nada más.'
+                : esCC
+                  ? 'Se agrega directo como cargo a su cuenta corriente. No se le manda nada por WhatsApp.'
+                  : 'Se suma a sus montos pendientes y se le manda automáticamente la solicitud de pago por WhatsApp.'}
+            </p>
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '10px' }}>
+              <button className="btn btn-ghost" onClick={() => setMostrarCargarViaje(false)} disabled={guardandoViaje}>Cancelar</button>
+              <button className="btn btn-success" onClick={cargarViajeManual} disabled={guardandoViaje}>
+                {guardandoViaje ? 'Guardando...' : 'Cargar viaje'}
+              </button>
+            </div>
           </div>
         </div>
       )}

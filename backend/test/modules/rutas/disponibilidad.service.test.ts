@@ -106,31 +106,24 @@ describe('simularDisponibilidad', () => {
       expect(advertencias.filter((a) => a.tipo === 'lleno_sin_vaciar')).toHaveLength(0);
     });
 
-    it('advierte "vacios_exceso" desde 3 vacíos a bordo, aunque no se supere la capacidad', () => {
-      const { advertencias } = simularDisponibilidad([], ['A', 'B', 'C']);
-      expect(advertencias).toHaveLength(1);
-      expect(advertencias[0]).toMatchObject({ orden: 0, tipo: 'vacios_exceso' });
-      expect(advertencias[0].mensaje).not.toMatch(/por encima/);
+    it('no advierte mientras no se supere la capacidad de vacíos', () => {
+      const { advertencias } = simularDisponibilidad([], ['A', 'B', 'C', 'D', 'E', 'F']);
+      expect(advertencias).toHaveLength(0);
     });
 
-    it('advierte "vacios_exceso" con mensaje distinto al superar la capacidad del camión', () => {
+    it('advierte "vacios_exceso" al superar la capacidad del camión', () => {
       const { advertencias } = simularDisponibilidad([], ['A', 'B', 'C', 'D', 'E', 'F', 'G']);
       expect(advertencias).toHaveLength(1);
       expect(advertencias[0]).toMatchObject({ orden: 0, tipo: 'vacios_exceso' });
       expect(advertencias[0].mensaje).toMatch(/por encima/);
     });
 
-    it('menos de 3 vacíos a bordo no genera advertencia', () => {
-      const { advertencias } = simularDisponibilidad([], ['A', 'B']);
-      expect(advertencias).toHaveLength(0);
-    });
-
-    it('un vaciado que suma vacíos a bordo por encima del umbral también advierte', () => {
+    it('un vaciado que suma vacíos a bordo por encima de la capacidad también advierte', () => {
       const paradas: ParadaSimulada[] = [
         { orden: 1, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'A' },
         { orden: 2, tipoParada: 'vaciado' },
       ];
-      const { advertencias } = simularDisponibilidad(paradas, ['X', 'Y']);
+      const { advertencias } = simularDisponibilidad(paradas, ['X', 'Y', 'Z', 'W', 'Q', 'R']);
       expect(advertencias.some((a) => a.orden === 2 && a.tipo === 'vacios_exceso')).toBe(true);
     });
   });

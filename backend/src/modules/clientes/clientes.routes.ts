@@ -1,9 +1,15 @@
+import { randomUUID } from 'crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { query } from '../../config/db';
+import { query, withTx } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { excelClientes, enviarExcelClientePorWhatsApp, enviarResumenCuentaCorrientePorWhatsApp, resumenCuentaCorriente, deudaCliente, enviarDeudaClientePorWhatsApp } from '../reportes/reportes.service';
-import { motivoErrorWa } from '../whatsapp/graphApi';
+import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
+import { datosBancarios } from '../whatsapp/flows/pago.flow';
+import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
+import { emitRecursoActualizado } from '../../config/socket';
+import { encrypt, encryptBuffer } from '../../services/crypto.service';
+import { subirArchivo } from '../../services/storage.service';
 import { normalizarTelefonoAR } from '../../services/telefono.service';
 
 export const clientesRouter = Router();
@@ -34,10 +40,25 @@ clientesRouter.use(requireAuth);
 clientesRouter.get('/', async (_req: Request, res: Response) => {
   const rows = await query(
     `SELECT cl.id, cl.nombre, cl.telefono, cl.cuenta_corriente_estado, cl.numero_plan, cl.creado_en,
-            COUNT(v.id)::int AS cantidad_viajes,
+            COUNT(v.id)::int + COALESCE(alr.cnt, 0) AS cantidad_viajes,
             GREATEST(COALESCE(cc.saldo, 0), 0) + COALESCE(oc.deuda, 0) AS deuda
        FROM clientes cl
        LEFT JOIN viajes v ON v.cliente_telefono = cl.telefono
+       -- Extensiones de retiro sueltas (sin un viaje del mismo contenedor
+       -- donde anidarse, ver GET /:telefono/viajes) también cuentan como
+       -- pedido — si no, un cliente podía tener plata cargada sin que
+       -- "Pedidos" se moviera ni aparecer en ningún lado del perfil.
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS cnt
+           FROM pagos p
+          WHERE p.cliente_telefono = cl.telefono AND p.tipo = 'alargue_retiro'
+            AND NOT EXISTS (
+              SELECT 1 FROM viajes v2
+               WHERE v2.cliente_telefono = p.cliente_telefono
+                 AND v2.contenedor_numero = p.contenedor_numero
+                 AND p.creado_en >= v2.creado_en
+            )
+       ) alr ON true
        LEFT JOIN LATERAL (
          SELECT
            COALESCE((
@@ -78,7 +99,7 @@ clientesRouter.get('/', async (_req: Request, res: Response) => {
                    OR (pg4.medio_pago = 'transferencia' AND pg4.estado <> 'validado'))
          ) items
        ) oc ON true
-      GROUP BY cl.id, cc.saldo, oc.deuda
+      GROUP BY cl.id, cc.saldo, oc.deuda, alr.cnt
       ORDER BY cl.nombre`,
   );
   res.json(rows);
@@ -155,6 +176,192 @@ clientesRouter.get('/:telefono/deuda', async (req: Request, res: Response) => {
   res.json(resumen);
 });
 
+const viajeManualSchema = z.object({
+  tipo: z.enum(['entrega', 'recambio', 'alargue_retiro']),
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida'),
+  // Recambio: el contenedor lleno que se retira (o el único, si no es recambio).
+  // Extensión de retiro: opcional — no hace falta para llevar la cuenta de la
+  // plata, y a veces no se sabe el número exacto al cargar algo histórico.
+  contenedor_numero: z.string().trim().optional(),
+  // Solo recambio: el vacío que se deja. Opcional (carga histórica: a veces no se sabe).
+  contenedor_numero_entrega: z.string().trim().min(1).optional(),
+  importe: z.coerce.number().positive('El importe tiene que ser mayor a 0'),
+  medio_pago: z.enum(['efectivo', 'transferencia']),
+  pagado: z.boolean(),
+  // Solo si pagado=true y medio_pago='transferencia'.
+  comprobante_base64: z.string().optional(),
+  comprobante_content_type: z.string().optional(),
+}).superRefine((v, ctx) => {
+  if (v.tipo !== 'alargue_retiro' && !v.contenedor_numero?.trim()) {
+    ctx.addIssue({ code: 'custom', path: ['contenedor_numero'], message: 'Falta el número de contenedor' });
+  }
+});
+
+const TIPO_LABEL: Record<string, string> = { entrega: 'Entrega', recambio: 'Recambio', alargue_retiro: 'Extensión de retiro' };
+
+/**
+ * POST /api/clientes/:telefono/viaje-manual — carga a mano un viaje/recambio/
+ * extensión de retiro que YA se hizo fuera del sistema (ej. un pedido por
+ * teléfono que nunca pasó por el bot), para no perder el registro de fechas,
+ * contenedores y cobros. A propósito NO toca el estado del contenedor en la
+ * pestaña Contenedores — es solo el registro de plata/fechas del cliente.
+ *
+ * Reglas de plata (confirmadas con el dueño del negocio):
+ *  - Pagado -> nunca se agrega como cargo de cuenta corriente (ya está
+ *    saldado), sea o no el cliente de cuenta corriente. Efectivo no pide
+ *    nada más; transferencia pide el comprobante, que se sube y cifra con
+ *    el mismo criterio que los que llegan por WhatsApp (ver pago.flow.ts).
+ *  - No pagado + cliente OCASIONAL -> el pago queda 'pendiente' (aparece en
+ *    Validar pagos y en la deuda del cliente como cualquier otro pendiente)
+ *    y se le manda automático por WhatsApp la solicitud de pago (datos
+ *    bancarios si es transferencia, recordatorio si es efectivo). A
+ *    diferencia de un comprobante que manda el cliente, ACÁ NO se crea
+ *    alerta de "validar" — lo carga un operador a mano, no hay nada que
+ *    revisar, así que no tiene sentido pedirle a alguien que lo valide.
+ *  - No pagado + cliente CUENTA CORRIENTE -> se agrega directo como cargo
+ *    (es_cuenta_corriente=TRUE, 'validado') — mismo criterio que un alargue
+ *    de retiro pedido por cuenta corriente (ver alargarRetiro.flow.ts): no
+ *    hay nada que un operador tenga que aprobar, y no se le manda nada al
+ *    cliente porque la cuenta corriente se cobra junta, no pedido a pedido.
+ */
+clientesRouter.post('/:telefono/viaje-manual', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+  const parsed = viajeManualSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Datos inválidos' });
+  const v = parsed.data;
+  const telefono = req.params.telefono;
+
+  const [cliente] = await query<{ id: string; nombre: string; cuenta_corriente_estado: string }>(
+    'SELECT id, nombre, cuenta_corriente_estado FROM clientes WHERE telefono = $1',
+    [telefono],
+  );
+  if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+  const esCC = cliente.cuenta_corriente_estado === 'aprobada' || cliente.cuenta_corriente_estado === 'pendiente';
+  const cargoCC = esCC && !v.pagado;
+
+  let urlComprobanteCifrada: string | null = null;
+  if (v.pagado && v.medio_pago === 'transferencia' && v.comprobante_base64) {
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(v.comprobante_base64, 'base64');
+    } catch {
+      return res.status(400).json({ error: 'Comprobante inválido' });
+    }
+    if (buffer.length > 8 * 1024 * 1024) return res.status(400).json({ error: 'El comprobante no puede pesar más de 8MB' });
+    const mime = v.comprobante_content_type || 'image/jpeg';
+    const ext = mime.includes('pdf') ? 'pdf' : mime.split('/')[1] || 'jpg';
+    const rutaStorage = `comprobantes/manual_${telefono}_${Date.now()}.${ext}`;
+    try {
+      // Mismo criterio que un comprobante que llega por WhatsApp: el binario
+      // se cifra ANTES de subirlo (ver pago.flow.ts), y solo la referencia
+      // cifrada queda en pagos.url_comprobante.
+      await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
+    } catch (e) {
+      console.error('Error subiendo comprobante manual:', e);
+      return res.status(502).json({ error: 'No se pudo guardar el comprobante' });
+    }
+    urlComprobanteCifrada = encrypt(rutaStorage);
+  }
+
+  /**
+   * Solicitud de pago por WhatsApp de un viaje ya realizado (solo cliente
+   * ocasional, no pagado) — a diferencia de un comprobante que llega del
+   * cliente, esto lo carga un operador a mano: no hace falta ninguna alerta
+   * de "validar" (no hay nada que revisar, ya se sabe que es real), el pago
+   * simplemente queda 'pendiente' — mismo criterio que cualquier otro pago
+   * pendiente, ya se ve solo en Validar pagos — y se le avisa al cliente.
+   */
+  async function pedirPagoPorWhatsApp(): Promise<void> {
+    const montoTexto = `$${v.importe.toLocaleString('es-AR')}`;
+    const detalleContenedor = v.contenedor_numero ? ` del contenedor ${v.contenedor_numero}` : '';
+    const cuerpo =
+      `📋 Tenés un pago pendiente de *${montoTexto}* — ${TIPO_LABEL[v.tipo].toLowerCase()}${detalleContenedor} (${v.fecha}).\n\n` +
+      (v.medio_pago === 'transferencia'
+        ? `${datosBancarios()}\n\nCuando hagas la transferencia, mandanos la foto del comprobante por acá. 📎`
+        : '💵 Coordiná con nosotros el pago en efectivo cuando puedas.');
+    try {
+      await sendText(telefono, cuerpo);
+    } catch (e) {
+      const motivo = motivoErrorWa(e);
+      console.error('Error mandando solicitud de pago manual:', motivo);
+      notificarEnvioFallido(telefono, telefono, 'solicitud de pago de un viaje cargado a mano', motivo).catch((e2) =>
+        console.error('Error registrando alerta de envío fallido:', e2),
+      );
+    }
+  }
+
+  try {
+    if (v.tipo === 'alargue_retiro') {
+      // 'validado' (pagado, o cargo de cuenta corriente ya aplicado) refleja
+      // la fecha real en que pasó (v.fecha); 'pendiente' (solicitud recién
+      // mandada) arranca a envejecer desde hoy, no desde la fecha del viaje
+      // — si no, un backfill viejo aparecería como "vencido" de entrada.
+      const estadoPago = cargoCC || v.pagado ? 'validado' : 'pendiente';
+      const creadoEn = estadoPago === 'validado' ? v.fecha : null;
+      const [pago] = await query<{ id: string }>(
+        `INSERT INTO pagos (cliente_telefono, tipo, contenedor_numero, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante, creado_en)
+         VALUES ($1, 'alargue_retiro', $2, $3, $4, $5, $6, $7, $8, COALESCE($9::date + interval '12 hours', now()))
+         RETURNING id`,
+        [telefono, v.contenedor_numero ?? null, v.importe, v.medio_pago, estadoPago,
+         v.pagado && v.medio_pago === 'efectivo', cargoCC, urlComprobanteCifrada, creadoEn],
+      );
+
+      if (!v.pagado && !esCC) await pedirPagoPorWhatsApp();
+      emitRecursoActualizado('pagos');
+      return res.json({ ok: true, pago_id: pago.id });
+    }
+
+    // tipo 'entrega' o 'recambio': van a la tabla viajes. Se crean ya
+    // 'completado' (a diferencia de un viaje real armado desde el panel,
+    // que arranca 'programado' — acá el hecho ya pasó, no hay nada que
+    // programar ni asignarle a un chofer).
+    const resultado = await withTx(async (c) => {
+      let pagoId: string | null = null;
+      if (!cargoCC) {
+        // Mismo criterio que en la rama de alargue: 'validado' toma la
+        // fecha real del viaje, 'pendiente' arranca a envejecer desde hoy.
+        const { rows } = await c.query<{ id: string }>(
+          `INSERT INTO pagos (cliente_telefono, tipo, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante, creado_en)
+           VALUES ($1, 'flete', $2, $3, $4, $5, FALSE, $6, COALESCE($7::date + interval '12 hours', now()))
+           RETURNING id`,
+          [telefono, v.importe, v.medio_pago, v.pagado ? 'validado' : 'pendiente',
+           v.pagado && v.medio_pago === 'efectivo', urlComprobanteCifrada, v.pagado ? v.fecha : null],
+        );
+        pagoId = rows[0].id;
+      }
+
+      if (v.tipo === 'recambio') {
+        const grupoId = randomUUID();
+        await c.query(
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, importe, estado, es_cuenta_corriente, pago_id, grupo_id, notas)
+           VALUES ('retiro', $1, $2, $3, NULL, 'completado', $4, $5, $6, 'Cargado a mano desde el perfil del cliente')`,
+          [v.fecha, v.contenedor_numero!, telefono, cargoCC, pagoId, grupoId],
+        );
+        await c.query(
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, importe, estado, es_cuenta_corriente, pago_id, grupo_id, notas)
+           VALUES ('entrega', $1, $2, $3, $4, 'completado', $5, $6, $7, 'Cargado a mano desde el perfil del cliente')`,
+          [v.fecha, v.contenedor_numero_entrega ?? null, telefono, v.importe, cargoCC, pagoId, grupoId],
+        );
+      } else {
+        await c.query(
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, importe, estado, es_cuenta_corriente, pago_id, notas)
+           VALUES ('entrega', $1, $2, $3, $4, 'completado', $5, $6, 'Cargado a mano desde el perfil del cliente')`,
+          [v.fecha, v.contenedor_numero!, telefono, v.importe, cargoCC, pagoId],
+        );
+      }
+      return { pagoId };
+    });
+
+    if (!v.pagado && !esCC && resultado.pagoId) await pedirPagoPorWhatsApp();
+    emitRecursoActualizado('viajes');
+    emitRecursoActualizado('pagos');
+    res.json({ ok: true, pago_id: resultado.pagoId });
+  } catch (e: any) {
+    console.error('Error cargando viaje manual:', e);
+    if (e.code === '23503') return res.status(400).json({ error: 'Ese número de contenedor no existe — cargalo primero en la pestaña Contenedores.' });
+    res.status(500).json({ error: 'No se pudo cargar el viaje' });
+  }
+});
+
 /**
  * POST /api/clientes/:telefono/enviar-resumen-deuda — a diferencia de
  * enviar-resumen-cuenta (pensado para cuenta corriente), esto es para un
@@ -195,11 +402,22 @@ clientesRouter.get('/:telefono/cuenta-corriente', async (req: Request, res: Resp
   res.json(resumen);
 });
 
-/** GET /api/clientes/:telefono/viajes?mes=YYYY-MM — detalle de viajes de un cliente. */
+/**
+ * GET /api/clientes/:telefono/viajes?mes=YYYY-MM — detalle de viajes de un
+ * cliente. Además de la tabla `viajes`, suma las extensiones de retiro
+ * (pagos.tipo='alargue_retiro') que no quedaron anidadas bajo ningún viaje
+ * — el mismo NOT EXISTS que decide esto abajo es el criterio inverso del
+ * OR de la subconsulta de comprobantes más abajo, para no duplicar: una
+ * extensión se anida dentro de la entrega/recambio si hay una con el mismo
+ * contenedor+cliente creada antes; si no hay ninguna (ej. cargada a mano
+ * sin contenedor, o un contenedor que ya no tiene otros viajes), antes
+ * quedaba invisible en el perfil del cliente — ahora aparece como su
+ * propia fila.
+ */
 clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
   const mes = (req.query.mes as string) || null;
   const rows = await query(
-    `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
+    `SELECT v.id, v.tipo::text AS tipo, v.fecha, v.estado::text AS estado, v.zona, v.contenedor_numero, v.destino_direccion,
             v.destino_lat, v.destino_lng,
             v.remito, v.importe, v.grupo_id, ch.nombre AS chofer_nombre,
             v.es_cuenta_corriente, co.vence_en,
@@ -231,7 +449,32 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
        LEFT JOIN contenedores co ON co.numero = v.contenedor_numero
       WHERE v.cliente_telefono = $1
         AND ($2::text IS NULL OR to_char(v.fecha, 'YYYY-MM') = $2)
-      ORDER BY v.fecha DESC`,
+
+     UNION ALL
+
+     SELECT p.id, 'alargue_retiro' AS tipo, p.creado_en::date AS fecha, 'completado' AS estado,
+            NULL::text AS zona, p.contenedor_numero, NULL::text AS destino_direccion,
+            NULL::numeric AS destino_lat, NULL::numeric AS destino_lng,
+            NULL::text AS remito, p.monto AS importe, NULL::uuid AS grupo_id, NULL::text AS chofer_nombre,
+            p.es_cuenta_corriente, co.vence_en,
+            json_build_array(json_build_object(
+              'id', p.id, 'tipo', p.tipo, 'monto', p.monto, 'estado', p.estado,
+              'es_cuenta_corriente', p.es_cuenta_corriente,
+              'tiene_comprobante', (p.url_comprobante IS NOT NULL),
+              'titular', p.titular_transferencia, 'medio_pago', p.medio_pago,
+              'efectivo_cobrado', p.efectivo_cobrado, 'creado_en', p.creado_en
+            )) AS comprobantes
+       FROM pagos p
+       LEFT JOIN contenedores co ON co.numero = p.contenedor_numero
+      WHERE p.cliente_telefono = $1 AND p.tipo = 'alargue_retiro'
+        AND ($2::text IS NULL OR to_char(p.creado_en, 'YYYY-MM') = $2)
+        AND NOT EXISTS (
+          SELECT 1 FROM viajes v2
+           WHERE v2.cliente_telefono = p.cliente_telefono
+             AND v2.contenedor_numero = p.contenedor_numero
+             AND p.creado_en >= v2.creado_en
+        )
+      ORDER BY fecha DESC`,
     [req.params.telefono, mes],
   );
   res.json(rows);
