@@ -41,6 +41,19 @@ export function normalizarDestinoWhatsApp(numero: string): string {
 }
 
 /**
+ * wa_id (549...) -> formato legible para mostrarle a una persona, ej.
+ * "0261 15-2062258". Si no se reconoce el código de área, devuelve el
+ * número tal cual llegó (sin el prefijo 549) para no ocultar el dato.
+ */
+export function formatearTelefonoLegible(numero: string): string {
+  if (!numero.startsWith('549')) return numero;
+  const resto = numero.slice(3);
+  const ndc = detectarNdc(resto);
+  if (!ndc) return numero;
+  return `0${ndc} 15-${resto.slice(ndc.length)}`;
+}
+
+/**
  * Cualquier formato de entrada (con o sin +54, con o sin 9, con o sin el
  * viejo prefijo 15, con espacios/guiones/0 inicial) -> wa_id canónico
  * (549 + área + abonado). Es el inverso de `normalizarDestinoWhatsApp`.

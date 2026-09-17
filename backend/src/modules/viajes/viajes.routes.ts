@@ -10,7 +10,7 @@ import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { reservarParaEntrega } from '../../services/contenedorReserva.service';
 import { emitRecursoActualizado } from '../../config/socket';
 import { avisoEfectivoChofer } from '../whatsapp/avisoEfectivo';
-import { normalizarDestinoWhatsApp } from '../../services/telefono.service';
+import { formatearTelefonoLegible } from '../../services/telefono.service';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -134,9 +134,9 @@ async function nombreClientePara(clienteTelefono: string | null): Promise<string
   return c?.nombre && c.nombre !== 'Sin nombre' ? c.nombre : null;
 }
 
-/** Número del cliente en formato dialable (clásico AR), para que el chofer lo pueda llamar. */
+/** Número del cliente en formato legible ("0261 15-2062258"), para mostrarle al chofer. */
 function telefonoLegible(clienteTelefono: string | null): string | null {
-  return clienteTelefono ? normalizarDestinoWhatsApp(clienteTelefono) : null;
+  return clienteTelefono ? formatearTelefonoLegible(clienteTelefono) : null;
 }
 
 /** "14:30:00" (formato TIME de Postgres) -> "14:30". */
