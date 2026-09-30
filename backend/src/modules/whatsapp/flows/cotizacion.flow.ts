@@ -140,10 +140,10 @@ async function pedirBarrioPrivado(to: string, sesion: Sesion): Promise<void> {
   await setSesion({ ...sesion, paso: 'barrio_privado' });
 }
 
-/** Próximos días hábiles que se le ofrecen para elegir la entrega (sin domingos). */
+/** Próximos días hábiles que se le ofrecen para elegir la entrega (sin fines de semana). */
 const DIAS_A_OFRECER_ENTREGA = 3;
 
-/** Paso "elegir día de entrega" — próximos días hábiles, sin domingos. */
+/** Paso "elegir día de entrega" — próximos días hábiles, sin fines de semana. */
 async function pedirDiaEntrega(to: string, sesion: Sesion): Promise<void> {
   const dias = proximosDiasHabiles(DIAS_A_OFRECER_ENTREGA);
   await sendList(
@@ -457,7 +457,7 @@ export async function handleCotizacion(m: MensajeEntrante, sesion: Sesion): Prom
     return;
   }
 
-  // Paso 6: día de entrega (próximos días hábiles, sin domingos).
+  // Paso 6: día de entrega (próximos días hábiles, sin fines de semana).
   if (sesion.paso === 'dia_entrega') {
     if (!m.seleccionId?.startsWith('dia:')) {
       await manejarRespuestaInvalida(m, 'Por favor, elegí uno de los días de la lista. 👆');

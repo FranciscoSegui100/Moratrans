@@ -14,7 +14,7 @@ export const INTENTOS_PARA_ESCALAR_ASESOR = 3;
 /** Días de alquiler antes de que corresponda el retiro (se cuentan desde la entrega o el recambio). */
 export const DIAS_ALQUILER_ANTES_RETIRO = 7;
 
-/** Cantidad de próximos días hábiles (lunes a sábado) que se le ofrecen al cliente para elegir. */
+/** Cantidad de próximos días hábiles (lunes a viernes) que se le ofrecen al cliente para elegir. */
 export const CANTIDAD_DIAS_HABILES_A_OFRECER = 6;
 
 /** Días que suma "extender el retiro". Solo se puede aplicar una vez por ciclo (ver alargarRetiro.flow.ts). */
