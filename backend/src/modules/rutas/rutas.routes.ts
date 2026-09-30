@@ -7,7 +7,7 @@ import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { reservarParaEntrega, liberarReservaEntrega } from '../../services/contenedorReserva.service';
 import { simularDisponibilidad, ParadaSimulada, CapacidadCamion, CAPACIDAD_CAMION_DEFAULT } from './disponibilidad.service';
 import { avisarChoferViaje, avisarChoferRecambio } from '../viajes/viajes.routes';
-import { motivoErrorWa } from '../whatsapp/graphApi';
+import { motivoErrorWa, sendText } from '../whatsapp/graphApi';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitRecursoActualizado } from '../../config/socket';
 
@@ -298,6 +298,63 @@ rutasRouter.get('/bolsa', async (req: Request, res: Response) => {
     params,
   );
   res.json(rows);
+});
+
+/**
+ * POST /api/rutas/bolsa/:viajeId/cancelar — cancela un pedido que un cliente
+ * pidió cancelar por teléfono, mientras todavía está sin rutear. Si es un
+ * recambio (grupo_id), cancela las dos mitades juntas. Le avisa al cliente
+ * por WhatsApp invitándolo a volver a pedir con el menú.
+ */
+rutasRouter.post('/bolsa/:viajeId/cancelar', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const { viajeId } = req.params;
+  try {
+    const resultado = await withTx(async (c) => {
+      const { rows } = await c.query<{ id: string; grupo_id: string | null; ruta_id: string | null; estado: string; cliente_telefono: string | null }>(
+        `SELECT id, grupo_id, ruta_id, estado, cliente_telefono FROM viajes WHERE id = $1 FOR UPDATE`,
+        [viajeId],
+      );
+      const viaje = rows[0];
+      if (!viaje) fail('Pedido no encontrado.', 404);
+      if (viaje!.ruta_id !== null) fail('Este pedido ya está asignado a una ruta; no se puede cancelar desde la bolsa.');
+      if (viaje!.estado === 'cancelado') fail('Este pedido ya estaba cancelado.');
+
+      const ids = [viaje!.id];
+      if (viaje!.grupo_id) {
+        const { rows: pareja } = await c.query<{ id: string; ruta_id: string | null }>(
+          `SELECT id, ruta_id FROM viajes WHERE grupo_id = $1 AND id <> $2 FOR UPDATE`,
+          [viaje!.grupo_id, viaje!.id],
+        );
+        for (const p of pareja) {
+          if (p.ruta_id !== null) fail('La otra mitad de este recambio ya está asignada a una ruta; no se puede cancelar desde la bolsa.');
+          ids.push(p.id);
+        }
+      }
+
+      await c.query(`UPDATE viajes SET estado = 'cancelado' WHERE id = ANY($1::uuid[])`, [ids]);
+      return { viajeId: viaje!.id, telefono: viaje!.cliente_telefono };
+    });
+
+    res.json({ ok: true });
+    emitRecursoActualizado('viajes');
+
+    if (resultado.telefono) {
+      sendText(
+        resultado.telefono,
+        '❌ Tu pedido fue *cancelado*, tal como nos pediste.\n\n' +
+          'Cuando quieras volver a pedir, escribinos *MENU* y arrancamos de nuevo. ¡Gracias por confiar en Moratrans! 🙌',
+      ).catch((e) => {
+        const motivo = motivoErrorWa(e);
+        console.error('Error avisando cancelación al cliente:', motivo);
+        notificarEnvioFallido(resultado.viajeId, `cliente ${resultado.telefono}`, 'aviso de cancelación', motivo).catch(
+          (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+        );
+      });
+    }
+  } catch (error: any) {
+    if (error.status) res.status(error.status).json({ error: error.message });
+    else throw error;
+  }
 });
 
 /** GET /api/rutas/:id — ruta + paradas ordenadas + disponibilidad resuelta por parada de entrega. */

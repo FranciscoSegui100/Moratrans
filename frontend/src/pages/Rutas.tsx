@@ -916,6 +916,20 @@ export function Rutas() {
     queryClient.invalidateQueries({ queryKey: ['viajes', 'del-dia', fecha] });
   };
 
+  /** Cancela un pedido de la bolsa (todavía sin rutear) y le avisa al cliente por WhatsApp. */
+  async function cancelarPedidoDeBolsa(visita: VisitaPendiente) {
+    if (!confirm('¿Cancelar este pedido? Le vamos a avisar al cliente por WhatsApp.')) return;
+    const viajeId = visita.entrega?.id ?? visita.retiro?.id;
+    if (!viajeId) return;
+    try {
+      await api.post(`/api/rutas/bolsa/${viajeId}/cancelar`);
+      recargarListas();
+      show('success', 'Pedido cancelado', 'Le avisamos al cliente por WhatsApp.');
+    } catch (err: any) {
+      show('error', 'No se pudo cancelar', err.response?.data?.error || 'Error desconocido');
+    }
+  }
+
   // Depósito para una entrega, vaciadero para un retiro. Si hay una sola
   // activa de ese tipo no hace falta elegir: el backend la autoasigna sola.
   const tipoUbicacionViaje = formViaje.tipo === 'entrega' ? 'deposito' : 'vaciadero';
@@ -1419,6 +1433,15 @@ export function Rutas() {
                           </span>
                         </div>
 
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                          <button
+                            className="btn btn-danger btn-sm"
+                            onClick={(e) => { e.stopPropagation(); cancelarPedidoDeBolsa(visita); }}
+                            title="Cancelar pedido y avisarle al cliente por WhatsApp"
+                          >
+                            <X size={12} strokeWidth={2} /> Cancelar pedido
+                          </button>
+                        </div>
                       </div>
                     );
                       })}
