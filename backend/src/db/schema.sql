@@ -173,6 +173,7 @@ CREATE TABLE tarifas_departamento (
 CREATE TABLE contenedores (
   numero        TEXT PRIMARY KEY,             -- ej. 'MSKU1234567'
   estado        estado_contenedor NOT NULL DEFAULT 'disponible',
+  tamano        SMALLINT CHECK (tamano IN (5, 7, 9)), -- m³
   cliente_id    UUID REFERENCES clientes(id) ON DELETE SET NULL,
   vence_en      TIMESTAMPTZ,                  -- usado por el cron de alertas
   actualizado_por TEXT,                       -- usuario/chofer/sistema

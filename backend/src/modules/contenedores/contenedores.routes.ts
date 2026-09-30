@@ -15,7 +15,7 @@ contenedoresRouter.use(requireAuth);
  */
 contenedoresRouter.get('/', async (_req: Request, res: Response) => {
   const rows = await query(
-    `SELECT c.numero, c.estado, c.cliente_id, c.vence_en, c.actualizado_en, c.creado_en,
+    `SELECT c.numero, c.tamano, c.estado, c.cliente_id, c.vence_en, c.actualizado_en, c.creado_en,
             -- Vista "por contrato" (Disponible/Alquilado/Para retirar/Yendo a
             -- vaciar/Vencido) derivada del estado técnico, sin tocarlo —
             -- misma expresión duplicada en viajes.routes.ts (columna
@@ -132,19 +132,25 @@ const nuevoSchema = z.object({
   numero: z.string().min(1).max(50),
 });
 
+/** Tamaños de contenedor en m³ — mismo CHECK que la columna contenedores.tamano. */
+const tamanoSchema = z.object({
+  tamano: z.union([z.literal(5), z.literal(7), z.literal(9)]),
+});
+const crearSchema = nuevoSchema.merge(tamanoSchema);
+
 /** POST /api/contenedores — Crear un contenedor (solo admin/operador). */
 contenedoresRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
-  const parsed = nuevoSchema.safeParse(req.body);
+  const parsed = crearSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  
-  const { numero } = parsed.data;
+
+  const { numero, tamano } = parsed.data;
   // Convertir a mayúsculas para mantener consistencia, aunque no esté forzado a MSKU
   const numeroNormalizado = numero.trim().toUpperCase();
 
   try {
     const [row] = await query(
-      `INSERT INTO contenedores (numero) VALUES ($1) RETURNING *`,
-      [numeroNormalizado]
+      `INSERT INTO contenedores (numero, tamano) VALUES ($1, $2) RETURNING *`,
+      [numeroNormalizado, tamano]
     );
     res.status(201).json(row);
   } catch (e: any) {
@@ -201,6 +207,22 @@ contenedoresRouter.patch('/:numero', requireRol('admin', 'operador'), async (req
     console.error('Error al renombrar contenedor:', e);
     res.status(500).json({ error: 'Error interno del servidor.' });
   }
+});
+
+/**
+ * PATCH /api/contenedores/:numero/tamano — cargar o corregir el tamaño (m³).
+ * Sirve también para completar los contenedores dados de alta antes de que
+ * existiera la columna (quedaron con tamano NULL).
+ */
+contenedoresRouter.patch('/:numero/tamano', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const parsed = tamanoSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Tamaño inválido' });
+  const [row] = await query(
+    `UPDATE contenedores SET tamano = $1 WHERE numero = $2 RETURNING *`,
+    [parsed.data.tamano, req.params.numero],
+  );
+  if (!row) return res.status(404).json({ error: 'Contenedor inexistente' });
+  res.json(row);
 });
 
 /**
