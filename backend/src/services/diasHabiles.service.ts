@@ -14,8 +14,8 @@ export interface DiaHabil {
 }
 
 /**
- * Próximos días hábiles (lunes a sábado — el único día que se excluye es
- * domingo, como pidió el dueño explícitamente) a partir de mañana. No hay
+ * Próximos días hábiles (lunes a viernes — no se trabaja sábado ni domingo)
+ * a partir de mañana. No hay
  * feriados cargados todavía: si hace falta excluirlos más adelante, este es
  * el único lugar que hay que tocar.
  */
@@ -26,7 +26,8 @@ export function proximosDiasHabiles(cantidad: number = CANTIDAD_DIAS_HABILES_A_O
   cursor.setDate(cursor.getDate() + 1); // arranca mañana, no hoy
 
   while (resultado.length < cantidad) {
-    if (cursor.getDay() !== 0) {
+    const dia = cursor.getDay();
+    if (dia !== 0 && dia !== 6) {
       const yyyy = cursor.getFullYear();
       const mm = String(cursor.getMonth() + 1).padStart(2, '0');
       const dd = String(cursor.getDate()).padStart(2, '0');

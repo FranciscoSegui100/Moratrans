@@ -22,7 +22,7 @@ import {
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
-/** Próximos días que se le ofrecen a un cliente de cuenta corriente para elegir la entrega (sin domingos). */
+/** Próximos días que se le ofrecen a un cliente de cuenta corriente para elegir la entrega (sin fines de semana). */
 const DIAS_A_OFRECER_ENTREGA_CC = 3;
 
 /**

@@ -4,10 +4,12 @@ import { X, Wrench, CircleCheck, Pencil, Trash2, Check } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
+import { useAuth, tieneRol } from '../context/AuthContext';
 import { formatearFechaHora } from '../lib/fechas';
 
 interface Contenedor {
   numero: string;
+  tamano: number | null;
   estado: string;
   estado_contrato: string;
   cliente_id: string | null;
@@ -53,6 +55,9 @@ function etiquetaCliente(c: Contenedor): string | null {
   return c.cliente_nombre && c.cliente_nombre !== 'Sin nombre' ? c.cliente_nombre : c.cliente_telefono;
 }
 
+/** Tamaños de contenedor en m³ — mismo CHECK que la columna contenedores.tamano. */
+const TAMANOS = [5, 7, 9] as const;
+
 /** El historial viene ordenado por fecha desc; se agrupa por ticket sin
  * reordenar, así cada ciclo de alquiler queda junto en vez de mezclado. */
 function agruparPorTicket(historial: HistorialItem[]): GrupoHistorial[] {
@@ -70,8 +75,10 @@ function agruparPorTicket(historial: HistorialItem[]): GrupoHistorial[] {
 
 export function Contenedores() {
   const { show } = useToast();
+  const { user } = useAuth();
+  const puedeEditar = tieneRol(user, 'admin', 'operador');
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ numero: '' });
+  const [form, setForm] = useState({ numero: '', tamano: '' });
   const [loading, setLoading] = useState(false);
   const [historialNumero, setHistorialNumero] = useState<string | null>(null);
   const [editandoNumero, setEditandoNumero] = useState(false);
@@ -93,8 +100,8 @@ export function Contenedores() {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.post('/api/contenedores', form);
-      setForm({ numero: '' });
+      await api.post('/api/contenedores', { numero: form.numero, tamano: Number(form.tamano) });
+      setForm({ numero: '', tamano: '' });
       cargar();
       show('success', 'Contenedor creado', form.numero.toUpperCase());
     } catch (err: any) {
@@ -136,6 +143,16 @@ export function Contenedores() {
     }
   }
 
+  async function cambiarTamano(numero: string, tamano: number) {
+    try {
+      await api.patch(`/api/contenedores/${encodeURIComponent(numero)}/tamano`, { tamano });
+      cargar();
+      show('success', 'Tamaño actualizado', `${numero} · ${tamano} m³`);
+    } catch (err: any) {
+      show('error', 'No se pudo actualizar el tamaño', err.response?.data?.error);
+    }
+  }
+
   async function eliminarContenedor(numero: string) {
     if (!confirm(`¿Eliminar el contenedor ${numero}? Esta acción no se puede deshacer.`)) return;
     try {
@@ -167,8 +184,22 @@ export function Contenedores() {
                 value={form.numero}
                 required
                 style={{ textTransform: 'uppercase' }}
-                onChange={(e) => setForm({ numero: e.target.value })}
+                onChange={(e) => setForm({ ...form, numero: e.target.value })}
               />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Tamaño</label>
+              <select
+                className="form-select"
+                value={form.tamano}
+                required
+                onChange={(e) => setForm({ ...form, tamano: e.target.value })}
+              >
+                <option value="" disabled>Seleccionar…</option>
+                {TAMANOS.map((t) => (
+                  <option key={t} value={t}>{t} m³</option>
+                ))}
+              </select>
             </div>
             <button type="submit" className="btn btn-primary" disabled={loading}>
               {loading ? 'Guardando...' : 'Registrar contenedor'}
@@ -182,6 +213,7 @@ export function Contenedores() {
           <thead>
             <tr>
               <th>Número</th>
+              <th>Tamaño</th>
               <th>Estado</th>
               <th>Cliente y dirección</th>
               <th>Chofer asignado</th>
@@ -195,6 +227,7 @@ export function Contenedores() {
                 <td className="mono" style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
                   {c.numero}
                 </td>
+                <td>{c.tamano ? `${c.tamano} m³` : <span className="text-muted">—</span>}</td>
                 <td>
                   <span className={`badge ${c.estado_contrato}`}>
                     {ETIQUETAS_ESTADO[c.estado_contrato] ?? c.estado_contrato.replace('_', ' ')}
@@ -241,7 +274,7 @@ export function Contenedores() {
             ))}
             {contenedores.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No hay contenedores registrados
                 </td>
               </tr>
@@ -317,6 +350,30 @@ export function Contenedores() {
                 </button>
               </div>
             </div>
+            {(() => {
+              const cont = contenedores.find((c) => c.numero === historialNumero);
+              if (!cont) return null;
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 14, fontSize: '0.85rem' }}>
+                  <strong>Tamaño:</strong>
+                  {puedeEditar ? (
+                    <select
+                      className="form-select"
+                      style={{ width: 'auto' }}
+                      value={cont.tamano ?? ''}
+                      onChange={(e) => cambiarTamano(cont.numero, Number(e.target.value))}
+                    >
+                      {cont.tamano === null && <option value="" disabled>Sin cargar</option>}
+                      {TAMANOS.map((t) => (
+                        <option key={t} value={t}>{t} m³</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span>{cont.tamano ? `${cont.tamano} m³` : 'Sin cargar'}</span>
+                  )}
+                </div>
+              );
+            })()}
             {(() => {
               const cont = contenedores.find((c) => c.numero === historialNumero);
               if (!cont) return null;
