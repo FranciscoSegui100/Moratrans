@@ -33,20 +33,11 @@ function detectarNdc(resto: string): string | undefined {
  * por el endpoint de envío. Si no es un wa_id argentino, no toca el número.
  */
 export function normalizarDestinoWhatsApp(numero: string): string {
-  console.log('[DEBUG-TEL] normalizarDestinoWhatsApp input:', numero); // TEMP — sacar después de diagnosticar
-  if (!numero.startsWith('549')) {
-    console.log('[DEBUG-TEL] no empieza con 549, no se toca. output:', numero); // TEMP
-    return numero;
-  }
+  if (!numero.startsWith('549')) return numero;
   const resto = numero.slice(3); // código de área + número, sin el '9'
   const ndc = detectarNdc(resto);
-  if (!ndc) {
-    console.log('[DEBUG-TEL] NDC no reconocido, no se toca. output:', numero); // TEMP
-    return numero;
-  }
-  const salida = `54${ndc}15${resto.slice(ndc.length)}`;
-  console.log('[DEBUG-TEL] output:', salida); // TEMP
-  return salida;
+  if (!ndc) return numero;
+  return `54${ndc}15${resto.slice(ndc.length)}`;
 }
 
 /**
