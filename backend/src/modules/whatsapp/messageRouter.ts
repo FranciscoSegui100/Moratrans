@@ -6,7 +6,7 @@ import { MENSAJE_BOT_DESACTIVADO } from '../../config/bot.config';
 import { handleCotizacion, handlePedirNuevoContenedor } from './flows/cotizacion.flow';
 import { handlePago, pedidosAbiertos, mensajePedidoPendiente } from './flows/pago.flow';
 import { handleChofer } from './flows/chofer.flow';
-import { handleAsesor } from './flows/asesor.flow';
+import { handleAsesor, escalarAAsesor } from './flows/asesor.flow';
 import { handleRecambio } from './flows/recambio.flow';
 import { handlePedirRetiro } from './flows/pedirRetiro.flow';
 import { handlePedirEntrega } from './flows/pedirEntrega.flow';
@@ -144,6 +144,15 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   // espontáneos que sí tiene pideAsesor() más abajo.
   if (!enModoHumano && esAsesorDirecto(m)) {
     return manejarAsesorDirecto(m, sesion);
+  }
+
+  // "Otros servicios": a diferencia de "Hablar con asesor" (pideAsesor, abajo),
+  // que primero ofrece self-service y recién escala tras un par de pedidos
+  // (ver handleAsesor), acá no hay nada que el bot pueda resolver solo — el
+  // precio y las condiciones de un servicio fuera del alquiler los define un
+  // asesor, así que se escala directo al primer toque.
+  if (!enModoHumano && m.seleccionId === 'opt_otros_servicios') {
+    return escalarAAsesor(m.from, sesion, `${m.from} consultó por "Otros servicios" (fuera del alquiler de contenedores)`);
   }
 
   if (!enModoHumano && m.tipo !== 'image' && m.tipo !== 'document' && pideAsesor(m)) {
@@ -288,6 +297,7 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
           : []),
         { id: 'opt_detalle_movimientos', title: '📊 Resumen de cuenta', description: 'Descargá el detalle de tus entregas y retiros en Excel' },
         { id: 'opt_pagar', title: '💸 Enviar comprobante', description: 'Si querés transferir algo a tu cuenta corriente ahora' },
+        { id: 'opt_otros_servicios', title: '📨 Otros servicios', description: 'Consultas fuera del alquiler de contenedores' },
         { id: 'opt_asesor', title: '🙋 Hablar con asesor', description: 'Te comunicamos con una persona del equipo de MoraTrans' },
       ],
     );
@@ -301,6 +311,7 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
       ? [{ id: 'opt_gestionar', title: '🛠️ Gestionar contenedor', description: 'Retiro anticipado, cambio de contenedor o extensión del plazo' }]
       : []),
     { id: 'opt_pagar', title: '💸 Enviar comprobante', description: 'Mandá la foto o PDF de tu transferencia para que la validemos' },
+    { id: 'opt_otros_servicios', title: '📨 Otros servicios', description: 'Consultas fuera del alquiler de contenedores' },
     { id: 'opt_asesor', title: '🙋 Hablar con asesor', description: 'Te comunicamos con una persona del equipo de MoraTrans' },
   ];
 

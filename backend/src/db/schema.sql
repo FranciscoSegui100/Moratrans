@@ -72,7 +72,7 @@ CREATE TYPE tipo_alerta AS ENUM (
 -- acumulado, sin pedido_id — el monto lo carga el operador al validar,
 -- mirando la transferencia real (ver pago.flow.ts::registrarAbonoCuentaCorriente
 -- y reportes.service.ts::saldoCuentaCorriente).
-CREATE TYPE tipo_pago AS ENUM ('flete', 'alargue_retiro', 'abono_cc');
+CREATE TYPE tipo_pago AS ENUM ('flete', 'alargue_retiro', 'abono_cc', 'otro_servicio');
 
 -- Cuenta corriente: clientes que pagan a fin de mes o cuando se juntan
 -- varios retiros, en vez de transferir antes de cada uno (ver pago.flow.ts).
@@ -258,6 +258,9 @@ CREATE TABLE pagos (
   -- (pedido confirmado, contenedor reservado) sin que la plata todavía haya
   -- sido cobrada en mano — un operador lo marca a mano cuando ocurre.
   efectivo_cobrado BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Qué servicio fue, solo para tipo = 'otro_servicio' (ver migración 0048) —
+  -- el resto de los pagos ya sabe qué son por su tipo/pedido.
+  concepto         TEXT,
   estado           estado_pago NOT NULL DEFAULT 'pendiente',
   validado_por     UUID REFERENCES usuarios(id) ON DELETE SET NULL,
   motivo_rechazo   TEXT,

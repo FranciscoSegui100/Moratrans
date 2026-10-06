@@ -1,14 +1,17 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { DollarSign, Package, RefreshCw, Clock, Download, ShieldAlert } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { DollarSign, Package, RefreshCw, Clock, Download, ShieldAlert, Mail, X } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { useAuth, tieneRol } from '../context/AuthContext';
+import { useToast } from '../components/Toast';
+import { RoleGate } from '../components/RoleGate';
 
 interface ResumenMes {
   mes: string;
   entregas: number;
   recambios: number;
   alargues: number;
+  otros: number;
   total: number;
   cantidad: number;
 }
@@ -24,11 +27,18 @@ function formatoMoneda(n: number): string {
   return `$${n.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 
+const otroIngresoVacio = { telefono: '', monto: '', medio_pago: 'transferencia' as 'transferencia' | 'efectivo', concepto: '' };
+
 export function Finanzas() {
   const { user } = useAuth();
+  const { show } = useToast();
+  const queryClient = useQueryClient();
   const anioActual = new Date().getFullYear();
   const [anio, setAnio] = useState(anioActual);
   const [descargando, setDescargando] = useState(false);
+  const [mostrarOtroIngreso, setMostrarOtroIngreso] = useState(false);
+  const [otroIngresoForm, setOtroIngresoForm] = useState(otroIngresoVacio);
+  const [guardandoOtroIngreso, setGuardandoOtroIngreso] = useState(false);
   const esFinanzas = tieneRol(user, 'admin', 'finanzas');
 
   const { data: resumen, isLoading } = useQuery({
@@ -36,6 +46,31 @@ export function Finanzas() {
     queryFn: () => api.get<Resumen>(`/api/finanzas/resumen?anio=${anio}`).then((r) => r.data),
     enabled: esFinanzas,
   });
+
+  /** Ingreso por un servicio fuera del alquiler de contenedores (lo cerró un asesor por WhatsApp, ver asesor.flow.ts) — se carga a mano, sin comprobante. */
+  async function registrarOtroIngreso() {
+    const monto = Number(otroIngresoForm.monto);
+    if (!(monto > 0)) return show('error', 'Monto inválido');
+    if (otroIngresoForm.telefono.trim().length < 6) return show('error', 'Falta el teléfono del cliente');
+    if (!otroIngresoForm.concepto.trim()) return show('error', 'Contá brevemente qué servicio fue');
+    setGuardandoOtroIngreso(true);
+    try {
+      await api.post('/api/pagos/otro-ingreso', {
+        telefono: otroIngresoForm.telefono.trim(),
+        monto,
+        medio_pago: otroIngresoForm.medio_pago,
+        concepto: otroIngresoForm.concepto.trim(),
+      });
+      queryClient.invalidateQueries({ queryKey: ['finanzas', 'resumen'] });
+      setMostrarOtroIngreso(false);
+      setOtroIngresoForm(otroIngresoVacio);
+      show('success', 'Ingreso registrado');
+    } catch (err: any) {
+      show('error', 'No se pudo guardar', err.response?.data?.error);
+    } finally {
+      setGuardandoOtroIngreso(false);
+    }
+  }
 
   if (!esFinanzas) {
     return (
@@ -65,6 +100,7 @@ export function Finanzas() {
   const totalEntregas = resumen?.meses.reduce((s, m) => s + m.entregas, 0) ?? 0;
   const totalRecambios = resumen?.meses.reduce((s, m) => s + m.recambios, 0) ?? 0;
   const totalAlargues = resumen?.meses.reduce((s, m) => s + m.alargues, 0) ?? 0;
+  const totalOtros = resumen?.meses.reduce((s, m) => s + m.otros, 0) ?? 0;
   const totalCantidad = resumen?.meses.reduce((s, m) => s + m.cantidad, 0) ?? 0;
   const maxTotal = Math.max(1, ...(resumen?.meses.map((m) => m.total) ?? [1]));
 
@@ -73,6 +109,7 @@ export function Finanzas() {
     { label: 'Entregas', value: formatoMoneda(totalEntregas), icon: Package },
     { label: 'Recambios', value: formatoMoneda(totalRecambios), icon: RefreshCw },
     { label: 'Alargues de retiro', value: formatoMoneda(totalAlargues), icon: Clock },
+    { label: 'Otros servicios', value: formatoMoneda(totalOtros), icon: Mail },
   ];
 
   return (
@@ -91,6 +128,11 @@ export function Finanzas() {
           <button className="btn btn-primary btn-sm" onClick={descargarExcel} disabled={descargando}>
             <Download size={16} strokeWidth={1.75} /> {descargando ? 'Generando...' : 'Exportar a Excel'}
           </button>
+          <RoleGate roles={['admin', 'operador', 'finanzas']}>
+            <button className="btn btn-success btn-sm" onClick={() => setMostrarOtroIngreso(true)}>
+              <Mail size={16} strokeWidth={1.75} /> Registrar otro ingreso
+            </button>
+          </RoleGate>
         </div>
       </div>
 
@@ -141,6 +183,7 @@ export function Finanzas() {
               <th>Entregas</th>
               <th>Recambios</th>
               <th>Alargues de retiro</th>
+              <th>Otros servicios</th>
               <th>Total</th>
               <th>Movimientos</th>
             </tr>
@@ -152,6 +195,7 @@ export function Finanzas() {
                 <td>{formatoMoneda(m.entregas)}</td>
                 <td>{formatoMoneda(m.recambios)}</td>
                 <td>{formatoMoneda(m.alargues)}</td>
+                <td>{formatoMoneda(m.otros)}</td>
                 <td className="strong">{formatoMoneda(m.total)}</td>
                 <td className="text-muted">{m.cantidad}</td>
               </tr>
@@ -162,6 +206,7 @@ export function Finanzas() {
                 <td>{formatoMoneda(totalEntregas)}</td>
                 <td>{formatoMoneda(totalRecambios)}</td>
                 <td>{formatoMoneda(totalAlargues)}</td>
+                <td>{formatoMoneda(totalOtros)}</td>
                 <td>{formatoMoneda(resumen.total)}</td>
                 <td className="text-muted">{totalCantidad}</td>
               </tr>
@@ -169,6 +214,81 @@ export function Finanzas() {
           </tbody>
         </table>
       </div>
+
+      {mostrarOtroIngreso && (
+        <div className="modal-overlay" onClick={() => !guardandoOtroIngreso && setMostrarOtroIngreso(false)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="section-title" style={{ margin: 0 }}>Registrar otro ingreso</div>
+              <button className="modal-close" onClick={() => setMostrarOtroIngreso(false)}>
+                <X size={18} strokeWidth={2} />
+              </button>
+            </div>
+            <p className="text-muted" style={{ marginTop: 0 }}>
+              Para un servicio fuera del alquiler de contenedores que cerró un asesor por WhatsApp — ya cobrado, sin comprobante.
+            </p>
+
+            <div className="form-group">
+              <label className="form-label">Teléfono del cliente</label>
+              <input
+                className="form-input"
+                placeholder="Ej. 5493794123456"
+                value={otroIngresoForm.telefono}
+                onChange={(e) => setOtroIngresoForm({ ...otroIngresoForm, telefono: e.target.value })}
+                autoFocus
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Qué servicio fue</label>
+              <input
+                className="form-input"
+                placeholder="Ej. venta de contenedor, depósito..."
+                value={otroIngresoForm.concepto}
+                onChange={(e) => setOtroIngresoForm({ ...otroIngresoForm, concepto: e.target.value })}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <div className="form-group" style={{ flex: '1 1 160px' }}>
+                <label className="form-label">Monto</label>
+                <input
+                  type="number" min="0" step="0.01"
+                  className="form-input"
+                  placeholder="$"
+                  value={otroIngresoForm.monto}
+                  onChange={(e) => setOtroIngresoForm({ ...otroIngresoForm, monto: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ flex: '1 1 160px' }}>
+                <label className="form-label">Medio de pago</label>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  {([
+                    ['transferencia', 'Transferencia'],
+                    ['efectivo', 'Efectivo'],
+                  ] as const).map(([valor, etiqueta]) => (
+                    <button
+                      key={valor}
+                      type="button"
+                      className={`btn btn-sm ${otroIngresoForm.medio_pago === valor ? 'btn-primary' : 'btn-ghost'}`}
+                      onClick={() => setOtroIngresoForm({ ...otroIngresoForm, medio_pago: valor })}
+                    >
+                      {etiqueta}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '10px' }}>
+              <button className="btn btn-ghost" onClick={() => setMostrarOtroIngreso(false)} disabled={guardandoOtroIngreso}>Cancelar</button>
+              <button className="btn btn-success" onClick={registrarOtroIngreso} disabled={guardandoOtroIngreso}>
+                {guardandoOtroIngreso ? 'Guardando...' : 'Registrar ingreso'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

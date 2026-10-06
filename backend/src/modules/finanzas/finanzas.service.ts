@@ -14,8 +14,9 @@ export interface MovimientoIngreso {
   cliente_telefono: string | null;
   contenedor_numero: string | null;
   zona: string | null;
-  categoria: 'Entrega' | 'Recambio' | 'Alargue de retiro';
-  medio_pago: 'Transferencia' | 'Cuenta corriente';
+  categoria: 'Entrega' | 'Recambio' | 'Alargue de retiro' | 'Otro servicio';
+  medio_pago: 'Transferencia' | 'Cuenta corriente' | 'Efectivo';
+  concepto: string | null;
   // pg devuelve las columnas `numeric` de Postgres como string (y `pagos.monto`
   // puede ser NULL). Coercionar con Number() antes de operar — mismo criterio
   // que reportes.service.ts::sumarMontos.
@@ -25,10 +26,12 @@ export interface MovimientoIngreso {
 /**
  * Ingresos = ventas nuevas confirmadas (no cobranzas de deuda ya reconocida).
  * Dos fuentes, sin superponerse:
- *  1. `pagos` validados de tipo 'flete'/'alargue_retiro' — cubre tanto lo
- *     pagado por transferencia como lo confirmado a cuenta corriente vía
- *     cotización (pago.flow.ts::iniciarCuentaCorriente ya pasa por acá): es
- *     la confirmación de una venta nueva, no el cobro de saldo viejo.
+ *  1. `pagos` validados de tipo 'flete'/'alargue_retiro'/'otro_servicio' —
+ *     cubre lo pagado por transferencia o efectivo, lo confirmado a cuenta
+ *     corriente vía cotización (pago.flow.ts::iniciarCuentaCorriente ya pasa
+ *     por acá), y los ingresos de servicios fuera del alquiler cargados a
+ *     mano desde Finanzas (ver pagos.routes.ts::POST /otro-ingreso): todos
+ *     son confirmación de una venta nueva, no el cobro de saldo viejo.
  *  2. `viajes` con es_cuenta_corriente=TRUE (entrega directa o recambio para
  *     un cliente ya aprobado, ver pedirEntrega.flow.ts/recambio.flow.ts):
  *     estos NUNCA pasan por `pagos` — sin esta segunda fuente, esas ventas
@@ -42,19 +45,22 @@ export interface MovimientoIngreso {
 async function movimientosIngreso(anio: number): Promise<MovimientoIngreso[]> {
   return query<MovimientoIngreso>(
     `WITH ingresos AS (
-       -- pagos.monto solo se carga para alargues (ver alargarRetiro.flow.ts) —
-       -- un flete normal nace sin monto propio y el precio vive en
+       -- pagos.monto solo se carga para alargues y otros servicios (ver
+       -- alargarRetiro.flow.ts y pagos.routes.ts::POST /otro-ingreso) — un
+       -- flete normal nace sin monto propio y el precio vive en
        -- pedidos.precio (mismo criterio que ya usan GET /api/clientes y el
        -- aviso de cobro en efectivo al chofer). Sin este COALESCE, toda
        -- entrega pagada por transferencia sumaba $0 acá — el caso más común
        -- de todos, y el único que no tiene la segunda fuente (viajes) como
        -- respaldo.
        SELECT p.creado_en::date AS fecha, COALESCE(p.monto, pe2.precio)::numeric AS importe, p.pedido_id, p.contenedor_numero,
-              p.cliente_telefono, p.es_cuenta_corriente, NULL::uuid AS grupo_id,
-              CASE WHEN p.tipo = 'alargue_retiro' THEN 'alargue' ELSE 'entrega' END AS origen
+              p.cliente_telefono, p.es_cuenta_corriente, p.medio_pago, p.concepto, NULL::uuid AS grupo_id,
+              CASE WHEN p.tipo = 'alargue_retiro' THEN 'alargue'
+                   WHEN p.tipo = 'otro_servicio' THEN 'otro_servicio'
+                   ELSE 'entrega' END AS origen
          FROM pagos p
          LEFT JOIN pedidos pe2 ON pe2.id = p.pedido_id
-        WHERE p.estado = 'validado' AND p.tipo IN ('flete', 'alargue_retiro')
+        WHERE p.estado = 'validado' AND p.tipo IN ('flete', 'alargue_retiro', 'otro_servicio')
           AND EXTRACT(YEAR FROM p.creado_en) = $1
         UNION ALL
        -- grupo_id no-nulo detecta un recambio de cuenta corriente directo
@@ -62,7 +68,7 @@ async function movimientosIngreso(anio: number): Promise<MovimientoIngreso[]> {
        -- tiene pedidos detrás (nunca pasa por cotización), así que la
        -- columna CATEGORÍA no puede depender de pedidos.tipo para este caso.
        SELECT v.fecha AS fecha, v.importe::numeric AS importe, NULL::uuid AS pedido_id, v.contenedor_numero,
-              v.cliente_telefono, TRUE AS es_cuenta_corriente, v.grupo_id,
+              v.cliente_telefono, TRUE AS es_cuenta_corriente, 'transferencia' AS medio_pago, NULL::text AS concepto, v.grupo_id,
               'entrega' AS origen
          FROM viajes v
         WHERE v.es_cuenta_corriente = TRUE AND v.tipo = 'entrega' AND v.importe IS NOT NULL
@@ -77,10 +83,16 @@ async function movimientosIngreso(anio: number): Promise<MovimientoIngreso[]> {
                                  AND v2.fecha = i.fecha ORDER BY v2.creado_en DESC LIMIT 1)) AS zona,
             CASE
               WHEN i.origen = 'alargue' THEN 'Alargue de retiro'
+              WHEN i.origen = 'otro_servicio' THEN 'Otro servicio'
               WHEN pe.tipo = 'recambio' OR i.grupo_id IS NOT NULL THEN 'Recambio'
               ELSE 'Entrega'
             END AS categoria,
-            CASE WHEN i.es_cuenta_corriente THEN 'Cuenta corriente' ELSE 'Transferencia' END AS medio_pago,
+            CASE
+              WHEN i.es_cuenta_corriente THEN 'Cuenta corriente'
+              WHEN i.medio_pago = 'efectivo' THEN 'Efectivo'
+              ELSE 'Transferencia'
+            END AS medio_pago,
+            i.concepto,
             i.importe
        FROM ingresos i
        LEFT JOIN pedidos pe ON pe.id = i.pedido_id
@@ -95,6 +107,7 @@ export interface ResumenMes {
   entregas: number;
   recambios: number;
   alargues: number;
+  otros: number;
   total: number;
   cantidad: number;
 }
@@ -105,7 +118,7 @@ export async function resumenMensual(anio: number): Promise<{ anio: number; mese
   const porMes = new Map<string, ResumenMes>();
   for (let m = 1; m <= 12; m++) {
     const mes = `${anio}-${String(m).padStart(2, '0')}`;
-    porMes.set(mes, { mes, entregas: 0, recambios: 0, alargues: 0, total: 0, cantidad: 0 });
+    porMes.set(mes, { mes, entregas: 0, recambios: 0, alargues: 0, otros: 0, total: 0, cantidad: 0 });
   }
   for (const mv of movimientos) {
     const mes = mv.fecha.slice(0, 7);
@@ -114,6 +127,7 @@ export async function resumenMensual(anio: number): Promise<{ anio: number; mese
     const importe = mv.importe ? Number(mv.importe) : 0;
     if (mv.categoria === 'Alargue de retiro') acc.alargues += importe;
     else if (mv.categoria === 'Recambio') acc.recambios += importe;
+    else if (mv.categoria === 'Otro servicio') acc.otros += importe;
     else acc.entregas += importe;
     acc.total += importe;
     acc.cantidad += 1;
@@ -143,6 +157,7 @@ export async function excelFinanzas(anio: number): Promise<Buffer> {
     { header: 'ENTREGAS', key: 'entregas', width: 16 },
     { header: 'RECAMBIOS', key: 'recambios', width: 16 },
     { header: 'ALARGUES DE RETIRO', key: 'alargues', width: 20 },
+    { header: 'OTROS SERVICIOS', key: 'otros', width: 18 },
     { header: 'TOTAL', key: 'total', width: 16 },
     { header: 'CANT. MOVIMIENTOS', key: 'cantidad', width: 18 },
   ];
@@ -159,6 +174,7 @@ export async function excelFinanzas(anio: number): Promise<Buffer> {
       entregas: m.entregas,
       recambios: m.recambios,
       alargues: m.alargues,
+      otros: m.otros,
       total: m.total,
       cantidad: m.cantidad,
     });
@@ -166,10 +182,11 @@ export async function excelFinanzas(anio: number): Promise<Buffer> {
   });
   const filaTotal = wsResumen.addRow({ mes: 'TOTAL DEL AÑO', entregas: meses.reduce((s, m) => s + m.entregas, 0),
     recambios: meses.reduce((s, m) => s + m.recambios, 0), alargues: meses.reduce((s, m) => s + m.alargues, 0),
+    otros: meses.reduce((s, m) => s + m.otros, 0),
     total, cantidad: meses.reduce((s, m) => s + m.cantidad, 0) });
   filaTotal.font = { bold: true };
   filaTotal.eachCell((c) => (c.border = { top: { style: 'thin', color: { argb: argb(AZUL) } } }));
-  ['entregas', 'recambios', 'alargues', 'total'].forEach((k) => (wsResumen.getColumn(k).numFmt = '"$"#,##0.00'));
+  ['entregas', 'recambios', 'alargues', 'otros', 'total'].forEach((k) => (wsResumen.getColumn(k).numFmt = '"$"#,##0.00'));
   dibujarPieHoja(wsResumen, columnasResumen.length);
 
   // ---------- Hoja 2: Detalle ----------
@@ -181,6 +198,7 @@ export async function excelFinanzas(anio: number): Promise<Buffer> {
     { header: 'CONTENEDOR', key: 'contenedor_numero', width: 16 },
     { header: 'ZONA', key: 'zona', width: 18 },
     { header: 'TIPO', key: 'categoria', width: 16 },
+    { header: 'CONCEPTO', key: 'concepto', width: 28 },
     { header: 'MEDIO DE PAGO', key: 'medio_pago', width: 16 },
     { header: 'IMPORTE', key: 'importe', width: 14 },
   ];

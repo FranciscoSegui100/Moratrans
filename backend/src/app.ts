@@ -144,6 +144,22 @@ export function crearApp() {
   app.use('/api/finanzas', finanzasRouter);
   app.use('/api/sync', syncRouter);
 
+  // moratrans.ar / www.moratrans.ar es la landing institucional (pública, sin
+  // login); el panel vive en panel.moratrans.ar y en el dominio *.onrender.com
+  // de respaldo. Se distingue por el header Host porque es el mismo servicio
+  // Render sirviendo ambos dominios (así la cookie mt_csrf del panel no
+  // depende de un segundo servicio).
+  const landingDist = path.join(__dirname, '../public-landing');
+  if (fs.existsSync(path.join(landingDist, 'index.html'))) {
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      const host = (req.hostname || '').toLowerCase();
+      if (host !== 'moratrans.ar' && host !== 'www.moratrans.ar') return next();
+      if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/webhook') || req.path === '/health') return next();
+      res.sendFile(path.join(landingDist, 'index.html'));
+    });
+    app.use(express.static(landingDist));
+  }
+
   // Sirve el build del panel (frontend/dist, copiado acá por `vite build` -> ../backend/public)
   // cuando existe: en Railway un solo servicio sirve API + panel bajo el mismo dominio, evitando
   // el problema de que la cookie mt_csrf (CSRF) no se pueda leer entre dominios distintos. En dev
