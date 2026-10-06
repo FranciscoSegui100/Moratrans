@@ -60,6 +60,11 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
     const entries = body.entry ?? [];
     for (const entry of entries) {
       for (const change of entry.changes ?? []) {
+        if (change.field === 'messages' && change.value?.statuses) {
+          console.log('[DEBUG-STATUS]', JSON.stringify(change.value.statuses)); // TEMP — sacar después de diagnosticar
+        } else if (change.field !== 'messages') {
+          console.log('[DEBUG-FIELD]', change.field); // TEMP — sacar después de diagnosticar
+        }
         const messages = change.value?.messages ?? [];
         const contacts = change.value?.contacts ?? [];
         for (const msg of messages) {
