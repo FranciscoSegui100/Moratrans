@@ -1,4 +1,3 @@
-
 // Debe importarse antes que cualquier router: parchea Express para que los
 // handlers async que rechazan una promesa (throw dentro de un async function)
 // lleguen al error handler en vez de tirar abajo todo el proceso Node.
@@ -83,6 +82,8 @@ export function crearApp() {
     express.raw({ type: '*/*' }),
     (req, _res, next) => {
       (req as any).rawBody = req.body; // Buffer
+      // LOG TEMPORAL: contenido del evento (incluye estados de entrega y errores)
+      console.log('[WA] body', Buffer.isBuffer(req.body) ? req.body.toString('utf8').slice(0, 2000) : '');
       next();
     },
     webhookRouter,
