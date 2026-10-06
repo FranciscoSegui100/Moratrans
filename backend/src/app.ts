@@ -1,3 +1,4 @@
+
 // Debe importarse antes que cualquier router: parchea Express para que los
 // handlers async que rechazan una promesa (throw dentro de un async function)
 // lleguen al error handler en vez de tirar abajo todo el proceso Node.
@@ -49,7 +50,7 @@ export function crearApp() {
     // bloquea aunque la imagen ya esté en memoria del lado del cliente.
     contentSecurityPolicy: {
       useDefaults: true,
-      directives: { 
+      directives: {
         imgSrc: ["'self'", 'data:', 'blob:'],
         scriptSrc: ["'self'", "'unsafe-inline'"],
       },
@@ -67,6 +68,14 @@ export function crearApp() {
     credentials: true,
   }));
   app.use(cookieParser());
+
+  // LOG TEMPORAL: registra toda visita al webhook (GET de verificación y POST
+  // de eventos) para saber si Meta está llegando a este servicio. Solo imprime
+  // y sigue, no cambia el comportamiento. Borrar cuando se resuelva el problema.
+  app.use('/webhook', (req, _res, next) => {
+    console.log('[WA]', req.method, req.originalUrl, new Date().toISOString());
+    next();
+  });
 
   // Webhook de Meta: necesita el cuerpo CRUDO para validar la firma HMAC.
   app.use(
