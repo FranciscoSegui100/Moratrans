@@ -75,16 +75,30 @@
   .about .ph img{width:100%;height:100%;object-fit:cover}
   .about p{color:var(--steel);font-size:15.5px;margin-top:14px}
 
-  /* SERVICES */
-  .sgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:40px}
-  @media(max-width:920px){.sgrid{grid-template-columns:repeat(2,1fr)}}
-  @media(max-width:520px){.sgrid{grid-template-columns:1fr}}
-  .sc{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:22px;transition:.2s}
+  /* SERVICES CAROUSEL */
+  .scarousel-wrap{position:relative;margin-top:40px}
+  .scarousel{display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;
+    -webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:4px}
+  .scarousel::-webkit-scrollbar{display:none}
+  .sc{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:30px 26px;transition:.2s;
+    flex:0 0 calc(25% - 12px);scroll-snap-align:start;min-height:208px;display:flex;flex-direction:column}
+  @media(max-width:920px){.sc{flex:0 0 calc(50% - 8px)}}
+  @media(max-width:560px){.sc{flex:0 0 86%}}
   .sc:hover{transform:translateY(-3px);box-shadow:0 14px 34px rgba(15,27,45,.1);border-color:#cdd9e6}
-  .sc .ic{width:44px;height:44px;border-radius:11px;background:#e8f1fa;display:flex;align-items:center;justify-content:center;margin-bottom:14px}
-  .sc .ic svg{width:22px;height:22px;stroke:var(--blue);fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
-  .sc h3{font-size:15.5px;font-weight:700;margin-bottom:5px}
-  .sc p{color:var(--steel);font-size:13.5px}
+  .sc .ic{width:52px;height:52px;border-radius:13px;background:#e8f1fa;display:flex;align-items:center;justify-content:center;margin-bottom:18px}
+  .sc .ic svg{width:26px;height:26px;stroke:var(--blue);fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+  .sc h3{font-size:16.5px;font-weight:700;margin-bottom:7px}
+  .sc p{color:var(--steel);font-size:14px}
+  .sarrow{position:absolute;top:calc(50% - 10px);transform:translateY(-50%);width:46px;height:46px;border-radius:50%;
+    background:#fff;border:1px solid var(--line);box-shadow:0 8px 20px rgba(15,27,45,.12);display:flex;align-items:center;
+    justify-content:center;cursor:pointer;z-index:5;transition:.18s;padding:0}
+  .sarrow:hover{background:var(--blue);border-color:var(--blue)}
+  .sarrow:hover svg{stroke:#fff}
+  .sarrow svg{width:19px;height:19px;stroke:var(--ink);fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+  .sarrow.prev{left:-23px}
+  .sarrow.next{right:-23px}
+  @media(max-width:1180px){.sarrow.prev{left:4px}.sarrow.next{right:4px}}
+  @media(max-width:640px){.sarrow{display:none}}
 
   /* CONTAINERS HIGHLIGHT */
   .hl{display:grid;grid-template-columns:.9fr 1.1fr;gap:44px;align-items:center}
@@ -107,14 +121,22 @@
   .cc a{color:var(--ink);text-decoration:none}
   .cc a:hover{color:var(--blue)}
 
-  /* LEGAL */
-  .legal{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:30px;margin-top:34px}
-  .legal h3{font-size:18px;font-weight:800;margin:26px 0 10px}
-  .legal h3:first-child{margin-top:0}
+  /* LEGAL ACCORDION */
+  .legal{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:8px 30px;margin-top:34px}
+  .legal details{border-bottom:1px solid var(--line)}
+  .legal details:last-of-type{border-bottom:none}
+  .legal summary{list-style:none;cursor:pointer;padding:20px 2px;font-size:16px;font-weight:800;
+    display:flex;align-items:center;justify-content:space-between;gap:16px}
+  .legal summary::-webkit-details-marker{display:none}
+  .legal summary::after{content:"";width:9px;height:9px;flex:0 0 auto;border-right:2px solid var(--steel);
+    border-bottom:2px solid var(--steel);transform:rotate(-45deg);transition:.2s}
+  .legal details[open] summary::after{transform:rotate(45deg);margin-top:5px}
+  .legal .body{padding:0 2px 20px}
   .legal p{color:var(--steel);font-size:14px;margin-bottom:10px}
+  .legal p:last-child{margin-bottom:0}
   .legal ul{margin:8px 0 12px 20px}
   .legal li{color:var(--steel);font-size:14px;margin-bottom:6px}
-  .legal .upd{color:var(--mist);font-size:12.5px;font-style:italic;margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+  .legal .upd{color:var(--mist);font-size:12.5px;font-style:italic;margin-top:4px;padding:16px 2px 22px;border-top:1px solid var(--line)}
 
   /* FOOTER */
   footer{background:var(--ink);color:#bccbdc;padding:46px 0 26px}
@@ -178,39 +200,43 @@
     <div class="sec-eyebrow">Qué hacemos</div>
     <h2>Nuestros servicios</h2>
     <p class="lead">Soluciones integrales para obras, movimiento de suelos y gestión de materiales en toda la provincia de Mendoza.</p>
-    <div class="sgrid">
-      <div class="sc">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7zM7 19a2 2 0 100-4 2 2 0 000 4zM18 19a2 2 0 100-4 2 2 0 000 4z"/></svg></div>
-        <h3>Transporte de cargas</h3><p>Traslado de materiales y cargas con flota propia en toda la provincia.</p>
+    <div class="scarousel-wrap">
+      <button class="sarrow prev" type="button" aria-label="Servicios anteriores"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="scarousel" id="servicios-carousel">
+        <div class="sc">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7zM7 19a2 2 0 100-4 2 2 0 000 4zM18 19a2 2 0 100-4 2 2 0 000 4z"/></svg></div>
+          <h3>Transporte de cargas</h3><p>Traslado de materiales y cargas con flota propia en toda la provincia.</p>
+        </div>
+        <div class="sc">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 18h18M5 18V9l7-4 7 4v9M9 18v-5h6v5"/></svg></div>
+          <h3>Venta de áridos e insumos</h3><p>Provisión de áridos, insumos para suelos y materiales para obra.</p>
+        </div>
+        <div class="sc">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 19h18M6 19v-5l4-6 4 3v8M14 11l5-2 2 4-3 1"/></svg></div>
+          <h3>Servicio de retroexcavadora</h3><p>Excavación y movimiento de suelos con operador incluido.</p>
+        </div>
+        <div class="sc">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 18h18M5 18v-6h7v6M12 13l4-4h4v9M7 21a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/></svg></div>
+          <h3>Servicio de cargadora</h3><p>Carga y acopio de materiales con pala cargadora frontal.</p>
+        </div>
+        <div class="sc">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 18h16M6 18v-5h6v5M12 14l3-3h3v7M8 21a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/></svg></div>
+          <h3>Servicio de minicargadora</h3><p>Equipos compactos para trabajos en espacios reducidos.</p>
+        </div>
+        <div class="sc">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 18h9v-9H4zM13 18h3M16 5v13M19 9h-3M7 21a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/></svg></div>
+          <h3>Servicio de autoelevador</h3><p>Movimiento y estiba de cargas en obra y depósito.</p>
+        </div>
+        <div class="sc">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 8h18v10H3zM3 12h18M8 8v10M14 8v10"/></svg></div>
+          <h3>Alquiler de contenedores</h3><p>Contenedores para residuos y escombros, con entrega y retiro.</p>
+        </div>
+        <div class="sc">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 20V9l8-5 8 5v11M9 20v-6h6v6M4 20h16"/></svg></div>
+          <h3>Alquiler de obradores</h3><p>Obradores para instalación en obra, listos para operar.</p>
+        </div>
       </div>
-      <div class="sc">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 18h18M5 18V9l7-4 7 4v9M9 18v-5h6v5"/></svg></div>
-        <h3>Venta de áridos e insumos</h3><p>Provisión de áridos, insumos para suelos y materiales para obra.</p>
-      </div>
-      <div class="sc">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 19h18M6 19v-5l4-6 4 3v8M14 11l5-2 2 4-3 1"/></svg></div>
-        <h3>Servicio de retroexcavadora</h3><p>Excavación y movimiento de suelos con operador incluido.</p>
-      </div>
-      <div class="sc">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 18h18M5 18v-6h7v6M12 13l4-4h4v9M7 21a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/></svg></div>
-        <h3>Servicio de cargadora</h3><p>Carga y acopio de materiales con pala cargadora frontal.</p>
-      </div>
-      <div class="sc">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 18h16M6 18v-5h6v5M12 14l3-3h3v7M8 21a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/></svg></div>
-        <h3>Servicio de minicargadora</h3><p>Equipos compactos para trabajos en espacios reducidos.</p>
-      </div>
-      <div class="sc">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 18h9v-9H4zM13 18h3M16 5v13M19 9h-3M7 21a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/></svg></div>
-        <h3>Servicio de autoelevador</h3><p>Movimiento y estiba de cargas en obra y depósito.</p>
-      </div>
-      <div class="sc">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 8h18v10H3zM3 12h18M8 8v10M14 8v10"/></svg></div>
-        <h3>Alquiler de contenedores</h3><p>Contenedores para residuos y escombros, con entrega y retiro.</p>
-      </div>
-      <div class="sc">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 20V9l8-5 8 5v11M9 20v-6h6v6M4 20h16"/></svg></div>
-        <h3>Alquiler de obradores</h3><p>Obradores para instalación en obra, listos para operar.</p>
-      </div>
+      <button class="sarrow next" type="button" aria-label="Servicios siguientes"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
     </div>
   </div>
 </section>
@@ -268,43 +294,65 @@
     <p class="lead">Condiciones de uso del sitio, de los servicios y tratamiento de datos personales.</p>
 
     <div class="legal">
-      <h3>1. Titularidad del sitio</h3>
-      <p>Este sitio web es propiedad de <strong>MORATRANS S.A.</strong>, CUIT 30-70954594-5, con domicilio en San Martín 7800, Luján de Cuyo, provincia de Mendoza, República Argentina. Correo de contacto: Moratranssa@gmail.com. Teléfono: 261 680 8080.</p>
+      <details>
+        <summary>1. Titularidad del sitio</summary>
+        <div class="body"><p>Este sitio web es propiedad de <strong>MORATRANS S.A.</strong>, CUIT 30-70954594-5, con domicilio en San Martín 7800, Luján de Cuyo, provincia de Mendoza, República Argentina. Correo de contacto: Moratranssa@gmail.com. Teléfono: 261 680 8080.</p></div>
+      </details>
 
-      <h3>2. Objeto y aceptación</h3>
-      <p>El presente sitio tiene por finalidad brindar información institucional sobre los servicios que presta Moratrans S.A. y facilitar el contacto con la empresa. El acceso y la navegación implican la aceptación de estos términos y condiciones. Quien no esté de acuerdo con ellos deberá abstenerse de utilizar el sitio.</p>
+      <details>
+        <summary>2. Objeto y aceptación</summary>
+        <div class="body"><p>El presente sitio tiene por finalidad brindar información institucional sobre los servicios que presta Moratrans S.A. y facilitar el contacto con la empresa. El acceso y la navegación implican la aceptación de estos términos y condiciones. Quien no esté de acuerdo con ellos deberá abstenerse de utilizar el sitio.</p></div>
+      </details>
 
-      <h3>3. Servicios</h3>
-      <p>La información publicada sobre transporte de cargas, venta de áridos e insumos, servicios de maquinaria y alquiler de contenedores y obradores tiene carácter informativo y no constituye una oferta vinculante. Los presupuestos, plazos, precios y condiciones de cada servicio se acuerdan de forma particular con cada cliente y pueden variar según la zona, la disponibilidad y las características del trabajo solicitado.</p>
+      <details>
+        <summary>3. Servicios</summary>
+        <div class="body"><p>La información publicada sobre transporte de cargas, venta de áridos e insumos, servicios de maquinaria y alquiler de contenedores y obradores tiene carácter informativo y no constituye una oferta vinculante. Los presupuestos, plazos, precios y condiciones de cada servicio se acuerdan de forma particular con cada cliente y pueden variar según la zona, la disponibilidad y las características del trabajo solicitado.</p></div>
+      </details>
 
-      <h3>4. Atención por WhatsApp</h3>
-      <p>Moratrans S.A. ofrece un canal de atención a través de WhatsApp, que puede incluir respuestas automatizadas mediante un asistente virtual. Al iniciar una conversación por ese medio, el usuario acepta que sus mensajes y los datos que proporcione sean utilizados para gestionar su consulta o solicitud de servicio. En cualquier momento el usuario puede solicitar ser atendido por una persona del equipo. Este canal no sustituye la contratación formal de los servicios, que se acuerda directamente con la empresa.</p>
+      <details>
+        <summary>4. Atención por WhatsApp</summary>
+        <div class="body"><p>Moratrans S.A. ofrece un canal de atención a través de WhatsApp, que puede incluir respuestas automatizadas mediante un asistente virtual. Al iniciar una conversación por ese medio, el usuario acepta que sus mensajes y los datos que proporcione sean utilizados para gestionar su consulta o solicitud de servicio. En cualquier momento el usuario puede solicitar ser atendido por una persona del equipo. Este canal no sustituye la contratación formal de los servicios, que se acuerda directamente con la empresa.</p></div>
+      </details>
 
-      <h3>5. Protección de datos personales</h3>
-      <p>Moratrans S.A. trata los datos personales conforme a la Ley N° 25.326 de Protección de Datos Personales de la República Argentina.</p>
-      <ul>
-        <li><strong>Datos que recolectamos:</strong> nombre, número de teléfono, dirección de entrega o retiro, correo electrónico y la información que el usuario proporcione voluntariamente al solicitar un servicio.</li>
-        <li><strong>Finalidad:</strong> los datos se utilizan exclusivamente para gestionar consultas, elaborar presupuestos, coordinar la prestación de los servicios y mantener la relación comercial. No se utilizan con fines publicitarios no solicitados.</li>
-        <li><strong>Conservación:</strong> los datos se conservan durante el tiempo necesario para cumplir con la finalidad para la que fueron recolectados y con las obligaciones legales, contables e impositivas aplicables.</li>
-        <li><strong>Transferencia a terceros:</strong> no se ceden datos personales a terceros, salvo obligación legal o cuando resulte necesario para la prestación del servicio contratado.</li>
-        <li><strong>Seguridad:</strong> se aplican medidas técnicas y organizativas razonables para resguardar la información, incluyendo acceso restringido y transmisión cifrada.</li>
-      </ul>
-      <p>El titular de los datos puede ejercer en cualquier momento sus derechos de acceso, rectificación, actualización y supresión escribiendo a Moratranssa@gmail.com. La Agencia de Acceso a la Información Pública, en su carácter de autoridad de aplicación de la Ley N° 25.326, tiene la atribución de atender las denuncias y reclamos que se interpongan con relación al incumplimiento de las normas sobre protección de datos personales.</p>
+      <details>
+        <summary>5. Protección de datos personales</summary>
+        <div class="body">
+          <p>Moratrans S.A. trata los datos personales conforme a la Ley N° 25.326 de Protección de Datos Personales de la República Argentina.</p>
+          <ul>
+            <li><strong>Datos que recolectamos:</strong> nombre, número de teléfono, dirección de entrega o retiro, correo electrónico y la información que el usuario proporcione voluntariamente al solicitar un servicio.</li>
+            <li><strong>Finalidad:</strong> los datos se utilizan exclusivamente para gestionar consultas, elaborar presupuestos, coordinar la prestación de los servicios y mantener la relación comercial. No se utilizan con fines publicitarios no solicitados.</li>
+            <li><strong>Conservación:</strong> los datos se conservan durante el tiempo necesario para cumplir con la finalidad para la que fueron recolectados y con las obligaciones legales, contables e impositivas aplicables.</li>
+            <li><strong>Transferencia a terceros:</strong> no se ceden datos personales a terceros, salvo obligación legal o cuando resulte necesario para la prestación del servicio contratado.</li>
+            <li><strong>Seguridad:</strong> se aplican medidas técnicas y organizativas razonables para resguardar la información, incluyendo acceso restringido y transmisión cifrada.</li>
+          </ul>
+          <p>El titular de los datos puede ejercer en cualquier momento sus derechos de acceso, rectificación, actualización y supresión escribiendo a Moratranssa@gmail.com. La Agencia de Acceso a la Información Pública, en su carácter de autoridad de aplicación de la Ley N° 25.326, tiene la atribución de atender las denuncias y reclamos que se interpongan con relación al incumplimiento de las normas sobre protección de datos personales.</p>
+        </div>
+      </details>
 
-      <h3>6. Propiedad intelectual</h3>
-      <p>Los contenidos de este sitio —textos, imágenes, logotipos y demás elementos— son propiedad de Moratrans S.A. o se utilizan con la debida autorización. Queda prohibida su reproducción total o parcial sin consentimiento previo y por escrito de la empresa.</p>
+      <details>
+        <summary>6. Propiedad intelectual</summary>
+        <div class="body"><p>Los contenidos de este sitio —textos, imágenes, logotipos y demás elementos— son propiedad de Moratrans S.A. o se utilizan con la debida autorización. Queda prohibida su reproducción total o parcial sin consentimiento previo y por escrito de la empresa.</p></div>
+      </details>
 
-      <h3>7. Limitación de responsabilidad</h3>
-      <p>Moratrans S.A. procura mantener la información del sitio actualizada y libre de errores, pero no garantiza la ausencia total de inexactitudes. La empresa no será responsable por daños derivados del uso del sitio ni por interrupciones temporales en su disponibilidad por motivos técnicos o de mantenimiento.</p>
+      <details>
+        <summary>7. Limitación de responsabilidad</summary>
+        <div class="body"><p>Moratrans S.A. procura mantener la información del sitio actualizada y libre de errores, pero no garantiza la ausencia total de inexactitudes. La empresa no será responsable por daños derivados del uso del sitio ni por interrupciones temporales en su disponibilidad por motivos técnicos o de mantenimiento.</p></div>
+      </details>
 
-      <h3>8. Enlaces a terceros</h3>
-      <p>El sitio puede contener enlaces a plataformas de terceros, como WhatsApp. Moratrans S.A. no controla ni se responsabiliza por el contenido, las políticas de privacidad ni las prácticas de dichos servicios, que se rigen por sus propios términos.</p>
+      <details>
+        <summary>8. Enlaces a terceros</summary>
+        <div class="body"><p>El sitio puede contener enlaces a plataformas de terceros, como WhatsApp. Moratrans S.A. no controla ni se responsabiliza por el contenido, las políticas de privacidad ni las prácticas de dichos servicios, que se rigen por sus propios términos.</p></div>
+      </details>
 
-      <h3>9. Modificaciones</h3>
-      <p>Moratrans S.A. se reserva el derecho de modificar estos términos y condiciones en cualquier momento. Las modificaciones entrarán en vigencia desde su publicación en este sitio.</p>
+      <details>
+        <summary>9. Modificaciones</summary>
+        <div class="body"><p>Moratrans S.A. se reserva el derecho de modificar estos términos y condiciones en cualquier momento. Las modificaciones entrarán en vigencia desde su publicación en este sitio.</p></div>
+      </details>
 
-      <h3>10. Ley aplicable y jurisdicción</h3>
-      <p>Estos términos se rigen por las leyes de la República Argentina. Ante cualquier controversia, las partes se someten a la jurisdicción de los tribunales ordinarios de la provincia de Mendoza, con renuncia a cualquier otro fuero que pudiera corresponder.</p>
+      <details>
+        <summary>10. Ley aplicable y jurisdicción</summary>
+        <div class="body"><p>Estos términos se rigen por las leyes de la República Argentina. Ante cualquier controversia, las partes se someten a la jurisdicción de los tribunales ordinarios de la provincia de Mendoza, con renuncia a cualquier otro fuero que pudiera corresponder.</p></div>
+      </details>
 
       <p class="upd">Última actualización: octubre de 2026.</p>
     </div>
@@ -339,6 +387,17 @@
     </div>
   </div>
 </footer>
+
+<script>
+(function(){
+  var car = document.getElementById('servicios-carousel');
+  var prev = document.querySelector('.sarrow.prev');
+  var next = document.querySelector('.sarrow.next');
+  if(!car || !prev || !next) return;
+  prev.addEventListener('click', function(){ car.scrollBy({left:-car.clientWidth, behavior:'smooth'}); });
+  next.addEventListener('click', function(){ car.scrollBy({left:car.clientWidth, behavior:'smooth'}); });
+})();
+</script>
 
 </body>
 </html>
