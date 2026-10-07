@@ -122,7 +122,16 @@
   .cc a:hover{color:var(--blue)}
 
   /* LEGAL ACCORDION */
-  .legal{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:8px 30px;margin-top:34px}
+  .legal-toggle{margin-top:34px}
+  .legal-toggle>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:10px;
+    background:var(--blue);color:#fff;font-weight:700;font-size:14.5px;padding:13px 22px;border-radius:10px;transition:.18s}
+  .legal-toggle>summary:hover{background:var(--blue-dark)}
+  .legal-toggle>summary::-webkit-details-marker{display:none}
+  .legal-toggle>summary::after{content:"";width:9px;height:9px;flex:0 0 auto;border-right:2px solid #fff;
+    border-bottom:2px solid #fff;transform:rotate(45deg);transition:.2s}
+  .legal-toggle[open]>summary::after{transform:rotate(-135deg);margin-top:3px}
+  .legal-toggle[open]>summary{margin-bottom:24px}
+  .legal{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:8px 30px;margin-top:0}
   .legal details{border-bottom:1px solid var(--line)}
   .legal details:last-of-type{border-bottom:none}
   .legal summary{list-style:none;cursor:pointer;padding:20px 2px;font-size:16px;font-weight:800;
@@ -293,6 +302,8 @@
     <h2>Términos y condiciones</h2>
     <p class="lead">Condiciones de uso del sitio, de los servicios y tratamiento de datos personales.</p>
 
+    <details class="legal-toggle">
+      <summary>Ver términos y condiciones completos</summary>
     <div class="legal">
       <details>
         <summary>1. Titularidad del sitio</summary>
@@ -356,6 +367,7 @@
 
       <p class="upd">Última actualización: octubre de 2026.</p>
     </div>
+    </details>
   </div>
 </section>
 
