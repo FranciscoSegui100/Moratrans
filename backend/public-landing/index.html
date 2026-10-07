@@ -123,15 +123,20 @@
 
   /* LEGAL ACCORDION */
   .legal-toggle{margin-top:34px}
-  .legal-toggle>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:10px;
-    background:var(--blue);color:#fff;font-weight:700;font-size:14.5px;padding:13px 22px;border-radius:10px;transition:.18s}
-  .legal-toggle>summary:hover{background:var(--blue-dark)}
+  .legal-toggle>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:16px;
+    background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:20px 24px;
+    box-shadow:0 4px 14px rgba(15,27,45,.04);transition:.18s}
+  .legal-toggle>summary:hover{border-color:#cdd9e6;box-shadow:0 10px 26px rgba(15,27,45,.08)}
   .legal-toggle>summary::-webkit-details-marker{display:none}
-  .legal-toggle>summary::after{content:"";width:9px;height:9px;flex:0 0 auto;border-right:2px solid #fff;
-    border-bottom:2px solid #fff;transform:rotate(45deg);transition:.2s}
-  .legal-toggle[open]>summary::after{transform:rotate(-135deg);margin-top:3px}
-  .legal-toggle[open]>summary{margin-bottom:24px}
-  .legal{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:8px 30px;margin-top:0}
+  .legal-toggle .lt-ic{width:46px;height:46px;border-radius:12px;background:#e8f1fa;display:flex;align-items:center;justify-content:center;flex:0 0 46px}
+  .legal-toggle .lt-ic svg{width:23px;height:23px;stroke:var(--blue);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .legal-toggle .lt-txt{flex:1 1 auto}
+  .legal-toggle .lt-title{display:block;font-size:16.5px;font-weight:800;color:var(--ink)}
+  .legal-toggle .lt-sub{display:block;font-size:13px;color:var(--steel);margin-top:3px}
+  .legal-toggle .lt-chev{width:18px;height:18px;flex:0 0 auto;stroke:var(--steel);fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:.2s}
+  .legal-toggle[open] .lt-chev{transform:rotate(90deg)}
+  .legal-toggle[open]>summary{border-radius:var(--radius) var(--radius) 0 0;border-bottom-color:transparent;box-shadow:none}
+  .legal{background:#fff;border:1px solid var(--line);border-top:none;border-radius:0 0 var(--radius) var(--radius);padding:8px 30px;margin-top:0}
   .legal details{border-bottom:1px solid var(--line)}
   .legal details:last-of-type{border-bottom:none}
   .legal summary{list-style:none;cursor:pointer;padding:20px 2px;font-size:16px;font-weight:800;
@@ -303,7 +308,14 @@
     <p class="lead">Condiciones de uso del sitio, de los servicios y tratamiento de datos personales.</p>
 
     <details class="legal-toggle">
-      <summary>Ver términos y condiciones completos</summary>
+      <summary>
+        <span class="lt-ic"><svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M9 13h8M9 17h6M9 9h3"/></svg></span>
+        <span class="lt-txt">
+          <span class="lt-title">Términos y condiciones</span>
+          <span class="lt-sub">Tocá para ver las 10 cláusulas completas</span>
+        </span>
+        <svg class="lt-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      </summary>
     <div class="legal">
       <details>
         <summary>1. Titularidad del sitio</summary>
