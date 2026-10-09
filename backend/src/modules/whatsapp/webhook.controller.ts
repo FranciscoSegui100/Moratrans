@@ -60,6 +60,18 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
     const entries = body.entry ?? [];
     for (const entry of entries) {
       for (const change of entry.changes ?? []) {
+        // Meta acepta el envío con 200 y avisa DESPUÉS, por acá, si no lo pudo
+        // entregar (cuenta bloqueada, ventana de 24hs vencida, número de
+        // destino inválido, etc.) — sin este log el mensaje figura como
+        // enviado en Conversaciones y el motivo real no queda en ningún lado.
+        for (const st of change.value?.statuses ?? []) {
+          if (st.status !== 'failed') continue;
+          const err = st.errors?.[0];
+          console.error(
+            `[WA] Mensaje NO entregado a ${st.recipient_id}: (#${err?.code ?? '?'}) ${err?.title ?? 'sin detalle'}` +
+              (err?.error_data?.details ? ` — ${err.error_data.details}` : ''),
+          );
+        }
         const messages = change.value?.messages ?? [];
         const contacts = change.value?.contacts ?? [];
         for (const msg of messages) {

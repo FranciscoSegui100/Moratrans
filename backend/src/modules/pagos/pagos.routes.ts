@@ -326,6 +326,43 @@ pagosRouter.post('/abono-manual', requireRol('admin', 'operador', 'finanzas'), a
   res.json({ ok: true, id: pago.id, monto });
 });
 
+const otroIngresoSchema = z.object({
+  telefono: z.string().trim().min(6, 'Falta el teléfono'),
+  monto: z.coerce.number().positive('Indicá el monto cobrado.'),
+  medio_pago: z.enum(['transferencia', 'efectivo']),
+  concepto: z.string().trim().min(1, 'Contá brevemente qué servicio fue.'),
+});
+
+/**
+ * POST /api/pagos/otro-ingreso — registra a mano un ingreso por un servicio
+ * fuera del alquiler de contenedores (el cliente eligió "Otros servicios" en
+ * el menú de WhatsApp y lo cerró un asesor humano por fuera del bot, ver
+ * asesor.flow.ts — nunca pasa por pedidos/viajes). Mismo criterio que
+ * abono-manual (se crea y valida en el mismo paso, sin comprobante), pero
+ * con es_cuenta_corriente=FALSE y tipo='otro_servicio' para que SÍ cuente
+ * como venta nueva en finanzas.service.ts — a diferencia de 'abono_cc', que
+ * a propósito queda afuera por ser cobro de deuda ya reconocida. El
+ * operador ya cobró (en mano o por transferencia) antes de cargarlo, así que
+ * si es efectivo se marca efectivo_cobrado=TRUE de una, sin el paso
+ * intermedio 'pendiente' que sí tiene el flujo de WhatsApp (pago.flow.ts).
+ */
+pagosRouter.post('/otro-ingreso', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+  const parsed = otroIngresoSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Datos inválidos' });
+  }
+  const { telefono, monto, medio_pago, concepto } = parsed.data;
+
+  const [pago] = await query<{ id: string }>(
+    `INSERT INTO pagos (cliente_telefono, monto, estado, es_cuenta_corriente, tipo, medio_pago, efectivo_cobrado, concepto, validado_por)
+     VALUES ($1,$2,'validado',FALSE,'otro_servicio',$3,$4,$5,$6) RETURNING id`,
+    [telefono, monto, medio_pago, medio_pago === 'efectivo', concepto, req.user!.id],
+  );
+
+  emitRecursoActualizado('pagos');
+  res.json({ ok: true, id: pago.id, monto });
+});
+
 /**
  * Un pago 'abono_cc' no está atado a ningún pedido/ticket/contenedor: es
  * simplemente plata que el cliente transfirió contra su saldo de cuenta

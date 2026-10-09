@@ -145,6 +145,13 @@ export function crearApp() {
   app.use('/api/finanzas', finanzasRouter);
   app.use('/api/sync', syncRouter);
 
+  // NOTA: la landing institucional (backend/public-landing) se sirve desde un
+  // Render Static Site aparte atado a moratrans.ar/www — NO desde acá. Se
+  // probó distinguir por el header Host en este mismo servicio, pero Render
+  // reescribe el Host al dominio primario del servicio para TODO el tráfico
+  // que le llega (onrender.com incluido), así que esa detección mostraba la
+  // landing en todos lados y tapaba el panel. No repetir ese enfoque acá.
+
   // Sirve el build del panel (frontend/dist, copiado acá por `vite build` -> ../backend/public)
   // cuando existe: en Railway un solo servicio sirve API + panel bajo el mismo dominio, evitando
   // el problema de que la cookie mt_csrf (CSRF) no se pueda leer entre dominios distintos. En dev
