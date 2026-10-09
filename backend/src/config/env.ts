@@ -42,8 +42,9 @@ const schema = z.object({
 
   // ---- Email transaccional (Resend): reset de contraseña, invitación, alertas ----
   RESEND_API_KEY: z.string().min(1),
-  // Mientras no haya un dominio propio verificado en Resend, "onboarding@resend.dev"
-  // es el remitente de pruebas: solo entrega a la casilla con la que te registraste.
+  // En producción usar una dirección del dominio verificado en Resend
+  // (ej. "Moratrans <no-reply@moratrans.ar>"). "onboarding@resend.dev" es el
+  // remitente de pruebas: solo entrega a la casilla con la que te registraste.
   EMAIL_FROM: z.string().default('Moratrans <onboarding@resend.dev>'),
   // Base para los links de los emails (reset de contraseña, invitación).
   APP_URL: z.string().url().default('http://localhost:5173'),
