@@ -34,6 +34,10 @@ export function intentarRefresh(): Promise<boolean> {
   return refrescando;
 }
 
+// Pantallas que se ven sin sesión: el 401 de /me al cargarlas es esperado y no
+// debe mandar al login (si no, el link de reset/invitación nunca llega a mostrarse).
+const RUTAS_PUBLICAS = ['/login', '/forgot-password', '/reset-password', '/aceptar-invitacion'];
+
 // El access token dura JWT_ACCESS_EXPIRES (8h): si expira a mitad de sesión, se intenta
 // renovar una vez con el refresh token (cookie aparte) antes de mandar al
 // usuario al login.
@@ -51,7 +55,7 @@ api.interceptors.response.use(
       if (await intentarRefresh()) return api(original);
     }
 
-    if (err.response?.status === 401 && location.pathname !== '/login') {
+    if (err.response?.status === 401 && !RUTAS_PUBLICAS.includes(location.pathname)) {
       location.href = '/login';
     }
     return Promise.reject(err);
