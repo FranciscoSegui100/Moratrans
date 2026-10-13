@@ -1750,6 +1750,12 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 }
 /* Parada que el chofer ya terminó: intocable (sin grip ni acciones), atenuada. */
 .stop.finalizada { opacity: 0.7; background: var(--bg-surface); border-style: dashed; }
+/* Parada en camino/en curso activa: bloqueada contra modificaciones o cancelaciones. */
+.stop.en-curso-bloqueada {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  box-shadow: 0 0 0 1px var(--accent-tint-strong);
+}
 
 /* Badge de ruta con paradas todavía sin confirmar. */
 .badge.sin_confirmar { background: var(--warning-bg); color: var(--warning); }

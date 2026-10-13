@@ -35,24 +35,41 @@ async function rutaYaEnCurso(c: PoolClient, rutaId: string): Promise<boolean> {
 }
 
 /**
- * Una parada que el chofer ya marcó como hecha (`completada_en`) es intocable:
- * no se reordena, no se quita, no se mueve a otra ruta, no se le cambia el
- * contenedor. Chequea la parada y, si es un recambio, también su pareja (mismo
- * grupo_id en esta ruta) — las dos mitades van juntas. Lanza 409 si alguna ya
- * está finalizada; no falla si la parada no existe (eso lo valida el caller).
+ * Una parada que el chofer ya marcó como hecha (`completada_en`), o que es la
+ * parada siguiente activa a la que está yendo el chofer (la inmediatamente posterior
+ * a una completada, o la primera de una ruta confirmada), está bloqueada / en curso:
+ * no se cancela, no se quita, no se mueve a otra ruta ni se reordena.
  */
 async function assertParadaViajeNoFinalizada(
   c: PoolClient, rutaId: string, paradaId: string, accion: string,
 ): Promise<void> {
-  const { rows } = await c.query<{ completada_en: string | null }>(
-    `SELECT v.completada_en
+  const { rows } = await c.query<{ completada_en: string | null; orden: number; ruta_confirmada_en: string | null }>(
+    `SELECT v.completada_en, v.orden, v.ruta_confirmada_en
        FROM viajes v
       WHERE v.ruta_id = $1
         AND (v.id = $2 OR v.grupo_id = (SELECT grupo_id FROM viajes WHERE id = $2))`,
     [rutaId, paradaId],
   );
+  if (rows.length === 0) return;
   if (rows.some((r) => r.completada_en != null)) {
     fail(`Esta parada ya la terminó el chofer; no se puede ${accion}.`);
+  }
+
+  // Si la parada está confirmada, chequear si es la parada activa a la que está yendo el chofer
+  // (es decir, la primera parada no completada de la ruta).
+  const ordenParada = rows[0].orden;
+  if (rows.some((r) => r.ruta_confirmada_en != null)) {
+    const { rows: anterioresPendientes } = await c.query<{ id: string }>(
+      `SELECT id FROM viajes
+        WHERE ruta_id = $1 AND orden < $2 AND completada_en IS NULL
+        LIMIT 1`,
+      [rutaId, ordenParada],
+    );
+    // Si no hay paradas anteriores pendientes, significa que el chofer ya completó las anteriores
+    // (o es la primera) y está yendo a entregar/retirar esta parada ahora mismo.
+    if (anterioresPendientes.length === 0) {
+      fail(`El chofer ya está yendo a esta parada en su recorrido activo; no se puede ${accion}.`);
+    }
   }
 }
 
