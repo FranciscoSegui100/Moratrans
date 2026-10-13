@@ -35,3 +35,21 @@ export async function necesitaNombre(telefono: string): Promise<boolean> {
   const [row] = await query<{ nombre: string }>('SELECT nombre FROM clientes WHERE telefono = $1', [telefono]);
   return !row || row.nombre === 'Sin nombre';
 }
+
+/**
+ * Última dirección de entrega conocida de este teléfono (de un pedido
+ * cotizado o de un viaje ya creado) — se ofrece como atajo en vez de
+ * pedírsela de cero (ver pedidoCatalogo.flow.ts). null si no hay ninguna.
+ */
+export async function ultimaDireccionCliente(telefono: string): Promise<string | null> {
+  const [row] = await query<{ destino_direccion: string | null }>(
+    `SELECT destino_direccion FROM (
+       SELECT destino_direccion, creado_en FROM pedidos WHERE cliente_telefono = $1 AND destino_direccion IS NOT NULL
+       UNION ALL
+       SELECT destino_direccion, creado_en FROM viajes WHERE cliente_telefono = $1 AND destino_direccion IS NOT NULL
+     ) t
+     ORDER BY creado_en DESC LIMIT 1`,
+    [telefono],
+  );
+  return row?.destino_direccion ?? null;
+}
