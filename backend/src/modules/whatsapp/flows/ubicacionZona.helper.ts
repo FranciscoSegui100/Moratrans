@@ -59,7 +59,7 @@ export async function manejarFueraDeZona(
     to,
     `📍 Tu ubicación está fuera de las zonas que cubrimos hoy` +
       (distancia ? ` (a unos *${distancia.distanciaKm} km* de ${distancia.nombre}).` : '.') +
-      `\n\nAnotamos tu pedido *#${pedido.numero_pedido}* — un asesor lo va a revisar para ver si podemos coordinarlo igual.`,
+      `\n\nAnotamos tu pedido — un asesor lo va a revisar para ver si podemos coordinarlo igual.`,
   );
   await escalarAAsesor(to, sesion, `${to} pidió un contenedor fuera de zona (pedido #${pedido.numero_pedido})`);
 }
