@@ -145,7 +145,7 @@ async function manejarPago(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   await escalarAAsesor(
     to,
     sesion,
-    `${to} envió un pedido desde el catálogo.\n` +
+    `🧾 Resumen del pedido del catálogo (${to})\n` +
       `Cliente: ${cliente?.nombre ?? 'Sin nombre'}\n` +
       `Pedido: ${detalleCarrito}\n` +
       `Detalle del cliente: ${descripcion}\n` +
