@@ -113,6 +113,12 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     // llegaba al operador sin zona ni precio ni contexto para revisar.
     const pedidosPrevios = await pedidosAbiertos(to);
     if (pedidosPrevios.length === 0) {
+      // Conversación tomada por un operador (modo humano): las imágenes
+      // siguen entrando acá para no frenar un pago real (ver messageRouter,
+      // paso 3), pero si no hay nada que pagar es una foto cualquiera de la
+      // charla con el operador — el archivo ya quedó visible en
+      // Conversaciones (arriba) y el bot no tiene que meterse a contestar.
+      if (sesion.contexto?.modoHumano) return;
       await sendText(
         to,
         '🙁 Todavía no tenés ningún pedido para pagar.\n\nEscribí *Cotizar* para pedir un contenedor y después mandame el comprobante.',
