@@ -1,4 +1,5 @@
 import { query } from '../../config/db';
+import { env } from '../../config/env';
 import { sendList, sendText } from './graphApi';
 import { getSesion, clearSesion, setSesion } from './session.store';
 import { botEstaActivo } from '../../services/botConfig.service';
@@ -63,6 +64,19 @@ async function enviarMenuOtrosServicios(to: string): Promise<void> {
     OTROS_SERVICIOS,
   );
   await setSesion({ telefono: to, flujo: 'menu', paso: null, contexto: {} });
+}
+
+const IDS_CONTENEDOR_CATALOGO = env.WA_CATALOGO_IDS_CONTENEDOR.split(',').map((id) => id.trim()).filter(Boolean);
+
+/**
+ * ¿El carrito del catálogo trae únicamente contenedores? Meta manda solo el
+ * retailer_id de cada producto (sin nombre), así que se compara contra los
+ * ids configurados. Un carrito mixto no cuenta: lo que no es contenedor lo
+ * tiene que cotizar un asesor, y partir el pedido en dos confundiría más.
+ */
+function esPedidoDeContenedor(m: MensajeEntrante): boolean {
+  const items = m.orderItems ?? [];
+  return items.length > 0 && items.every((it) => IDS_CONTENEDOR_CATALOGO.includes(it.retailerId));
 }
 
 /** Mensaje normalizado, agnóstico del formato crudo de Meta. */
@@ -220,7 +234,10 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   // condiciones que el bot pueda resolver solo, así que junta primero
   // nombre, dirección, descripción y medio de pago (ver
   // pedidoCatalogo.flow.ts) antes de escalar al asesor con todo el detalle.
+  // Excepción: un pedido de contenedor sí lo resuelve el bot, así que entra
+  // directo al flujo de cotización, igual que si hubiera tocado "Cotizar".
   if (!enModoHumano && m.tipo === 'order') {
+    if (esPedidoDeContenedor(m)) return iniciarPedirContenedor(m, sesion);
     return iniciarPedidoCatalogo(m, sesion);
   }
 
