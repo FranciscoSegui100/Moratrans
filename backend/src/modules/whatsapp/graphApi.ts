@@ -222,33 +222,6 @@ export async function sendTemplate(
     .catch((e) => console.error('Error logueando mensaje del bot:', e));
 }
 
-/**
- * Consulta el nombre real de productos del catálogo a partir de sus
- * retailer_id — el pedido que manda WhatsApp (type "order") solo trae ese id
- * crudo (ej. "qfg1k3bb4p"), no el nombre, así que sin esto la alerta al
- * asesor y el historial de chat mostrarían el código interno en vez de algo
- * legible como "Contenedor 30m³". Si falla (catálogo no accesible, id no
- * encontrado, etc.) devuelve un mapa vacío y quien llama cae al retailer_id
- * como texto de respaldo.
- */
-export async function obtenerNombresProductos(
-  catalogId: string,
-  retailerIds: string[],
-): Promise<Map<string, string>> {
-  const nombres = new Map<string, string>();
-  if (!catalogId || retailerIds.length === 0) return nombres;
-  try {
-    const filter = encodeURIComponent(JSON.stringify({ retailer_id: { is_any: retailerIds } }));
-    const res = await http.get(`/${catalogId}/products?fields=retailer_id,name&filter=${filter}`);
-    for (const p of res.data?.data ?? []) {
-      if (p.retailer_id && p.name) nombres.set(p.retailer_id, p.name);
-    }
-  } catch (e) {
-    console.error('Error consultando nombres del catálogo:', motivoErrorWa(e));
-  }
-  return nombres;
-}
-
 /** Descarga un media (comprobante) por su id: 2 pasos (metadata -> binario). */
 export async function downloadMedia(mediaId: string): Promise<{ buffer: Buffer; mime: string }> {
   if (env.WA_ACCESS_TOKEN === 'mock') {

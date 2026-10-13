@@ -13,12 +13,12 @@ import type { Sesion } from '../session.store';
  * items y la cantidad, sin precio ni condiciones que el bot pueda resolver
  * solo. Antes esto escalaba directo al asesor con el detalle crudo del
  * carrito; ahora junta primero nombre, una descripción en palabras del
- * cliente (útil mientras el retailer_id del catálogo siga sin un nombre
- * legible, ver graphApi.ts::obtenerNombresProductos), dirección y medio de
- * pago preferido — así el asesor puede cotizar y cerrar sin tener que volver
- * a preguntarle nada. Orden pedido por el dueño: nombre -> descripción ->
- * dirección -> medio de pago -> asesor. Termina igual que antes, con
- * escalarAAsesor.
+ * cliente (el retailer_id del catálogo todavía no tiene un nombre legible —
+ * ver Content ID en Commerce Manager — así que esto es lo que hoy identifica
+ * el producto para el asesor), dirección y medio de pago preferido — así el
+ * asesor puede cotizar y cerrar sin tener que volver a preguntarle nada.
+ * Orden pedido por el dueño: nombre -> descripción -> dirección -> medio de
+ * pago -> asesor. Termina igual que antes, con escalarAAsesor.
  */
 function detalleCarrito(m: MensajeEntrante): string {
   return (
