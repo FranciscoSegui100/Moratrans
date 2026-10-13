@@ -51,7 +51,8 @@ export interface MensajeEntrante {
   ubicacionNombre?: string; // 'name' que WhatsApp adjunta a la ubicación, si el usuario le puso una
   ubicacionDireccion?: string; // 'address' que WhatsApp adjunta a la ubicación, si el usuario le puso una
   nombrePerfil?: string; // nombre que el cliente tiene puesto en su WhatsApp (viene gratis en cada mensaje)
-  orderItems?: { retailerId: string; cantidad: number; precio?: number }[]; // productos del carrito del catálogo
+  orderItems?: { retailerId: string; cantidad: number; precio?: number; nombre?: string }[]; // productos del carrito del catálogo
+  catalogId?: string; // catálogo de origen del pedido, para resolver nombres de producto
 }
 
 /** Extrae un MensajeEntrante del objeto `message` de la Graph API. */
@@ -88,7 +89,14 @@ export function normalizar(msg: any, nombrePerfil?: string): MensajeEntrante {
         cantidad: it.quantity,
         precio: it.item_price,
       }));
-      return { from, tipo: 'order', orderItems: items, texto: msg.order?.text?.trim(), nombrePerfil };
+      return {
+        from,
+        tipo: 'order',
+        orderItems: items,
+        catalogId: msg.order?.catalog_id,
+        texto: msg.order?.text?.trim(),
+        nombrePerfil,
+      };
     }
     default:
       return { from, tipo: 'otro', nombrePerfil };
@@ -169,7 +177,7 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   // así que se escala directo al asesor con el detalle de lo pedido.
   if (!enModoHumano && m.tipo === 'order') {
     const detalle = (m.orderItems ?? [])
-      .map((it) => `${it.cantidad}x ${it.retailerId}${it.precio != null ? ` ($${it.precio})` : ''}`)
+      .map((it) => `${it.cantidad}x ${it.nombre ?? it.retailerId}${it.precio != null ? ` ($${it.precio})` : ''}`)
       .join(', ');
     return escalarAAsesor(
       m.from,
