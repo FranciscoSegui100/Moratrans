@@ -11,10 +11,9 @@ interface MensajeChat {
   origen: 'cliente' | 'bot' | 'operador';
   texto: string;
   creado_en: string;
-  // Solo en las burbujas de comprobante que el backend intercala en el hilo
-  // (ver GET /api/chat/:telefono): a qué pago/adjunto corresponde el archivo.
-  pago_id?: string | null;
-  adjunto_id?: string | null;
+  // El cliente mandó una imagen/PDF en este mensaje y quedó guardada (ver
+  // GET /api/chat/mensaje/:id/adjunto).
+  tiene_adjunto?: boolean;
 }
 
 const origenLabel: Record<MensajeChat['origen'], string> = {
@@ -126,7 +125,7 @@ export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ven
                 <div key={m.id} className={`chat-burbuja chat-burbuja-${m.origen}`}>
                   <div className="chat-burbuja-autor">{origenLabel[m.origen]}</div>
                   <div className="chat-burbuja-texto">{cuerpo}</div>
-                  {m.pago_id && <ComprobanteViewer pagoId={m.pago_id} adjuntoId={m.adjunto_id ?? undefined} />}
+                  {m.tiene_adjunto && <ComprobanteViewer mensajeId={m.id} />}
                   {opciones && (
                     <div className="chat-opciones">
                       {opciones.map((op) => (

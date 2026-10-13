@@ -22,7 +22,7 @@ export const pagosRouter = Router();
 pagosRouter.use(requireAuth);
 
 /** Content-Type a partir de la extensión guardada — comprobantes/facturas solo son imagen o PDF. */
-function mimeDeExtension(ext: string): string {
+export function mimeDeExtension(ext: string): string {
   const e = ext.toLowerCase();
   if (e === '.pdf') return 'application/pdf';
   if (e === '.png') return 'image/png';
