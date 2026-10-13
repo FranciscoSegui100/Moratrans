@@ -41,7 +41,7 @@ async function enviarMenuGestionar(to: string): Promise<void> {
 /** Mensaje normalizado, agnóstico del formato crudo de Meta. */
 export interface MensajeEntrante {
   from: string; // teléfono E.164 sin '+'
-  tipo: 'text' | 'interactive_list' | 'interactive_button' | 'image' | 'document' | 'location' | 'otro';
+  tipo: 'text' | 'interactive_list' | 'interactive_button' | 'image' | 'document' | 'location' | 'order' | 'otro';
   texto?: string; // texto o título del botón/lista
   seleccionId?: string; // id de la opción elegida en list/button
   mediaId?: string; // id del media (comprobante)
@@ -51,6 +51,7 @@ export interface MensajeEntrante {
   ubicacionNombre?: string; // 'name' que WhatsApp adjunta a la ubicación, si el usuario le puso una
   ubicacionDireccion?: string; // 'address' que WhatsApp adjunta a la ubicación, si el usuario le puso una
   nombrePerfil?: string; // nombre que el cliente tiene puesto en su WhatsApp (viene gratis en cada mensaje)
+  orderItems?: { retailerId: string; cantidad: number; precio?: number }[]; // productos del carrito del catálogo
 }
 
 /** Extrae un MensajeEntrante del objeto `message` de la Graph API. */
@@ -81,6 +82,14 @@ export function normalizar(msg: any, nombrePerfil?: string): MensajeEntrante {
         ubicacionDireccion: msg.location?.address,
         nombrePerfil,
       };
+    case 'order': {
+      const items = (msg.order?.product_items ?? []).map((it: any) => ({
+        retailerId: it.product_retailer_id,
+        cantidad: it.quantity,
+        precio: it.item_price,
+      }));
+      return { from, tipo: 'order', orderItems: items, texto: msg.order?.text?.trim(), nombrePerfil };
+    }
     default:
       return { from, tipo: 'otro', nombrePerfil };
   }
@@ -153,6 +162,20 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   // asesor, así que se escala directo al primer toque.
   if (!enModoHumano && m.seleccionId === 'opt_otros_servicios') {
     return escalarAAsesor(m.from, sesion, `${m.from} consultó por "Otros servicios" (fuera del alquiler de contenedores)`);
+  }
+
+  // Pedido armado en el catálogo de WhatsApp (carrito): no hay precio ni
+  // condiciones que el bot pueda resolver solo (igual que "Otros servicios"),
+  // así que se escala directo al asesor con el detalle de lo pedido.
+  if (!enModoHumano && m.tipo === 'order') {
+    const detalle = (m.orderItems ?? [])
+      .map((it) => `${it.cantidad}x ${it.retailerId}${it.precio != null ? ` ($${it.precio})` : ''}`)
+      .join(', ');
+    return escalarAAsesor(
+      m.from,
+      sesion,
+      `${m.from} envió un pedido desde el catálogo: ${detalle || '(sin detalle)'}`,
+    );
   }
 
   if (!enModoHumano && m.tipo !== 'image' && m.tipo !== 'document' && pideAsesor(m)) {

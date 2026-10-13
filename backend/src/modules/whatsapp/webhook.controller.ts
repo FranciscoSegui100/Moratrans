@@ -100,7 +100,13 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
                 ? '📎 Documento'
                 : normalizado.tipo === 'location'
                   ? `📍 Ubicación compartida (${normalizado.lat}, ${normalizado.lng})`
-                  : '(mensaje)');
+                  : normalizado.tipo === 'order'
+                    ? `🛒 Pedido del catálogo: ${
+                        (normalizado.orderItems ?? [])
+                          .map((it) => `${it.cantidad}x ${it.retailerId}`)
+                          .join(', ') || '(sin detalle)'
+                      }`
+                    : '(mensaje)');
           await logMensaje(normalizado.from, 'cliente', textoLog).catch((e) => console.error('Error logueando mensaje:', e));
           await enrutar(normalizado).catch((e) => console.error('Error enrutando:', motivoErrorWa(e)));
         }
