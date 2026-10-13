@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowUp, ArrowDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { AlertTriangle, ArrowUp, ArrowDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown, ExternalLink } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -818,8 +819,19 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
 export function Rutas() {
   const queryClient = useQueryClient();
   const { show } = useToast();
-  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
+  const [searchParams, setSearchParams] = useSearchParams();
+  const paramFecha = searchParams.get('fecha');
+  const paramNuevo = searchParams.get('nuevo');
+
+  const [fecha, setFecha] = useState(() => paramFecha || new Date().toISOString().slice(0, 10));
   const [rutaSeleccionada, setRutaSeleccionada] = useState<string | null>(null);
+
+  // Sincronizar fecha si cambia en la URL
+  useEffect(() => {
+    if (paramFecha && paramFecha !== fecha) {
+      setFecha(paramFecha);
+    }
+  }, [paramFecha]);
   // Drag & drop de la bolsa a las rutas: `dragVisita` es la tarjeta que se
   // está arrastrando; `dropChofer` la tarjeta de chofer sobre la que está
   // parada ahora (para el resaltado), y `dropDetalle` lo mismo para el panel
@@ -834,9 +846,15 @@ export function Rutas() {
   const [pedidoDetalle, setPedidoDetalle] = useState<VisitaPendiente | null>(null);
 
   // Form "Programar nuevo viaje" (antes vivía en Viajes.tsx).
-  const [formViaje, setFormViaje] = useState(formViajeInicial);
-  const [mostrarFormViaje, setMostrarFormViaje] = useState(false);
+  const [formViaje, setFormViaje] = useState(() => ({ ...formViajeInicial, fecha: paramFecha || new Date().toISOString().slice(0, 10) }));
+  const [mostrarFormViaje, setMostrarFormViaje] = useState(() => paramNuevo === '1');
   const [creandoViaje, setCreandoViaje] = useState(false);
+
+  useEffect(() => {
+    if (paramNuevo === '1') {
+      setMostrarFormViaje(true);
+    }
+  }, [paramNuevo]);
 
   const { data: choferes = [] } = useQuery({
     queryKey: ['choferes', 'activos'],
@@ -1171,7 +1189,22 @@ export function Rutas() {
           <h2>Rutas</h2>
           <p>Planificá el recorrido de cada chofer.</p>
         </div>
-        <div className="date-pick">Día: <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div className="date-pick">
+            Día: <input type="date" value={fecha} onChange={(e) => {
+              setFecha(e.target.value);
+              setFormViaje((fv) => ({ ...fv, fecha: e.target.value }));
+            }} />
+          </div>
+          <Link
+            to={`/viajes?fecha=${fecha}`}
+            className="btn btn-ghost btn-sm"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+            title="Ver los viajes de este día en la tabla de Viajes"
+          >
+            <ExternalLink size={13} strokeWidth={2} /> Ver en Viajes
+          </Link>
+        </div>
       </div>
 
       <RoleGate roles={['admin', 'operador']}>

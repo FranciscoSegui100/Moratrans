@@ -1,4 +1,5 @@
-import { X, AlertTriangle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { X, AlertTriangle, ExternalLink } from 'lucide-react';
 import { DireccionMaps } from './DireccionMaps';
 import { formatearFecha } from '../lib/fechas';
 
@@ -84,7 +85,17 @@ export function PedidoDetalleModal({
             <span className={`tag ${tipoClase}`}>{tipoLabel}</span>
             <span>Pedido · {formatearFecha(visita.fecha)}</span>
           </div>
-          <button className="modal-close" onClick={onClose}><X size={18} strokeWidth={2} /></button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Link
+              to={`/viajes?fecha=${visita.fecha}`}
+              className="btn btn-ghost btn-sm"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }}
+              title="Abrir este pedido en el listado de Viajes"
+            >
+              <ExternalLink size={13} strokeWidth={2} /> Ver en Viajes
+            </Link>
+            <button className="modal-close" onClick={onClose}><X size={18} strokeWidth={2} /></button>
+          </div>
         </div>
 
         <div className="pd-grid">

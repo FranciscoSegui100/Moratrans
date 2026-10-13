@@ -195,7 +195,9 @@ export function Layout({ children }: { children: ReactNode }) {
         queryClient.invalidateQueries({ queryKey: ['finanzas'] });
         queryClient.invalidateQueries({ queryKey: ['clientes'] });
       }
-      if (recurso === 'chat') queryClient.invalidateQueries({ queryKey: ['conversaciones'] });
+      // Si cambian rutas o viajes, invalidar ambos para mantenerlos sincronizados
+      if (recurso === 'rutas') queryClient.invalidateQueries({ queryKey: ['viajes'] });
+      if (recurso === 'viajes') queryClient.invalidateQueries({ queryKey: ['rutas'] });
     };
     socket.on('recurso_actualizado', onRecursoActualizado);
     return () => { socket.off('recurso_actualizado', onRecursoActualizado); };

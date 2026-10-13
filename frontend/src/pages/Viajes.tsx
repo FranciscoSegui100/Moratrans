@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X } from 'lucide-react';
+import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X, Plus, MapPin } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -46,6 +47,10 @@ interface Viaje {
   destino_final_direccion: string | null;
   es_cuenta_corriente: boolean;
   pago_id: string | null;
+  ruta_id: string | null;
+  orden: number | null;
+  ruta_confirmada_en: string | null;
+  completada_en: string | null;
   comprobantes: Comprobante[];
 }
 interface Contenedor { numero: string; estado: string; vence_en: string | null; }
@@ -75,17 +80,27 @@ const PRESETS: { id: PresetRango; label: string }[] = [
 export function Viajes() {
   const { show } = useToast();
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const fechaUrl = searchParams.get('fecha');
 
   const [asignando, setAsignando] = useState<string | null>(null);
   const [asignarForm, setAsignarForm] = useState({ contenedor_numero: '', chofer_id: '' });
   const [pestana, setPestana] = useState<PestanaViajes>('activos');
   const [viajeComprobantes, setViajeComprobantes] = useState<Viaje | null>(null);
 
-  const [preset, setPreset] = useState<PresetRango>('semana');
-  const [customDesde, setCustomDesde] = useState(() => hoyISO());
-  const [customHasta, setCustomHasta] = useState(() => sumarDias(hoyISO(), 6));
+  const [preset, setPreset] = useState<PresetRango>(() => (fechaUrl ? 'custom' : 'semana'));
+  const [customDesde, setCustomDesde] = useState(() => fechaUrl || hoyISO());
+  const [customHasta, setCustomHasta] = useState(() => fechaUrl || sumarDias(hoyISO(), 6));
   const [filtroZona, setFiltroZona] = useState('');
   const [filtroTipo, setFiltroTipo] = useState<'' | 'entrega' | 'retiro' | 'recambio'>('');
+
+  useEffect(() => {
+    if (fechaUrl) {
+      setPreset('custom');
+      setCustomDesde(fechaUrl);
+      setCustomHasta(fechaUrl);
+    }
+  }, [fechaUrl]);
 
   const { data: viajes = [] } = useQuery({
     queryKey: ['viajes'],
@@ -184,8 +199,29 @@ export function Viajes() {
   return (
     <div>
       <div className="page-header">
-        <h2>Viajes</h2>
-        <p>Gestión operativa de entregas, retiros e historial de viajes</p>
+        <div>
+          <h2>Viajes</h2>
+          <p>Gestión operativa de entregas, retiros e historial de viajes</p>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <RoleGate roles={['admin', 'operador']}>
+            <Link
+              to="/rutas?nuevo=1"
+              className="btn btn-primary btn-sm"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            >
+              <Plus size={14} strokeWidth={2} /> Programar viaje
+            </Link>
+          </RoleGate>
+          <Link
+            to={`/rutas?fecha=${customDesde}`}
+            className="btn btn-ghost btn-sm"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            title="Ir a planificar rutas para esta fecha"
+          >
+            <MapPin size={14} strokeWidth={2} /> Ver en Rutas
+          </Link>
+        </div>
       </div>
 
       {/* Barra de filtros */}
@@ -259,6 +295,7 @@ export function Viajes() {
               <th>Patente</th>
               <th>Nº remito</th>
               <th>Importe</th>
+              <th>Ruta</th>
               <th>Comprobantes</th>
             </tr>
           </thead>
@@ -383,6 +420,29 @@ export function Viajes() {
                   </RoleGate>
                 </td>
                 <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  {v.ruta_id ? (
+                    <Link
+                      to={`/rutas?fecha=${v.fecha}`}
+                      className="badge en_curso"
+                      style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      title="Ver en el armado de rutas"
+                    >
+                      <MapPin size={11} strokeWidth={2} />
+                      {v.completada_en ? '✓ En ruta' : v.ruta_confirmada_en ? 'Confirmada' : 'Planificada'}
+                      {v.orden != null ? ` #${v.orden}` : ''}
+                    </Link>
+                  ) : (
+                    <Link
+                      to={`/rutas?fecha=${v.fecha}`}
+                      className="badge vacia"
+                      style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      title="Pedido sin rutear todavía. Ir a asignarlo a un chofer"
+                    >
+                      Bolsa (sin rutear)
+                    </Link>
+                  )}
+                </td>
                 <td>
                   {(() => {
                     const inicial = v.comprobantes.find((c) => c.tipo !== 'alargue_retiro');
@@ -417,7 +477,7 @@ export function Viajes() {
             ))}
             {viajesAMostrar.length === 0 && (
               <tr>
-                <td colSpan={13} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={14} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   {pestana === 'activos' ? 'No hay viajes activos o programados en el rango' : 'No hay viajes en el historial para el rango'}
                 </td>
               </tr>
