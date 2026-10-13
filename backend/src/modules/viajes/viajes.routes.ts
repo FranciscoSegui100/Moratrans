@@ -15,6 +15,12 @@ import { formatearTelefonoLegible } from '../../services/telefono.service';
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
 
+function fail(msg: string, status = 409): never {
+  const err: any = new Error(msg);
+  err.status = status;
+  throw err;
+}
+
 /**
  * GET /api/viajes?fecha=YYYY-MM-DD&estado=programado&chofer_id=&ruta_id=
  * `ruta_id=null` (el literal, no el valor JS) filtra los viajes SIN rutear
@@ -576,14 +582,37 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
     // el bot puede volver a ofrecérselo a otro cliente (o el pago validarlo
     // solo) mientras "ya estaba asignado" en el panel.
     const row = await withTx(async (c) => {
+      const { rows: viajeRows } = await c.query<{
+        tipo: string; fecha: string; ruta_id: string | null; orden: number | null;
+        completada_en: string | null; ruta_confirmada_en: string | null; estado: string;
+      }>(
+        'SELECT tipo, fecha, ruta_id, orden, completada_en, ruta_confirmada_en, estado FROM viajes WHERE id = $1 FOR UPDATE',
+        [req.params.id],
+      );
+      if (!viajeRows[0]) return null;
+      const viajeActual = viajeRows[0];
+
+      // Si se intenta cancelar un viaje que ya está terminado o en camino:
+      if (parsed.data.estado === 'cancelado') {
+        if (viajeActual.completada_en != null) {
+          return fail('No se puede cancelar: el chofer ya completó esta parada.', 409);
+        }
+        if (viajeActual.ruta_id != null && viajeActual.orden != null && viajeActual.ruta_confirmada_en != null) {
+          const { rows: anterioresPendientes } = await c.query<{ id: string }>(
+            `SELECT id FROM viajes
+              WHERE ruta_id = $1 AND orden < $2 AND completada_en IS NULL
+              LIMIT 1`,
+            [viajeActual.ruta_id, viajeActual.orden],
+          );
+          if (anterioresPendientes.length === 0) {
+            return fail('No se puede cancelar: el chofer ya está yendo a entregar o retirar este pedido.', 409);
+          }
+        }
+      }
+
       if ('contenedor_numero' in parsed.data && parsed.data.contenedor_numero) {
-        const { rows: viajeRows } = await c.query<{ tipo: string; fecha: string }>(
-          'SELECT tipo, fecha FROM viajes WHERE id = $1 FOR UPDATE',
-          [req.params.id],
-        );
-        if (!viajeRows[0]) return null;
-        if (viajeRows[0].tipo === 'entrega') {
-          await reservarParaEntrega(c, parsed.data.contenedor_numero, viajeRows[0].fecha, `operador:${req.user!.id}`, {
+        if (viajeActual.tipo === 'entrega') {
+          await reservarParaEntrega(c, parsed.data.contenedor_numero, viajeActual.fecha, `operador:${req.user!.id}`, {
             excluirViajeId: req.params.id,
           });
         }
@@ -646,7 +675,9 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
       });
     }
   } catch (error: any) {
-    if (error.code === '23503') { // Foreign key violation
+    if (error.status) {
+      res.status(error.status).json({ error: error.message });
+    } else if (error.code === '23503') { // Foreign key violation
       res.status(400).json({ error: 'El chofer especificado no existe.' });
     } else {
       console.error('Error al actualizar viaje:', error);

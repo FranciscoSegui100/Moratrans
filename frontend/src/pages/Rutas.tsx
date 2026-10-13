@@ -278,9 +278,21 @@ function agruparVisitas(paradas: Parada[]): Visita[] {
   return [...porOrden.values()].sort((a, b) => a.orden - b.orden);
 }
 
-/** Una visita que el chofer ya marcó como hecha: intocable (no se reordena, quita, mueve ni se le cambia el contenedor). */
+/** Una visita que el chofer ya marcó como hecha. */
 function visitaFinalizada(v: Visita): boolean {
   return !!(v.entrega?.completada_en || v.retiro?.completada_en);
+}
+
+/**
+ * La parada siguiente activa en ruta (a la que el chofer está yendo ahora mismo):
+ * es la primera no finalizada de una ruta que ya tiene paradas confirmadas.
+ */
+function esVisitaEnCurso(v: Visita, visitas: Visita[]): boolean {
+  if (visitaFinalizada(v)) return false;
+  const tieneConfirmada = (v.entrega?.ruta_confirmada_en != null) || (v.retiro?.ruta_confirmada_en != null);
+  if (!tieneConfirmada) return false;
+  const primeraPendiente = visitas.find((item) => !visitaFinalizada(item));
+  return primeraPendiente?.id === v.id;
 }
 
 function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado, onInsertarPedido }: {
@@ -471,10 +483,11 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   /** Saca la parada `from` y la reinserta en la posición `to` (drag & drop y flechas ↑/↓ pasan por acá). */
   function moverA(from: number, to: number) {
     if (from === to || reordenando) return;
-    // Una parada finalizada no se mueve, y tampoco se puede meter otra en su
+    // Una parada finalizada o en curso no se mueve, y tampoco se puede meter otra en su
     // lugar (el backend lo rechaza igual; esto evita el ida y vuelta).
-    if (visitaFinalizada(visitas[from]) || visitaFinalizada(visitas[to])) {
-      show('error', 'No se puede reordenar', 'Hay una parada que el chofer ya terminó.');
+    if (visitaFinalizada(visitas[from]) || visitaFinalizada(visitas[to]) ||
+        esVisitaEnCurso(visitas[from], visitas) || esVisitaEnCurso(visitas[to], visitas)) {
+      show('error', 'No se puede reordenar', 'La parada en curso o completada no se puede modificar.');
       return;
     }
     const nuevo = [...visitas];
@@ -593,18 +606,20 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
               const necesitaContenedor = !!v.entrega;
               const sinAsignar = necesitaContenedor && !v.entrega!.contenedor_numero;
               const invalido = necesitaContenedor && !!v.entrega!.contenedor_numero && !disponibles.includes(v.entrega!.contenedor_numero!);
-              // Parada ya terminada por el chofer: intocable (sin grip, sin
+              // Parada ya terminada por el chofer o en curso (chofer yendo ahora): intocable (sin grip, sin
               // flechas, sin "mover a", sin quitar, contenedor de solo lectura).
               const finalizada = visitaFinalizada(v);
+              const enCurso = esVisitaEnCurso(v, visitas);
+              const bloqueada = finalizada || enCurso;
               return (
                 <div
                   key={`${v.tipoParada}-${v.id}`}
-                  className={`stop${finalizada ? ' finalizada' : ''}${dragIdx === idx ? ' dragging' : ''}${overIdx === idx && dragIdx !== null && dragIdx !== idx ? ' drop-target' : ''}${insertIdx === idx ? ' insert-antes' : ''}`}
+                  className={`stop${finalizada ? ' finalizada' : ''}${enCurso ? ' en-curso-bloqueada' : ''}${dragIdx === idx ? ' dragging' : ''}${overIdx === idx && dragIdx !== null && dragIdx !== idx ? ' drop-target' : ''}${insertIdx === idx ? ' insert-antes' : ''}`}
                   onDragOver={(e) => {
                     if (dragIdx !== null) {
                       e.preventDefault();
                       if (overIdx !== idx) setOverIdx(idx);
-                    } else if (pedidoArrastrado && !finalizada) {
+                    } else if (pedidoArrastrado && !bloqueada) {
                       // Soltar un pedido de la bolsa acá lo inserta ANTES de esta parada.
                       e.preventDefault();
                       e.stopPropagation();
@@ -622,7 +637,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                       moverA(dragIdx, idx);
                       setDragIdx(null);
                       setOverIdx(null);
-                    } else if (pedidoArrastrado && !finalizada) {
+                    } else if (pedidoArrastrado && !bloqueada) {
                       e.preventDefault();
                       e.stopPropagation();
                       onInsertarPedido(v.orden);
@@ -630,7 +645,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                     }
                   }}
                 >
-                  {!finalizada && (
+                  {!bloqueada && (
                     <span
                       className="stop-grip"
                       draggable={!reordenando}
@@ -653,6 +668,11 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                   <div className="stop-body">
                     {finalizada && (
                       <div className="stop-sub" style={{ color: 'var(--success)', fontWeight: 700 }}>✓ Finalizada por el chofer</div>
+                    )}
+                    {enCurso && (
+                      <div className="stop-sub" style={{ color: 'var(--accent)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        🚚 En camino (chofer realizando esta parada)
+                      </div>
                     )}
                     {v.vaciado && (
                       <>
@@ -681,7 +701,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                         )}
                         <div className="sel-row">
                           <label>Vacío a dejar:</label>
-                          {!finalizada ? (
+                          {!bloqueada ? (
                             <select
                               className={`form-select${(sinAsignar || invalido) ? ' err' : ''}`}
                               value={v.entrega.contenedor_numero ?? ''}
@@ -709,7 +729,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                         {v.entrega.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.entrega.horario_preferido}</div>}
                         <div className="sel-row">
                           <label>Contenedor:</label>
-                          {!finalizada ? (
+                          {!bloqueada ? (
                             <select
                               className={`form-select${(sinAsignar || invalido) ? ' err' : ''}`}
                               value={v.entrega.contenedor_numero ?? ''}
@@ -741,11 +761,11 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                   </div>
 
                   <div className="arrows">
-                    <button disabled={idx === 0 || finalizada || reordenando} onClick={() => mover(idx, -1)} title="Subir orden"><ArrowUp size={12} strokeWidth={2} /></button>
-                    <button disabled={idx === visitas.length - 1 || finalizada || reordenando} onClick={() => mover(idx, 1)} title="Bajar orden"><ArrowDown size={12} strokeWidth={2} /></button>
+                    <button disabled={idx === 0 || bloqueada || reordenando} onClick={() => mover(idx, -1)} title="Subir orden"><ArrowUp size={12} strokeWidth={2} /></button>
+                    <button disabled={idx === visitas.length - 1 || bloqueada || reordenando} onClick={() => mover(idx, 1)} title="Bajar orden"><ArrowDown size={12} strokeWidth={2} /></button>
                   </div>
 
-                  {!finalizada && (
+                  {!bloqueada && (
                     <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginLeft: '6px' }}>
                       <select
                         className="form-select"
