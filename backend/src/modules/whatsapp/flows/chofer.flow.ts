@@ -1,5 +1,5 @@
 import { query } from '../../../config/db';
-import { sendText, sendList } from '../graphApi';
+import { sendText, sendList, sendButtons } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 
@@ -68,6 +68,21 @@ if (chofer.length === 0) {
   }
   if (esSeleccion && m.seleccionId?.startsWith('recgrupo:')) {
     return elegirVacioRecambio(to, chofer[0].id, m.seleccionId.replace('recgrupo:', ''));
+  }
+  if (esSeleccion && m.seleccionId?.startsWith('cobro_efectivo:')) {
+    const [, accion, pagoId] = m.seleccionId.split(':');
+    if (accion === 'si' && pagoId) {
+      await query(
+        `UPDATE pagos SET efectivo_cobrado = TRUE WHERE id = $1 AND medio_pago = 'efectivo'`,
+        [pagoId],
+      );
+      emitRecursoActualizado('pagos');
+      await sendText(to, `💵 ¡Excelente! Registrado como cobrado en el sistema. Muchas gracias, ${chofer[0].nombre}. 👍`);
+    } else {
+      await sendText(to, `⚠️ Entendido. El viaje quedó marcado como NO cobrado en el sistema para que lo revise administración.`);
+    }
+    await clearSesion(to);
+    return menuChofer(to, chofer[0].nombre);
   }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recvacio:') && sesion.paso === 'elegir_vacio_recambio') {
     return aplicarVacioRecambio(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('recvacio:', ''), sesion);
@@ -372,6 +387,31 @@ async function aplicarVacioRecambio(
       to,
       `✅ Recambio registrado. Contenedor *${numero}* entregado${mensajeLleno}. ${mensajeLleno ? 'Avisame por acá cuando vacíes el lleno (opción 🗑️ del menú). ' : ''}Gracias por tu trabajo. 🙌`,
     );
+
+    // Verificar si el recambio tiene pago en efectivo pendiente
+    const [pagoEfectivo] = await query<{ pago_id: string; monto: string | null }>(
+      `SELECT p.id AS pago_id, COALESCE(p.monto, pe.precio)::text AS monto
+         FROM viajes v
+         JOIN pagos p ON p.id = v.pago_id
+         LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+        WHERE v.id = $1
+          AND p.medio_pago = 'efectivo'
+          AND p.efectivo_cobrado = FALSE`,
+      [entregaId],
+    );
+
+    if (pagoEfectivo) {
+      const montoTxt = pagoEfectivo.monto ? ` por *$${Number(pagoEfectivo.monto).toLocaleString('es-AR')}*` : '';
+      await sendButtons(
+        to,
+        `💵 *Cobro en efectivo*\n\n¿Cobraste el pago en efectivo${montoTxt} al cliente?`,
+        [
+          { id: `cobro_efectivo:si:${pagoEfectivo.pago_id}`, title: '✅ Sí, ya cobré' },
+          { id: `cobro_efectivo:no:${pagoEfectivo.pago_id}`, title: '❌ No cobré' },
+        ],
+      );
+    }
+
     // Después de la confirmación: avisar la parada siguiente de la ruta (trae su
     // propio menú, así que no se manda el menú suelto para no duplicarlo).
     const siguienteEntrega = await avisarSiguienteParadaRuta(entregaId).catch((e) => {
@@ -615,20 +655,28 @@ async function aplicarEstado(
     await clearSesion(to);
     await sendText(to, `✅ Registrado. Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
 
-    // Notificación y encuesta al cliente post-entrega
-    if (entregaAsignada) {
-      query<{ cliente_telefono: string | null }>(
-        'SELECT cliente_telefono FROM viajes WHERE id = $1',
-        [entregaAsignada.id],
-      ).then(([v]) => {
-        if (v?.cliente_telefono) {
-          notificarClienteServicioFinalizado({
-            clienteTelefono: v.cliente_telefono,
-            tipo: 'entrega',
-            contenedorNumero: numero,
-          }).catch((e) => console.error('Error enviando encuesta al cliente:', e));
-        }
-      }).catch((e) => console.error('Error buscando cliente para encuesta:', e));
+    // Verificar si el viaje tiene pago en efectivo pendiente de cobrar
+    const [pagoEfectivo] = await query<{ pago_id: string; monto: string | null }>(
+      `SELECT p.id AS pago_id, COALESCE(p.monto, pe.precio)::text AS monto
+         FROM viajes v
+         JOIN pagos p ON p.id = v.pago_id
+         LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+        WHERE v.id = $1
+          AND p.medio_pago = 'efectivo'
+          AND p.efectivo_cobrado = FALSE`,
+      [entregaAsignada.id],
+    );
+
+    if (pagoEfectivo) {
+      const montoTxt = pagoEfectivo.monto ? ` por *$${Number(pagoEfectivo.monto).toLocaleString('es-AR')}*` : '';
+      await sendButtons(
+        to,
+        `💵 *Cobro en efectivo*\n\n¿Cobraste el pago en efectivo${montoTxt} al cliente?`,
+        [
+          { id: `cobro_efectivo:si:${pagoEfectivo.pago_id}`, title: '✅ Sí, ya cobré' },
+          { id: `cobro_efectivo:no:${pagoEfectivo.pago_id}`, title: '❌ No cobré' },
+        ],
+      );
     }
 
     // Después de la confirmación: si hay una parada siguiente en la ruta se la
