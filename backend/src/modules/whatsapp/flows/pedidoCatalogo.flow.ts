@@ -141,15 +141,18 @@ async function manejarPago(m: MensajeEntrante, sesion: Sesion): Promise<void> {
     descripcion: string;
   };
   const [cliente] = await query<{ nombre: string }>('SELECT nombre FROM clientes WHERE telefono = $1', [to]);
+  const resumen =
+    `🧾 *Resumen de tu pedido*\n` +
+    `Cliente: ${cliente?.nombre ?? 'Sin nombre'}\n` +
+    `Pedido: ${detalleCarrito}\n` +
+    `Detalle: ${descripcion}\n` +
+    `Dirección: ${direccion}\n` +
+    `Medio de pago: ${medioPago}`;
 
-  await escalarAAsesor(
-    to,
-    sesion,
-    `🧾 Resumen del pedido del catálogo (${to})\n` +
-      `Cliente: ${cliente?.nombre ?? 'Sin nombre'}\n` +
-      `Pedido: ${detalleCarrito}\n` +
-      `Detalle del cliente: ${descripcion}\n` +
-      `Dirección: ${direccion}\n` +
-      `Medio de pago preferido: ${medioPago}`,
-  );
+  // Se manda como mensaje normal (sendText ya lo deja logueado en
+  // mensajes_chat) para que quede visible en el hilo de Conversaciones
+  // cuando el asesor abra la charla — el motivo de la alerta solo no
+  // alcanzaba, el operador trabaja desde el chat, no desde Alertas.
+  await sendText(to, resumen);
+  await escalarAAsesor(to, sesion, `${to} envió un pedido desde el catálogo — resumen completo en la conversación`);
 }
