@@ -92,8 +92,12 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
           // a cada mensaje (contacts[].profile.name) — no hace falta pedírselo.
           const nombrePerfil = contacts.find((c: any) => c.wa_id === msg.from)?.profile?.name;
           const normalizado = normalizar(msg, nombrePerfil);
+          // "|| " y no "?? " a propósito: un pedido de catálogo sin nota del
+          // cliente llega con order.text = "" (string vacío, no ausente), y
+          // "??" solo cae al texto de respaldo si el valor es null/undefined
+          // — con "" se quedaba con el string vacío y no mostraba el pedido.
           const textoLog =
-            normalizado.texto ??
+            normalizado.texto ||
             (normalizado.tipo === 'image'
               ? '📎 Imagen'
               : normalizado.tipo === 'document'
