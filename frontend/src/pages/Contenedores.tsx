@@ -165,11 +165,34 @@ export function Contenedores() {
     }
   }
 
+  const [busqueda, setBusqueda] = useState('');
+  const [filtroEstado, setFiltroEstado] = useState('todos');
+
+  const contenedoresFiltrados = contenedores.filter((c) => {
+    if (filtroEstado !== 'todos' && c.estado_contrato !== filtroEstado && c.estado !== filtroEstado) {
+      if (filtroEstado === 'proximos_vencer') {
+        if (!c.vence_en) return false;
+        const diffMs = new Date(c.vence_en).getTime() - Date.now();
+        return diffMs > 0 && diffMs <= 48 * 3600 * 1000;
+      }
+      return false;
+    }
+    if (!busqueda) return true;
+    const q = busqueda.toLowerCase();
+    return (
+      c.numero.toLowerCase().includes(q) ||
+      (c.cliente_nombre && c.cliente_nombre.toLowerCase().includes(q)) ||
+      (c.cliente_telefono && c.cliente_telefono.includes(q)) ||
+      (c.destino_direccion && c.destino_direccion.toLowerCase().includes(q)) ||
+      (c.chofer_asignado && c.chofer_asignado.toLowerCase().includes(q))
+    );
+  });
+
   return (
     <div>
       <div className="page-header">
         <h2>Contenedores</h2>
-        <p>Alta y seguimiento del inventario de contenedores</p>
+        <p>Alta, filtros y seguimiento del inventario de contenedores</p>
       </div>
 
       <RoleGate roles={['admin', 'operador']}>
@@ -208,6 +231,39 @@ export function Contenedores() {
         </div>
       </RoleGate>
 
+      {/* Barra de filtros rápidos de inventario */}
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '14px' }}>
+        <input
+          type="text"
+          className="form-input"
+          style={{ width: '260px' }}
+          placeholder="🔍 Buscar por número, cliente, dir..."
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+        />
+        <div className="btn-group">
+          {[
+            { id: 'todos', label: 'Todos' },
+            { id: 'disponible', label: 'Disponibles' },
+            { id: 'alquilado', label: 'Alquilados' },
+            { id: 'proximos_vencer', label: '⏳ Vencen en 48h' },
+            { id: 'vencido', label: '⚠️ Vencidos' },
+            { id: 'mantenimiento', label: 'Mantenimiento' },
+          ].map((f) => (
+            <button
+              key={f.id}
+              className={`btn btn-sm ${filtroEstado === f.id ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setFiltroEstado(f.id)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <span className="text-muted" style={{ fontSize: '0.82rem', marginLeft: 'auto' }}>
+          Mostrando {contenedoresFiltrados.length} de {contenedores.length} contenedores
+        </span>
+      </div>
+
       <div className="table-wrapper">
         <table className="data-table">
           <thead>
@@ -222,7 +278,7 @@ export function Contenedores() {
             </tr>
           </thead>
           <tbody>
-            {contenedores.map((c) => (
+            {contenedoresFiltrados.map((c) => (
               <tr key={c.numero} onClick={() => { setHistorialNumero(c.numero); setEditandoNumero(false); }} style={{ cursor: 'pointer' }}>
                 <td className="mono" style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
                   {c.numero}

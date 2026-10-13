@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X, Plus, MapPin } from 'lucide-react';
+import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X, Plus, MapPin, Printer, FileText } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -87,6 +87,7 @@ export function Viajes() {
   const [asignarForm, setAsignarForm] = useState({ contenedor_numero: '', chofer_id: '' });
   const [pestana, setPestana] = useState<PestanaViajes>('activos');
   const [viajeComprobantes, setViajeComprobantes] = useState<Viaje | null>(null);
+  const [remitoImprimir, setRemitoImprimir] = useState<Viaje | null>(null);
 
   const [preset, setPreset] = useState<PresetRango>(() => (fechaUrl ? 'custom' : 'semana'));
   const [customDesde, setCustomDesde] = useState(() => fechaUrl || hoyISO());
@@ -397,27 +398,38 @@ export function Viajes() {
                 </td>
                 <td className="mono">{v.patente ?? <span className="text-muted">—</span>}</td>
                 <td className="mono">
-                  <RoleGate roles={['admin', 'operador']}>
-                    <input
-                      type="text"
-                      className="form-input mono"
-                      style={{ padding: '4px 8px', fontSize: '0.8rem', width: '105px' }}
-                      placeholder="Nº remito"
-                      defaultValue={v.remito ?? ''}
-                      key={`${v.id}-${v.remito}`}
-                      onBlur={(e) => {
-                        if (e.target.value !== (v.remito ?? '')) {
-                          cambiarRemito(v.id, e.target.value);
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                      }}
-                    />
-                  </RoleGate>
-                  <RoleGate roles={['finanzas', 'lectura']}>
-                    {v.remito ?? <span className="text-muted">—</span>}
-                  </RoleGate>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <RoleGate roles={['admin', 'operador']}>
+                      <input
+                        type="text"
+                        className="form-input mono"
+                        style={{ padding: '4px 8px', fontSize: '0.8rem', width: '90px' }}
+                        placeholder="Nº remito"
+                        defaultValue={v.remito ?? ''}
+                        key={`${v.id}-${v.remito}`}
+                        onBlur={(e) => {
+                          if (e.target.value !== (v.remito ?? '')) {
+                            cambiarRemito(v.id, e.target.value);
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                        }}
+                      />
+                    </RoleGate>
+                    <RoleGate roles={['finanzas', 'lectura']}>
+                      {v.remito ?? <span className="text-muted">—</span>}
+                    </RoleGate>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      style={{ padding: '4px', minWidth: 'auto' }}
+                      title="Imprimir remito oficial"
+                      onClick={() => setRemitoImprimir(v)}
+                    >
+                      <Printer size={13} strokeWidth={2} />
+                    </button>
+                  </div>
                 </td>
                 <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
@@ -518,6 +530,130 @@ export function Viajes() {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {remitoImprimir && (
+        <div className="modal-overlay" onClick={() => setRemitoImprimir(null)}>
+          <div className="modal-panel" style={{ maxWidth: '600px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="section-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <FileText size={18} /> Remito de Entrega / Retiro
+              </div>
+              <button className="modal-close" onClick={() => setRemitoImprimir(null)}>
+                <X size={18} strokeWidth={2} />
+              </button>
+            </div>
+
+            <div
+              id="remito-print-area"
+              style={{
+                background: '#fff',
+                color: '#111',
+                padding: '24px',
+                borderRadius: '8px',
+                border: '1px solid #e0e0e0',
+                fontFamily: 'system-ui, sans-serif',
+                marginTop: '12px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #222', paddingBottom: '12px', marginBottom: '16px' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.4rem', color: '#000', fontWeight: 800 }}>MORATRANS</h3>
+                  <div style={{ fontSize: '0.85rem', color: '#555' }}>Alquiler y Traslado de Contenedores</div>
+                  <div style={{ fontSize: '0.85rem', color: '#555' }}>Mendoza, Argentina</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#000' }}>
+                    REMITO {remitoImprimir.remito ? `Nº ${remitoImprimir.remito}` : 'PROVISORIO'}
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: '#555' }}>Fecha: {formatearFecha(remitoImprimir.fecha)}</div>
+                  <div style={{ fontSize: '0.85rem', color: '#555' }}>Tipo: {remitoImprimir.tipo.toUpperCase()}</div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px', fontSize: '0.9rem' }}>
+                <div style={{ background: '#f8f9fa', padding: '10px', borderRadius: '4px' }}>
+                  <strong>Cliente:</strong>
+                  <div>{remitoImprimir.cliente_telefono ?? 'Consumidor Final'}</div>
+                  <div style={{ fontSize: '0.82rem', color: '#666' }}>Zona: {remitoImprimir.zona ?? '—'}</div>
+                </div>
+                <div style={{ background: '#f8f9fa', padding: '10px', borderRadius: '4px' }}>
+                  <strong>Chofer / Unidad:</strong>
+                  <div>{remitoImprimir.chofer_nombre ?? 'Sin chofer'}</div>
+                  <div style={{ fontSize: '0.82rem', color: '#666' }}>Patente: {remitoImprimir.patente ?? '—'}</div>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '16px', fontSize: '0.9rem', background: '#f8f9fa', padding: '10px', borderRadius: '4px' }}>
+                <strong>Dirección de Servicio:</strong>
+                <div>{remitoImprimir.destino_final_direccion ?? remitoImprimir.destino_direccion ?? '—'}</div>
+              </div>
+
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '24px', fontSize: '0.9rem' }}>
+                <thead>
+                  <tr style={{ background: '#eee', textAlign: 'left' }}>
+                    <th style={{ padding: '8px', border: '1px solid #ddd' }}>Concepto</th>
+                    <th style={{ padding: '8px', border: '1px solid #ddd' }}>Contenedor</th>
+                    <th style={{ padding: '8px', border: '1px solid #ddd', textAlign: 'right' }}>Importe</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style={{ padding: '8px', border: '1px solid #ddd' }}>
+                      Servicio de {remitoImprimir.tipo === 'entrega' ? 'Entrega y colocación' : 'Retiro'}
+                    </td>
+                    <td style={{ padding: '8px', border: '1px solid #ddd', fontWeight: 'bold' }}>
+                      {remitoImprimir.contenedor_numero ?? '—'}
+                    </td>
+                    <td style={{ padding: '8px', border: '1px solid #ddd', textAlign: 'right', fontWeight: 'bold' }}>
+                      {remitoImprimir.importe ? `$${Number(remitoImprimir.importe).toLocaleString('es-AR')}` : 'A convenir'}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px', marginTop: '40px', paddingTop: '20px' }}>
+                <div style={{ borderTop: '1px solid #777', textAlign: 'center', fontSize: '0.8rem', color: '#444' }}>
+                  Firma y Aclaración Chofer
+                </div>
+                <div style={{ borderTop: '1px solid #777', textAlign: 'center', fontSize: '0.8rem', color: '#444' }}>
+                  Firma y DNI Conforme Cliente
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+              <button className="btn btn-ghost" onClick={() => setRemitoImprimir(null)}>Cerrar</button>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  const printContent = document.getElementById('remito-print-area');
+                  if (!printContent) return;
+                  const win = window.open('', '_blank');
+                  if (!win) return;
+                  win.document.write(`
+                    <html>
+                      <head>
+                        <title>Remito - Moratrans</title>
+                        <style>
+                          body { margin: 20px; font-family: system-ui, sans-serif; color: #111; }
+                          table { width: 100%; border-collapse: collapse; }
+                          th, td { border: 1px solid #ccc; padding: 8px; }
+                        </style>
+                      </head>
+                      <body>${printContent.innerHTML}</body>
+                    </html>
+                  `);
+                  win.document.close();
+                  win.focus();
+                  win.print();
+                }}
+              >
+                <Printer size={15} /> Imprimir Remito
+              </button>
+            </div>
           </div>
         </div>
       )}

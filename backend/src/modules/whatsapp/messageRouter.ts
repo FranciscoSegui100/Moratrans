@@ -163,6 +163,16 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
     return manejarAsesorDirecto(m, sesion);
   }
 
+  // Respuestas a encuesta de satisfacción de cliente post-servicio
+  if (m.seleccionId && m.seleccionId.startsWith('encuesta_')) {
+    const estrellas = m.seleccionId === 'encuesta_5' ? '⭐⭐⭐⭐⭐' : m.seleccionId === 'encuesta_3' ? '⭐⭐⭐' : '⭐';
+    await sendText(
+      m.from,
+      `¡Muchísimas gracias por tu calificación (${estrellas})! 🙌 Valoramos mucho que elijas a Moratrans. Si necesitás algo más, acá estamos.`,
+    );
+    return;
+  }
+
   // "Otros servicios": a diferencia de "Hablar con asesor" (pideAsesor, abajo),
   // que primero ofrece self-service y recién escala tras un par de pedidos
   // (ver handleAsesor), acá no hay nada que el bot pueda resolver solo — el

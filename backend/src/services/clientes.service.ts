@@ -1,4 +1,5 @@
 import { query } from '../config/db';
+import { emitConversacionActualizada } from '../config/socket';
 
 export interface Cliente {
   id: string;
@@ -15,13 +16,20 @@ export interface Cliente {
  * cliente_id en esas tablas.
  */
 export async function obtenerOCrearCliente(telefono: string, nombre?: string | null): Promise<Cliente> {
+  const nombreLimpio = nombre?.trim() ? nombre.trim() : null;
   const [row] = await query<Cliente>(
     `INSERT INTO clientes (nombre, telefono)
      VALUES (COALESCE($2, 'Sin nombre'), $1)
-     ON CONFLICT (telefono) DO UPDATE SET nombre = COALESCE($2, clientes.nombre)
+     ON CONFLICT (telefono) DO UPDATE SET nombre = CASE 
+       WHEN $2 IS NOT NULL AND $2 <> '' AND $2 <> 'Sin nombre' THEN $2 
+       ELSE clientes.nombre 
+     END
      RETURNING id, nombre, telefono, cuenta_corriente_estado`,
-    [telefono, nombre ?? null],
+    [telefono, nombreLimpio],
   );
+  if (row?.nombre && row.nombre !== 'Sin nombre') {
+    emitConversacionActualizada({ telefono, nombre: row.nombre });
+  }
   return row;
 }
 

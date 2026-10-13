@@ -31,7 +31,7 @@ chatRouter.get('/', async (_req: Request, res: Response) => {
     `SELECT m.telefono, m.texto AS ultimo_mensaje, m.origen AS ultimo_origen, m.creado_en AS ultimo_en,
             COALESCE((s.contexto->>'modoHumano')::boolean, false) AS modo_humano,
             uc.creado_en AS ultimo_cliente_en,
-            p.cliente_nombre AS nombre,
+            COALESCE(NULLIF(c.nombre, 'Sin nombre'), p.cliente_nombre) AS nombre,
             al.mensaje AS motivo,
             al.creado_en AS escalado_en,
             (s.contexto->>'asignadoA')::uuid AS asignado_a,
@@ -43,6 +43,7 @@ chatRouter.get('/', async (_req: Request, res: Response) => {
           ORDER BY telefono, creado_en DESC
        ) m
        LEFT JOIN sesiones_chat s ON s.telefono = m.telefono
+       LEFT JOIN clientes c ON c.telefono = m.telefono
        LEFT JOIN LATERAL (
          SELECT mc.creado_en FROM mensajes_chat mc
           WHERE mc.telefono = m.telefono AND mc.origen = 'cliente'

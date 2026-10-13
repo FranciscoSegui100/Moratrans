@@ -31,7 +31,8 @@ interface MensajeChatSocket {
 
 interface ConversacionActualizadaSocket {
   telefono: string;
-  modo_humano: boolean;
+  modo_humano?: boolean;
+  nombre?: string | null;
   asignado_a?: string | null;
   asignado_a_nombre?: string | null;
 }
@@ -87,12 +88,13 @@ export function useConversaciones() {
           c.telefono === p.telefono
             ? {
                 ...c,
-                modo_humano: p.modo_humano,
+                nombre: p.nombre !== undefined ? p.nombre : c.nombre,
+                modo_humano: p.modo_humano !== undefined ? p.modo_humano : c.modo_humano,
                 asignado_a: p.asignado_a !== undefined ? p.asignado_a : c.asignado_a,
                 asignado_a_nombre: p.asignado_a_nombre !== undefined ? p.asignado_a_nombre : c.asignado_a_nombre,
-                asignado_en: p.modo_humano ? c.asignado_en ?? new Date().toISOString() : null,
-                motivo: p.modo_humano ? c.motivo : null,
-                escalado_en: p.modo_humano ? c.escalado_en : null,
+                asignado_en: (p.modo_humano !== undefined ? p.modo_humano : c.modo_humano) ? c.asignado_en ?? new Date().toISOString() : null,
+                motivo: (p.modo_humano !== undefined ? p.modo_humano : c.modo_humano) ? c.motivo : null,
+                escalado_en: (p.modo_humano !== undefined ? p.modo_humano : c.modo_humano) ? c.escalado_en : null,
               }
             : c,
         ));

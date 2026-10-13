@@ -7,6 +7,7 @@ import { finalizarRetiro } from '../../../services/retiro.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { DIAS_ALQUILER_ANTES_RETIRO } from '../../../config/bot.config';
 import { avisarSiguienteParadaRuta } from '../../viajes/viajes.routes';
+import { notificarClienteServicioFinalizado } from '../notificacionesCliente';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -613,6 +614,23 @@ async function aplicarEstado(
     if (siguienteCascada) siguienteEnviada = true;
     await clearSesion(to);
     await sendText(to, `✅ Registrado. Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
+
+    // Notificación y encuesta al cliente post-entrega
+    if (entregaAsignada) {
+      query<{ cliente_telefono: string | null }>(
+        'SELECT cliente_telefono FROM viajes WHERE id = $1',
+        [entregaAsignada.id],
+      ).then(([v]) => {
+        if (v?.cliente_telefono) {
+          notificarClienteServicioFinalizado({
+            clienteTelefono: v.cliente_telefono,
+            tipo: 'entrega',
+            contenedorNumero: numero,
+          }).catch((e) => console.error('Error enviando encuesta al cliente:', e));
+        }
+      }).catch((e) => console.error('Error buscando cliente para encuesta:', e));
+    }
+
     // Después de la confirmación: si hay una parada siguiente en la ruta se la
     // avisa (ese aviso trae su propio menú, así que abajo no se manda el suelto).
     for (const v of entregasCompletadas) {

@@ -93,7 +93,8 @@ export function emitAlertaActualizada(payload: { tipo: string; referencia_id: st
  */
 export function emitConversacionActualizada(payload: {
   telefono: string;
-  modo_humano: boolean;
+  modo_humano?: boolean;
+  nombre?: string | null;
   asignado_a?: string | null;
   asignado_a_nombre?: string | null;
 }): void {

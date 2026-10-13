@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Download, Send, Pencil, Check, X, Wallet, Receipt, CircleDollarSign, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Download, Send, Pencil, Check, X, Wallet, Receipt, CircleDollarSign, Plus, Trash2, Printer } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -488,7 +488,99 @@ export function ClienteDetalle() {
         >
           <Download strokeWidth={1.75} /> Exportar pedidos de este cliente a Excel
         </button>
-        <small className="text-muted">Incluye su resumen facturado por mes, su ficha, y el detalle de todos sus pedidos.</small>
+        <button
+          className="btn btn-ghost"
+          onClick={() => {
+            const win = window.open('', '_blank');
+            if (!win) return;
+            const movimientos = [
+              ...(cuentaCorriente?.cargos ?? []).map((c) => ({ fecha: c.fecha, concepto: `Servicio flete (${c.zona ?? 'Sin zona'})`, debe: Number(c.monto || 0), haber: 0 })),
+              ...(cuentaCorriente?.abonos ?? []).map((a) => ({ fecha: a.fecha, concepto: 'Pago recibido / Acreditado', debe: 0, haber: Number(a.monto || 0) })),
+            ].sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+            let saldoAcumulado = 0;
+            const filasHtml = movimientos.map((m) => {
+              saldoAcumulado += (m.debe - m.haber);
+              return `
+                <tr>
+                  <td style="padding: 8px; border: 1px solid #ddd;">${m.fecha}</td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">${m.concepto}</td>
+                  <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">${m.debe > 0 ? '$' + m.debe.toLocaleString('es-AR') : '—'}</td>
+                  <td style="padding: 8px; border: 1px solid #ddd; text-align: right; color: green;">${m.haber > 0 ? '$' + m.haber.toLocaleString('es-AR') : '—'}</td>
+                  <td style="padding: 8px; border: 1px solid #ddd; text-align: right; font-weight: bold;">$${saldoAcumulado.toLocaleString('es-AR')}</td>
+                </tr>
+              `;
+            }).join('');
+
+            win.document.write(`
+              <html>
+                <head>
+                  <title>Estado de Cuenta - ${cliente?.nombre ?? telefono}</title>
+                  <style>
+                    body { font-family: system-ui, sans-serif; margin: 30px; color: #111; }
+                    table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 0.9rem; }
+                    th { background: #f2f2f2; padding: 10px; border: 1px solid #ddd; text-align: left; }
+                    .header { display: flex; justify-content: space-between; border-bottom: 2px solid #222; padding-bottom: 12px; }
+                    .kpis { display: flex; gap: 20px; margin-top: 20px; background: #f9f9f9; padding: 15px; border-radius: 6px; }
+                    .kpi { flex: 1; }
+                    .kpi-val { font-size: 1.25rem; font-weight: bold; margin-top: 4px; }
+                  </style>
+                </head>
+                <body>
+                  <div class="header">
+                    <div>
+                      <h2 style="margin: 0;">MORATRANS - ESTADO DE CUENTA CORRIENTE</h2>
+                      <p style="margin: 4px 0 0; color: #666;">Alquiler y Traslado de Contenedores</p>
+                    </div>
+                    <div style="text-align: right;">
+                      <h3 style="margin: 0;">${cliente?.nombre ?? 'Cliente'}</h3>
+                      <p style="margin: 4px 0 0; color: #666;">Tel: ${telefono}</p>
+                      <p style="margin: 2px 0 0; color: #666;">Fecha emisión: ${new Date().toLocaleDateString('es-AR')}</p>
+                    </div>
+                  </div>
+
+                  <div class="kpis">
+                    <div class="kpi">
+                      <div style="color: #666; font-size: 0.85rem;">Total Cargos</div>
+                      <div class="kpi-val">$${(cuentaCorriente?.totalCargos ?? 0).toLocaleString('es-AR')}</div>
+                    </div>
+                    <div class="kpi">
+                      <div style="color: #666; font-size: 0.85rem;">Total Pagado</div>
+                      <div class="kpi-val" style="color: green;">$${(cuentaCorriente?.totalAbonos ?? 0).toLocaleString('es-AR')}</div>
+                    </div>
+                    <div class="kpi">
+                      <div style="color: #666; font-size: 0.85rem;">Saldo Pendiente</div>
+                      <div class="kpi-val" style="color: ${(cuentaCorriente?.saldo ?? 0) > 0 ? '#b91c1c' : '#15803d'};">
+                        $${(cuentaCorriente?.saldo ?? 0).toLocaleString('es-AR')}
+                      </div>
+                    </div>
+                  </div>
+
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>FECHA</th>
+                        <th>CONCEPTO</th>
+                        <th style="text-align: right;">CARGO (DEBE)</th>
+                        <th style="text-align: right;">PAGO (HABER)</th>
+                        <th style="text-align: right;">SALDO</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${filasHtml || '<tr><td colspan="5" style="text-align: center; padding: 20px;">Sin movimientos registrados</td></tr>'}
+                    </tbody>
+                  </table>
+                </body>
+              </html>
+            `);
+            win.document.close();
+            win.focus();
+            win.print();
+          }}
+        >
+          <Printer strokeWidth={1.75} /> Imprimir Estado de Cuenta
+        </button>
+        <small className="text-muted">Exportá o imprimí el estado consolidado de cuenta para el cliente.</small>
         {CARGAR_VIAJE_HABILITADO && (
           <RoleGate roles={['admin', 'operador', 'finanzas']}>
             <button className="btn btn-ghost" onClick={() => setMostrarCargarViaje(true)}>

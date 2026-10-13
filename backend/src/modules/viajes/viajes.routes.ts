@@ -11,6 +11,7 @@ import { reservarParaEntrega } from '../../services/contenedorReserva.service';
 import { emitRecursoActualizado } from '../../config/socket';
 import { avisoEfectivoChofer } from '../whatsapp/avisoEfectivo';
 import { formatearTelefonoLegible } from '../../services/telefono.service';
+import { notificarClienteChoferEnCamino } from '../whatsapp/notificacionesCliente';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -369,6 +370,23 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
     } else {
       const v = entrega ?? retiro!;
       await avisarChoferViaje(choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, v.hora_estimada, v.pago_id);
+    }
+
+    // Notificación automática al cliente: chofer en camino
+    const viajeCliente = entrega ?? retiro;
+    if (viajeCliente?.cliente_telefono) {
+      const [choferInfo] = await query<{ nombre: string; patente: string | null }>(
+        'SELECT nombre, patente FROM choferes WHERE id = $1',
+        [choferId],
+      );
+      notificarClienteChoferEnCamino({
+        clienteTelefono: viajeCliente.cliente_telefono,
+        tipo: viajeCliente.tipo,
+        destinoDireccion: viajeCliente.destino_direccion,
+        choferNombre: choferInfo?.nombre ?? null,
+        patente: choferInfo?.patente ?? null,
+        contenedorNumero: viajeCliente.contenedor_numero,
+      }).catch((e) => console.error('Error notificando chofer en camino al cliente:', e));
     }
   } catch (e: any) {
     const motivo = motivoErrorWa(e);
