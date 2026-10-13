@@ -43,6 +43,14 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
   const raw = (req as any).rawBody as Buffer | undefined;
 
   if (raw && env.WA_APP_SECRET && !verifySignature(raw, signature)) {
+    // LOG TEMPORAL: diagnosticar por qué algunos webhooks (ej. el número eSIM)
+    // llegan con una firma que no valida contra WA_APP_SECRET. No se loguea el
+    // secreto ni el body, solo metadata pública del request. Borrar cuando se
+    // resuelva el problema.
+    console.warn('[WA] Firma inválida — webhook rechazado con 401', {
+      signatureRecibida: signature,
+      rawBodyLength: raw.length,
+    });
     return res.sendStatus(401);
   }
 
