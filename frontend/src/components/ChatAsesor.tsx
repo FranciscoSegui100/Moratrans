@@ -3,6 +3,7 @@ import { Send } from 'lucide-react';
 import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
 import { useToast } from './Toast';
+import { ComprobanteViewer } from './ComprobanteViewer';
 
 interface MensajeChat {
   id: string;
@@ -10,6 +11,10 @@ interface MensajeChat {
   origen: 'cliente' | 'bot' | 'operador';
   texto: string;
   creado_en: string;
+  // Solo en las burbujas de comprobante que el backend intercala en el hilo
+  // (ver GET /api/chat/:telefono): a qué pago/adjunto corresponde el archivo.
+  pago_id?: string | null;
+  adjunto_id?: string | null;
 }
 
 const origenLabel: Record<MensajeChat['origen'], string> = {
@@ -121,6 +126,7 @@ export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ven
                 <div key={m.id} className={`chat-burbuja chat-burbuja-${m.origen}`}>
                   <div className="chat-burbuja-autor">{origenLabel[m.origen]}</div>
                   <div className="chat-burbuja-texto">{cuerpo}</div>
+                  {m.pago_id && <ComprobanteViewer pagoId={m.pago_id} adjuntoId={m.adjunto_id ?? undefined} />}
                   {opciones && (
                     <div className="chat-opciones">
                       {opciones.map((op) => (

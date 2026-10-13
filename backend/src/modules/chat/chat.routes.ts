@@ -76,12 +76,34 @@ chatRouter.get('/', async (_req: Request, res: Response) => {
  * más de 200 mensajes).
  */
 chatRouter.get('/:telefono', async (req: Request, res: Response) => {
+  // Comprobantes que el cliente mandó por WhatsApp (media_id IS NOT NULL: los
+  // que cargó un operador a mano no son parte de la charla), intercalados en
+  // el hilo como una burbuja más para poder abrirlos sin ir a Comprobantes.
+  // mensajes_chat solo guarda "📎 Imagen", sin referencia al archivo, así que
+  // se ubican por la fecha en que quedaron registrados: unos segundos después
+  // de ese mensaje. El panel los abre con GET /api/pagos/:id/comprobante (o
+  // /adjuntos/:id), por eso acá se usa su mismo criterio de roles.
+  const verComprobantes = ['admin', 'operador', 'finanzas'].includes(req.user!.rol);
   const rows = await query(
-    `SELECT id, origen, texto, creado_en FROM (
-       SELECT id, origen, texto, creado_en FROM mensajes_chat
+    `WITH ultimos AS (
+       SELECT id, origen::text AS origen, texto, creado_en FROM mensajes_chat
         WHERE telefono = $1 ORDER BY creado_en DESC LIMIT 200
-     ) ultimos ORDER BY creado_en ASC`,
-    [req.params.telefono],
+     ), comprobantes AS (
+       SELECT p.id, p.creado_en, p.id AS pago_id, NULL::uuid AS adjunto_id
+         FROM pagos p
+        WHERE p.cliente_telefono = $1 AND p.url_comprobante IS NOT NULL AND p.media_id IS NOT NULL
+       UNION ALL
+       SELECT pa.id, pa.creado_en, pa.pago_id, pa.id AS adjunto_id
+         FROM pagos_adjuntos pa
+         JOIN pagos p ON p.id = pa.pago_id
+        WHERE p.cliente_telefono = $1 AND pa.media_id IS NOT NULL
+     )
+     SELECT id, origen, texto, creado_en, NULL::uuid AS pago_id, NULL::uuid AS adjunto_id FROM ultimos
+     UNION ALL
+     SELECT id, 'cliente', '🧾 Comprobante de pago', creado_en, pago_id, adjunto_id FROM comprobantes
+      WHERE $2::boolean AND creado_en >= COALESCE((SELECT MIN(creado_en) FROM ultimos), '-infinity')
+     ORDER BY creado_en ASC`,
+    [req.params.telefono, verComprobantes],
   );
   res.json(rows);
 });
