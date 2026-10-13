@@ -10,6 +10,7 @@ import { handleAsesor, escalarAAsesor } from './flows/asesor.flow';
 import { handleRecambio } from './flows/recambio.flow';
 import { handlePedirRetiro } from './flows/pedirRetiro.flow';
 import { handlePedirEntrega } from './flows/pedirEntrega.flow';
+import { iniciarPedidoCatalogo, handlePedidoCatalogo } from './flows/pedidoCatalogo.flow';
 import { handleDetalleMovimientos } from './flows/movimientos.flow';
 import { handleAlargarRetiro } from './flows/alargarRetiro.flow';
 import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
@@ -183,17 +184,11 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   }
 
   // Pedido armado en el catálogo de WhatsApp (carrito): no hay precio ni
-  // condiciones que el bot pueda resolver solo (igual que "Otros servicios"),
-  // así que se escala directo al asesor con el detalle de lo pedido.
+  // condiciones que el bot pueda resolver solo, así que junta primero
+  // nombre, dirección, descripción y medio de pago (ver
+  // pedidoCatalogo.flow.ts) antes de escalar al asesor con todo el detalle.
   if (!enModoHumano && m.tipo === 'order') {
-    const detalle = (m.orderItems ?? [])
-      .map((it) => `${it.cantidad}x ${it.nombre ?? it.retailerId}${it.precio != null ? ` ($${it.precio})` : ''}`)
-      .join(', ');
-    return escalarAAsesor(
-      m.from,
-      sesion,
-      `${m.from} envió un pedido desde el catálogo: ${detalle || '(sin detalle)'}`,
-    );
+    return iniciarPedidoCatalogo(m, sesion);
   }
 
   if (!enModoHumano && m.tipo !== 'image' && m.tipo !== 'document' && pideAsesor(m)) {
@@ -221,6 +216,7 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   if (sesion.flujo === 'pedir_retiro') return handlePedirRetiro(m, sesion);
   if (sesion.flujo === 'pedir_entrega') return handlePedirEntrega(m, sesion);
   if (sesion.flujo === 'alargar_retiro') return handleAlargarRetiro(m, sesion);
+  if (sesion.flujo === 'pedido_catalogo') return handlePedidoCatalogo(m, sesion);
 
   // 5) Comandos de arranque
   if (m.seleccionId === 'opt_cotizar' || t.includes('cotiz') || t.includes('nuevo contenedor') || t.includes('pedir contenedor')) {

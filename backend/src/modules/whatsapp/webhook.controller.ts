@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { env } from '../../config/env';
-import { verifySignature, motivoErrorWa, obtenerNombresProductos } from './graphApi';
+import { verifySignature, motivoErrorWa } from './graphApi';
 import { normalizar, enrutar } from './messageRouter';
 import { query } from '../../config/db';
 import { logMensaje } from './chatLog.service';
@@ -43,14 +43,6 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
   const raw = (req as any).rawBody as Buffer | undefined;
 
   if (raw && env.WA_APP_SECRET && !verifySignature(raw, signature)) {
-    // LOG TEMPORAL: diagnosticar por qué algunos webhooks (ej. el número eSIM)
-    // llegan con una firma que no valida contra WA_APP_SECRET. No se loguea el
-    // secreto ni el body, solo metadata pública del request. Borrar cuando se
-    // resuelva el problema.
-    console.warn('[WA] Firma inválida — webhook rechazado con 401', {
-      signatureRecibida: signature,
-      rawBodyLength: raw.length,
-    });
     return res.sendStatus(401);
   }
 
@@ -92,22 +84,6 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
           // a cada mensaje (contacts[].profile.name) — no hace falta pedírselo.
           const nombrePerfil = contacts.find((c: any) => c.wa_id === msg.from)?.profile?.name;
           const normalizado = normalizar(msg, nombrePerfil);
-          // Pedido del catálogo: el payload de Meta solo trae el retailer_id
-          // crudo de cada producto (ej. "qfg1k3bb4p"), no su nombre — se
-          // resuelve acá contra el catálogo antes de loguear y de enrutar,
-          // para que tanto Conversaciones como la alerta al asesor muestren
-          // el nombre real. Si la consulta falla, orderItems.nombre queda
-          // undefined y tanto textoLog como el motivo de la alerta (en
-          // messageRouter.ts) caen al retailerId como respaldo.
-          if (normalizado.tipo === 'order' && normalizado.catalogId && normalizado.orderItems?.length) {
-            const nombres = await obtenerNombresProductos(
-              normalizado.catalogId,
-              normalizado.orderItems.map((it) => it.retailerId),
-            );
-            for (const it of normalizado.orderItems) {
-              it.nombre = nombres.get(it.retailerId);
-            }
-          }
           // "|| " y no "?? " a propósito: un pedido de catálogo sin nota del
           // cliente llega con order.text = "" (string vacío, no ausente), y
           // "??" solo cae al texto de respaldo si el valor es null/undefined

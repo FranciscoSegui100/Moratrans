@@ -1035,6 +1035,7 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   color: var(--text-primary);
   font-weight: 500;
   margin-bottom: 3px;
+  white-space: pre-line;
 }
 .alerta-time {
   font-size: 0.73rem;
