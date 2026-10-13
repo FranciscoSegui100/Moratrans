@@ -33,7 +33,8 @@ const schema = z.object({
   // son alquiler de contenedores, separados por coma. Un pedido del catálogo
   // con solo esos productos arranca el flujo de cotización en vez de escalar
   // a un asesor (ver messageRouter.ts). Vacío = todo pedido va al asesor.
-  WA_CATALOGO_IDS_CONTENEDOR: z.string().default(''),
+  // Default: el Content ID que tiene hoy el producto "Contenedores".
+  WA_CATALOGO_IDS_CONTENEDOR: z.string().default('Contenedores'),
 
   SYNC_API_KEY: z.string().min(16),
 

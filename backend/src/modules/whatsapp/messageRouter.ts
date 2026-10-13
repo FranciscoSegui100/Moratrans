@@ -66,7 +66,7 @@ async function enviarMenuOtrosServicios(to: string): Promise<void> {
   await setSesion({ telefono: to, flujo: 'menu', paso: null, contexto: {} });
 }
 
-const IDS_CONTENEDOR_CATALOGO = env.WA_CATALOGO_IDS_CONTENEDOR.split(',').map((id) => id.trim()).filter(Boolean);
+const IDS_CONTENEDOR_CATALOGO = env.WA_CATALOGO_IDS_CONTENEDOR.split(',').map((id) => id.trim().toLowerCase()).filter(Boolean);
 
 /**
  * ¿El carrito del catálogo trae únicamente contenedores? Meta manda solo el
@@ -76,7 +76,7 @@ const IDS_CONTENEDOR_CATALOGO = env.WA_CATALOGO_IDS_CONTENEDOR.split(',').map((i
  */
 function esPedidoDeContenedor(m: MensajeEntrante): boolean {
   const items = m.orderItems ?? [];
-  return items.length > 0 && items.every((it) => IDS_CONTENEDOR_CATALOGO.includes(it.retailerId));
+  return items.length > 0 && items.every((it) => IDS_CONTENEDOR_CATALOGO.includes(String(it.retailerId ?? '').trim().toLowerCase()));
 }
 
 /** Mensaje normalizado, agnóstico del formato crudo de Meta. */
