@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { X, Wrench, CircleCheck, Pencil, Trash2, Check } from 'lucide-react';
 import { api } from '../api/client';
@@ -167,9 +166,7 @@ export function Contenedores() {
   }
 
   const [busqueda, setBusqueda] = useState('');
-  // ?filtro=vencido|proximos_vencer: links del Dashboard y de Alertas.
-  const [searchParams] = useSearchParams();
-  const [filtroEstado, setFiltroEstado] = useState(searchParams.get('filtro') ?? 'todos');
+  const [filtroEstado, setFiltroEstado] = useState('todos');
 
   const contenedoresFiltrados = contenedores.filter((c) => {
     if (filtroEstado !== 'todos' && c.estado_contrato !== filtroEstado && c.estado !== filtroEstado) {

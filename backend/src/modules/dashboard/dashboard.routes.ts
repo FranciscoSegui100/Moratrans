@@ -23,8 +23,6 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
     cobros_pendientes: number;
     cobros_pendientes_monto: string;
     cobros_vencidos: number;
-    contenedores_vencidos: number;
-    contenedores_por_vencer: number;
     viajes_hoy: number;
     viajes_ayer: number;
     entregas_hoy: number;
@@ -103,19 +101,6 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
        -- pendientes hace más de 24h.
        (SELECT count(*) FROM pagos WHERE estado = 'pendiente' AND creado_en < now() - interval '24 hours')::int
                                                                                            AS cobros_vencidos,
-       -- Mismo criterio que el estado "Vencido" de Contenedores y que la
-       -- alerta 'contenedor_vencido' (alertas.cron.ts): ya pasó la fecha y
-       -- sigue con el cliente sin un retiro programado o en curso.
-       (SELECT count(*) FROM contenedores c
-         WHERE c.estado = 'entregado' AND c.vence_en IS NOT NULL AND c.vence_en < now()
-           AND NOT EXISTS (
-             SELECT 1 FROM viajes v
-              WHERE v.contenedor_numero = c.numero AND v.tipo = 'retiro' AND v.estado IN ('programado', 'en_curso')
-           ))::int                                                                       AS contenedores_vencidos,
-       -- Mismo criterio que la alerta 'contenedor_por_vencer' (alertas.cron.ts).
-       (SELECT count(*) FROM contenedores
-         WHERE estado IN ('reservado', 'entregado') AND vence_en BETWEEN now() AND now() + interval '48 hours')::int
-                                                                                           AS contenedores_por_vencer,
        -- Antes contaba historial_contenedores con estado='entregado' creado
        -- hoy: eso son confirmaciones de entrega, no "viajes de hoy" — excluía
        -- todos los retiros y no tenía relación con viajes.fecha (la fecha
