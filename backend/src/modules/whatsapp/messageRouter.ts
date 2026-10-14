@@ -247,11 +247,15 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
 
   // 3) Un comprobante (imagen/documento) siempre entra al flujo de pago,
   // incluso en modo humano: la validación de pagos no debe depender de un
-  // operador. Excepción: si el cliente está a mitad de "alargar retiro"
-  // esperando SU comprobante, que vaya ahí — si no, el pago de flete
-  // interceptaría el comprobante del alargue.
+  // operador. Excepciones: si el cliente está a mitad de "alargar retiro" o
+  // de mandar el comprobante de un pedido de catálogo que el asesor ya
+  // cotizó (ver pedidoCatalogo.flow.ts), que vayan a su propio flujo — si
+  // no, el pago de flete interceptaría esos comprobantes.
   if ((m.tipo === 'image' || m.tipo === 'document') && sesion.flujo === 'alargar_retiro') {
     return handleAlargarRetiro(m, sesion);
+  }
+  if ((m.tipo === 'image' || m.tipo === 'document') && sesion.flujo === 'pedido_catalogo' && sesion.paso === 'esperando_comprobante_catalogo') {
+    return handlePedidoCatalogo(m, sesion);
   }
   if (m.tipo === 'image' || m.tipo === 'document') {
     return handlePago(m, sesion);

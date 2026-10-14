@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send } from 'lucide-react';
+import { Send, Wallet } from 'lucide-react';
 import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
 import { useToast } from './Toast';
@@ -60,6 +60,7 @@ export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ven
   const [mensajes, setMensajes] = useState<MensajeChat[]>([]);
   const [texto, setTexto] = useState('');
   const [enviando, setEnviando] = useState(false);
+  const [pidiendoTransferencia, setPidiendoTransferencia] = useState(false);
   const { show } = useToast();
   const finRef = useRef<HTMLDivElement>(null);
 
@@ -112,6 +113,34 @@ export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ven
     }
   }
 
+  /**
+   * El asesor ya le cotizó este pedido al cliente a mano (el precio del
+   * catálogo depende de muchas cosas, el bot no lo resuelve solo) — acá se
+   * dispara el pedido de transferencia: el bot le manda los datos bancarios
+   * por WhatsApp y el comprobante que mande después entra a Comprobantes
+   * para validar, igual que un pedido de contenedor (ver
+   * pagos.routes.ts::POST /pedido-catalogo).
+   */
+  async function pedirTransferencia() {
+    const concepto = prompt('¿Qué le cotizaste? (se lo mandamos al cliente como referencia)');
+    if (!concepto?.trim()) return;
+    const montoTexto = prompt('¿Por cuánto se lo cotizaste? (monto en pesos)');
+    const monto = Number(montoTexto);
+    if (!montoTexto || !(monto > 0)) {
+      show('error', 'Monto inválido', 'Ingresá un número mayor a cero.');
+      return;
+    }
+    setPidiendoTransferencia(true);
+    try {
+      await api.post('/api/pagos/pedido-catalogo', { telefono, monto, concepto: concepto.trim() });
+      show('success', 'Transferencia pedida', 'Le mandamos los datos bancarios al cliente por WhatsApp.');
+    } catch (e: any) {
+      show('error', 'No se pudo pedir la transferencia', e.response?.data?.error || 'Error desconocido');
+    } finally {
+      setPidiendoTransferencia(false);
+    }
+  }
+
   return (
     <div className="chat-asesor">
       <div className="chat-asesor-hilo">
@@ -150,6 +179,16 @@ export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ven
           Esperá a que vuelva a escribir para poder responderle.
         </div>
       )}
+      <div className="chat-asesor-acciones">
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={pedirTransferencia}
+          disabled={pidiendoTransferencia || ventanaCerrada}
+          title="Después de cotizarle a mano, pedile el comprobante de la transferencia"
+        >
+          <Wallet strokeWidth={1.75} /> Pedir transferencia
+        </button>
+      </div>
       <div className="chat-asesor-input">
         <input
           className="form-input"

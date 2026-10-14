@@ -20,10 +20,11 @@ interface Pago {
   adjuntos_count: number;
   titular_transferencia: string | null;
   es_cuenta_corriente: boolean;
-  tipo: 'flete' | 'alargue_retiro' | 'abono_cc';
+  tipo: 'flete' | 'alargue_retiro' | 'abono_cc' | 'pedido_catalogo';
   contenedor_numero: string | null;
   medio_pago: 'transferencia' | 'efectivo';
   efectivo_cobrado: boolean;
+  concepto: string | null;
 }
 
 interface Adjunto { id: string; creado_en: string; }
@@ -90,11 +91,19 @@ export function Pagos() {
       const { data } = await api.post(`/api/pagos/${id}/validar`, body);
       show(
         'success',
-        data.tipo === 'alargue_retiro' ? 'Alargue validado' : data.tipo === 'abono_cc' ? 'Abono acreditado' : 'Pago validado',
+        data.tipo === 'alargue_retiro'
+          ? 'Alargue validado'
+          : data.tipo === 'abono_cc'
+          ? 'Abono acreditado'
+          : data.tipo === 'pedido_catalogo'
+          ? 'Pago validado'
+          : 'Pago validado',
         data.tipo === 'alargue_retiro'
           ? `Contenedor ${data.contenedor} — nuevo vencimiento ${formatearFecha(data.vence_en)}`
           : data.tipo === 'abono_cc'
           ? `Se acreditaron $${Number(data.monto).toLocaleString('es-AR')} a la cuenta corriente`
+          : data.tipo === 'pedido_catalogo'
+          ? `Confirmamos $${Number(data.monto).toLocaleString('es-AR')} del pedido de catálogo`
           : data.reservado_ahora
           ? `Ticket ${data.ticket_id} — contenedor ${data.contenedor}`
           : `Ticket ${data.ticket_id} — contenedor ${data.contenedor} reservado a futuro, todavía está ocupado`,
@@ -171,6 +180,12 @@ export function Pagos() {
                   ) : p.tipo === 'abono_cc' ? (
                     <div className="pago-detail">
                       💳 Abono a cuenta corriente · {formatearFechaHora(p.creado_en)}
+                    </div>
+                  ) : p.tipo === 'pedido_catalogo' ? (
+                    <div className="pago-detail">
+                      🛒 {p.concepto ?? 'Pedido del catálogo'} ·{' '}
+                      {p.monto ? `ARS ${Number(p.monto).toLocaleString('es-AR')}` : 'Sin monto'} ·{' '}
+                      {formatearFechaHora(p.creado_en)}
                     </div>
                   ) : (
                     <div className="pago-detail">

@@ -142,7 +142,16 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
       return;
     }
 
-    if (pedidos.length > 1) {
+    // Asumir solo el pedido sin preguntar es seguro únicamente cuando el
+    // contexto de ESTA charla lo deja claro (el cliente acaba de elegir
+    // "Transferencia" para un pedido puntual, sesion.paso ===
+    // 'esperando_comprobante'). Fuera de ese caso — ej. una foto que llega
+    // "de la nada" sin haber pasado por ahí — igual hay que preguntar aunque
+    // haya un solo pedido abierto: antes, un pedido viejo abandonado a medio
+    // camino se quedaba con cualquier comprobante nuevo sin que el cliente
+    // lo haya elegido, con la plata mal atada a un pedido equivocado.
+    const contextoClaro = sesion.paso === 'esperando_comprobante';
+    if (pedidos.length > 1 || !contextoClaro) {
       await setSesion({
         telefono: to,
         flujo: 'pago',
@@ -152,7 +161,9 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
       await sendList(
         to,
         '¿Para cuál es este comprobante?',
-        'Tenés más de una cotización activa — decime a cuál corresponde este pago:',
+        pedidos.length > 1
+          ? 'Tenés más de una cotización activa — decime a cuál corresponde este pago:'
+          : 'Decime a cuál de tus pedidos corresponde este comprobante:',
         'Ver cotizaciones',
         pedidos.map((p) => ({
           id: `pedido:${p.id}`,

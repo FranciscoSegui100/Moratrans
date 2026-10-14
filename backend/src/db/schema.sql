@@ -72,7 +72,7 @@ CREATE TYPE tipo_alerta AS ENUM (
 -- acumulado, sin pedido_id — el monto lo carga el operador al validar,
 -- mirando la transferencia real (ver pago.flow.ts::registrarAbonoCuentaCorriente
 -- y reportes.service.ts::saldoCuentaCorriente).
-CREATE TYPE tipo_pago AS ENUM ('flete', 'alargue_retiro', 'abono_cc', 'otro_servicio');
+CREATE TYPE tipo_pago AS ENUM ('flete', 'alargue_retiro', 'abono_cc', 'otro_servicio', 'pedido_catalogo');
 
 -- Cuenta corriente: clientes que pagan a fin de mes o cuando se juntan
 -- varios retiros, en vez de transferir antes de cada uno (ver pago.flow.ts).

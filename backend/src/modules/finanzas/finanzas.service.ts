@@ -14,7 +14,7 @@ export interface MovimientoIngreso {
   cliente_telefono: string | null;
   contenedor_numero: string | null;
   zona: string | null;
-  categoria: 'Entrega' | 'Recambio' | 'Alargue de retiro' | 'Otro servicio';
+  categoria: 'Entrega' | 'Recambio' | 'Alargue de retiro' | 'Otro servicio' | 'Pedido catálogo';
   medio_pago: 'Transferencia' | 'Cuenta corriente' | 'Efectivo';
   concepto: string | null;
   // pg devuelve las columnas `numeric` de Postgres como string (y `pagos.monto`
@@ -26,12 +26,15 @@ export interface MovimientoIngreso {
 /**
  * Ingresos = ventas nuevas confirmadas (no cobranzas de deuda ya reconocida).
  * Dos fuentes, sin superponerse:
- *  1. `pagos` validados de tipo 'flete'/'alargue_retiro'/'otro_servicio' —
- *     cubre lo pagado por transferencia o efectivo, lo confirmado a cuenta
- *     corriente vía cotización (pago.flow.ts::iniciarCuentaCorriente ya pasa
- *     por acá), y los ingresos de servicios fuera del alquiler cargados a
- *     mano desde Finanzas (ver pagos.routes.ts::POST /otro-ingreso): todos
- *     son confirmación de una venta nueva, no el cobro de saldo viejo.
+ *  1. `pagos` validados de tipo 'flete'/'alargue_retiro'/'otro_servicio'/
+ *     'pedido_catalogo' — cubre lo pagado por transferencia o efectivo, lo
+ *     confirmado a cuenta corriente vía cotización
+ *     (pago.flow.ts::iniciarCuentaCorriente ya pasa por acá), los ingresos de
+ *     servicios fuera del alquiler cargados a mano desde Finanzas (ver
+ *     pagos.routes.ts::POST /otro-ingreso) y los pedidos armados en el
+ *     catálogo de WhatsApp que un asesor cotizó y cobró por transferencia
+ *     (ver POST /pedido-catalogo): todos son confirmación de una venta
+ *     nueva, no el cobro de saldo viejo.
  *  2. `viajes` con es_cuenta_corriente=TRUE (entrega directa o recambio para
  *     un cliente ya aprobado, ver pedirEntrega.flow.ts/recambio.flow.ts):
  *     estos NUNCA pasan por `pagos` — sin esta segunda fuente, esas ventas
@@ -57,10 +60,11 @@ async function movimientosIngreso(anio: number): Promise<MovimientoIngreso[]> {
               p.cliente_telefono, p.es_cuenta_corriente, p.medio_pago, p.concepto, NULL::uuid AS grupo_id,
               CASE WHEN p.tipo = 'alargue_retiro' THEN 'alargue'
                    WHEN p.tipo = 'otro_servicio' THEN 'otro_servicio'
+                   WHEN p.tipo = 'pedido_catalogo' THEN 'pedido_catalogo'
                    ELSE 'entrega' END AS origen
          FROM pagos p
          LEFT JOIN pedidos pe2 ON pe2.id = p.pedido_id
-        WHERE p.estado = 'validado' AND p.tipo IN ('flete', 'alargue_retiro', 'otro_servicio')
+        WHERE p.estado = 'validado' AND p.tipo IN ('flete', 'alargue_retiro', 'otro_servicio', 'pedido_catalogo')
           AND EXTRACT(YEAR FROM p.creado_en) = $1
         UNION ALL
        -- grupo_id no-nulo detecta un recambio de cuenta corriente directo
@@ -84,6 +88,7 @@ async function movimientosIngreso(anio: number): Promise<MovimientoIngreso[]> {
             CASE
               WHEN i.origen = 'alargue' THEN 'Alargue de retiro'
               WHEN i.origen = 'otro_servicio' THEN 'Otro servicio'
+              WHEN i.origen = 'pedido_catalogo' THEN 'Pedido catálogo'
               WHEN pe.tipo = 'recambio' OR i.grupo_id IS NOT NULL THEN 'Recambio'
               ELSE 'Entrega'
             END AS categoria,

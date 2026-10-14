@@ -9,6 +9,8 @@ import { enviarTicketPorWhatsApp } from '../../services/pdf.service';
 import { descargarArchivo } from '../../services/storage.service';
 import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
+import { datosBancarios } from '../whatsapp/flows/pago.flow';
+import { setSesion } from '../whatsapp/session.store';
 import { avisarChoferRecambio } from '../viajes/viajes.routes';
 import { avisoEfectivoChofer } from '../whatsapp/avisoEfectivo';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
@@ -36,7 +38,7 @@ pagosRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query(
     `SELECT p.id, p.cliente_telefono, p.monto, p.url_comprobante, p.estado, p.creado_en,
             p.titular_transferencia, p.es_cuenta_corriente, p.tipo, p.contenedor_numero,
-            p.medio_pago, p.efectivo_cobrado,
+            p.medio_pago, p.efectivo_cobrado, p.concepto,
             pe.zona, pe.precio,
             (SELECT COUNT(*) FROM pagos_adjuntos pa WHERE pa.pago_id = p.id)::int AS adjuntos_count
        FROM pagos p
@@ -362,6 +364,61 @@ pagosRouter.post('/otro-ingreso', requireRol('admin', 'operador', 'finanzas'), a
   res.json({ ok: true, id: pago.id, monto });
 });
 
+const pedidoCatalogoSchema = z.object({
+  telefono: z.string().trim().min(6, 'Falta el teléfono'),
+  monto: z.coerce.number().positive('Indicá el monto que le cotizaste al cliente.'),
+  concepto: z.string().trim().min(1, 'Contá brevemente qué le cotizaste.'),
+});
+
+/**
+ * POST /api/pagos/pedido-catalogo — el asesor, después de cotizarle a mano
+ * (por fuera del bot) un pedido armado en el catálogo de WhatsApp, dispara
+ * desde acá el pedido de transferencia: a diferencia de otro-ingreso/abono-
+ * manual, NO se valida en el mismo paso — queda 'pendiente' con el monto ya
+ * cargado por el asesor (el cliente no lo declara, el precio depende de la
+ * cotización) hasta que llegue el comprobante y lo revise un operador, igual
+ * que cualquier pago de contenedor. El cliente recibe los datos bancarios y
+ * su sesión de WhatsApp queda esperando esa foto puntual (ver
+ * pedidoCatalogo.flow.ts::manejarComprobante) — no pasa por pedidosAbiertos()
+ * porque un pedido de catálogo no tiene fila en `pedidos`.
+ */
+pagosRouter.post('/pedido-catalogo', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+  const parsed = pedidoCatalogoSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Datos inválidos' });
+  }
+  const { telefono, monto, concepto } = parsed.data;
+
+  const [pago] = await query<{ id: string }>(
+    `INSERT INTO pagos (cliente_telefono, monto, estado, es_cuenta_corriente, tipo, concepto)
+     VALUES ($1,$2,'pendiente',FALSE,'pedido_catalogo',$3) RETURNING id`,
+    [telefono, monto, concepto],
+  );
+
+  try {
+    await sendText(
+      telefono,
+      `💳 Te confirmamos el pedido: *${concepto}* — *ARS ${monto.toLocaleString('es-AR')}*.\n\n` +
+        `${datosBancarios()}\n\n` +
+        '💸 Transferí y mandame por acá la *foto o PDF* del comprobante.',
+    );
+  } catch (e) {
+    const motivo = motivoErrorWa(e);
+    console.error('Error avisando pedido de transferencia de catálogo:', motivo);
+    await notificarEnvioFallido(pago.id, telefono, 'pedido de transferencia (pedido de catálogo)', motivo).catch((e2) =>
+      console.error('Error registrando alerta de envío fallido:', e2),
+    );
+  }
+
+  // Deja la sesión de WhatsApp de este cliente esperando específicamente el
+  // comprobante de ESTE pago — así, cuando mande la foto, no hace falta
+  // adivinar a qué corresponde (ver manejarComprobante).
+  await setSesion({ telefono, flujo: 'pedido_catalogo', paso: 'esperando_comprobante_catalogo', contexto: { pagoId: pago.id } });
+
+  emitRecursoActualizado('pagos');
+  res.json({ ok: true, id: pago.id, monto });
+});
+
 /**
  * Un pago 'abono_cc' no está atado a ningún pedido/ticket/contenedor: es
  * simplemente plata que el cliente transfirió contra su saldo de cuenta
@@ -410,6 +467,45 @@ async function validarAbonoCC(req: Request, res: Response, pagoId: string): Prom
   }
 
   res.json({ ok: true, tipo: 'abono_cc', monto });
+}
+
+/**
+ * Un pago 'pedido_catalogo' tampoco tiene pedido/ticket/contenedor detrás —
+ * a diferencia de 'abono_cc', el monto ya lo cargó el asesor al pedir la
+ * transferencia (ver POST /pedido-catalogo), así que acá no se vuelve a
+ * pedir: solo se confirma. El cliente recibe un aviso simple, sin mencionar
+ * "ticket" (eso es el comprobante de entrega de contenedores, no aplica).
+ */
+async function validarPedidoCatalogo(req: Request, res: Response, pagoId: string): Promise<void> {
+  const [pago] = await query<{ cliente_telefono: string; monto: string; concepto: string | null }>(
+    `UPDATE pagos SET estado = 'validado', validado_por = $2
+      WHERE id = $1 AND estado = 'pendiente' AND tipo = 'pedido_catalogo'
+      RETURNING cliente_telefono, monto, concepto`,
+    [pagoId, req.user!.id],
+  );
+  if (!pago) {
+    res.status(409).json({ error: 'Pago inexistente o no está pendiente' });
+    return;
+  }
+
+  await query(`UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'pago_pendiente_validacion' AND referencia_id = $1`, [pagoId]);
+  emitAlertaActualizada({ tipo: 'pago_pendiente_validacion', referencia_id: pagoId, estado: 'resuelta' });
+  emitRecursoActualizado('pagos');
+
+  try {
+    await sendText(
+      pago.cliente_telefono,
+      `✅ ¡Confirmamos tu pago${pago.concepto ? ` de *${pago.concepto}*` : ''}! En breve nos comunicamos para coordinar la entrega.`,
+    );
+  } catch (e) {
+    const motivo = motivoErrorWa(e);
+    console.error('Error avisando pago de catálogo validado:', motivo);
+    await notificarEnvioFallido(pagoId, pago.cliente_telefono, 'aviso de pago de catálogo validado', motivo).catch((e2) =>
+      console.error('Error registrando alerta de envío fallido:', e2),
+    );
+  }
+
+  res.json({ ok: true, tipo: 'pedido_catalogo', monto: pago.monto });
 }
 
 /**
@@ -498,6 +594,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
   if (!pagoTipo) return res.status(404).json({ error: 'Pago inexistente' });
   if (pagoTipo.tipo === 'alargue_retiro') return validarAlargue(req, res, pagoId);
   if (pagoTipo.tipo === 'abono_cc') return validarAbonoCC(req, res, pagoId);
+  if (pagoTipo.tipo === 'pedido_catalogo') return validarPedidoCatalogo(req, res, pagoId);
 
   const parsed = validarSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
