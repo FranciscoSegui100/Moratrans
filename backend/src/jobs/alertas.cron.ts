@@ -21,6 +21,39 @@ async function generarAlertas(): Promise<void> {
      RETURNING id, tipo, referencia_id, mensaje, creado_en`,
   );
 
+  // 1.a) Contenedores ya vencidos que siguen con el cliente sin retiro
+  // programado. La alerta de arriba solo mira las próximas 48h: pasada la
+  // fecha, el contenedor no generaba nada más y quedaba en la calle sin que
+  // nadie lo notara. Mismo criterio que el estado "Vencido" de la pestaña
+  // Contenedores (estado_contrato en contenedores.routes.ts) y que el KPI del
+  // Dashboard — mantener los tres en sync.
+  const vencidosEnCalle = `
+    SELECT c.numero, c.vence_en FROM contenedores c
+     WHERE c.estado = 'entregado' AND c.vence_en IS NOT NULL AND c.vence_en < now()
+       AND NOT EXISTS (
+         SELECT 1 FROM viajes v
+          WHERE v.contenedor_numero = c.numero AND v.tipo = 'retiro' AND v.estado IN ('programado', 'en_curso')
+       )`;
+  const contenedoresVencidos = await query<{ id: string; tipo: string; referencia_id: string; mensaje: string; creado_en: string }>(
+    `INSERT INTO alertas (tipo, referencia_id, mensaje)
+     SELECT 'contenedor_vencido', numero,
+            'Contenedor ' || numero || ' venció el ' || to_char(vence_en, 'DD/MM') || ' y sigue con el cliente sin retiro programado'
+       FROM (${vencidosEnCalle}) vc
+     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+     RETURNING id, tipo, referencia_id, mensaje, creado_en`,
+  );
+  // Se resuelven solas cuando dejan de aplicar (se lo retiró, se programó el
+  // retiro o se extendió el plazo) — y la de "por vencer" de un contenedor
+  // que ya venció también, para no tener dos alertas por lo mismo.
+  await query(
+    `UPDATE alertas SET estado = 'resuelta'
+      WHERE estado <> 'resuelta'
+        AND (
+          (tipo = 'contenedor_vencido' AND referencia_id NOT IN (SELECT numero FROM (${vencidosEnCalle}) vc))
+          OR (tipo = 'contenedor_por_vencer' AND referencia_id IN (SELECT numero FROM (${vencidosEnCalle}) vc))
+        )`,
+  );
+
   // 1.b) Notificación directa por WhatsApp al cliente (24-48h antes del vencimiento)
   // Avisa al cliente que su alquiler está por vencer y le ofrece botones para alargar o pedir retiro.
   try {
@@ -82,9 +115,10 @@ async function generarAlertas(): Promise<void> {
      RETURNING id, tipo, referencia_id, mensaje, creado_en`,
   );
 
-  for (const a of [...porVencer, ...vencidos]) emitAlerta(a);
-  if (porVencer.length + vencidos.length > 0) {
-    console.log(`[cron] ${porVencer.length + vencidos.length} alertas generadas`);
+  const nuevas = [...porVencer, ...contenedoresVencidos, ...vencidos];
+  for (const a of nuevas) emitAlerta(a);
+  if (nuevas.length > 0) {
+    console.log(`[cron] ${nuevas.length} alertas generadas`);
   }
 }
 

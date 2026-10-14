@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, Power, TriangleAlert,
-  Wallet, Bell, type LucideIcon,
+  Wallet, Bell, CalendarClock, type LucideIcon,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
@@ -40,6 +40,8 @@ interface Kpis {
   cobros_pendientes: number;
   cobros_pendientes_monto: string;
   cobros_vencidos: number;
+  contenedores_vencidos: number;
+  contenedores_por_vencer: number;
   viajes_hoy: number;
   viajes_ayer: number;
   entregas_hoy: number;
@@ -278,6 +280,18 @@ export function Dashboard() {
             <>
               <span>${Number(kpis.cobros_pendientes_monto).toLocaleString('es-AR')} adeudado</span>
               {kpis.cobros_vencidos > 0 && <span style={{ color: 'var(--danger)' }}>· {kpis.cobros_vencidos} vencidos (+24h)</span>}
+            </>
+          ) : undefined}
+        />
+        <KpiCard
+          icon={CalendarClock} tint="var(--danger-bg)" fg="var(--danger)"
+          label="Contenedores vencidos" value={kpis ? kpis.contenedores_vencidos : null}
+          caption={kpis ? (
+            <>
+              <Link to="/contenedores?filtro=vencido" style={{ fontWeight: 600 }}>Ver vencidos →</Link>
+              <Link to="/contenedores?filtro=proximos_vencer">
+                {kpis.contenedores_por_vencer} vence{kpis.contenedores_por_vencer !== 1 ? 'n' : ''} en 48h
+              </Link>
             </>
           ) : undefined}
         />

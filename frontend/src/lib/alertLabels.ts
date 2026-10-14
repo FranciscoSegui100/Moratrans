@@ -1,6 +1,7 @@
 /** Etiquetas legibles por tipo de alerta — usado en el sidebar (badge/toast) y en la página Alertas. */
 export const tipoLabel: Record<string, string> = {
   contenedor_por_vencer:      'Contenedor por vencer',
+  contenedor_vencido:         'Contenedor vencido',
   pago_vencido:               'Pago vencido',
   pago_pendiente_validacion:  'Pago pendiente',
   chofer_no_reconocido:       'Chofer no reconocido',

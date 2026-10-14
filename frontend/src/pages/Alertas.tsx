@@ -18,6 +18,9 @@ import { formatearFechaHora } from '../lib/fechas';
 function rutaAlerta(a: Alerta): { to: string; label: string } | null {
   switch (a.tipo) {
     case 'contenedor_por_vencer':
+      return { to: '/contenedores?filtro=proximos_vencer', label: 'Ir a Contenedores' };
+    case 'contenedor_vencido':
+      return { to: '/contenedores?filtro=vencido', label: 'Ir a Contenedores' };
     case 'stock_bajo':
       return { to: '/contenedores', label: 'Ir a Contenedores' };
     case 'pago_vencido':
