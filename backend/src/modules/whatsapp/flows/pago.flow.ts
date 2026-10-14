@@ -241,8 +241,7 @@ export function mensajePedidoPendiente(pedido: PedidoCandidato): string {
   return (
     `🙁 Ya tenés un pedido pendiente de pago — *${pedido.zona}*` +
     `${pedido.precio ? ` (*ARS ${Number(pedido.precio).toLocaleString('es-AR')}*)` : ''}.\n\n` +
-    `Mandá el comprobante de ese primero (o escribí *Ya pagué*) antes de pedir uno nuevo.\n\n` +
-    `_Si tenés dudas, escribí *asesor*._`
+    `¿Querés pagar ese o preferís cancelarlo y pedir otra cosa?`
   );
 }
 

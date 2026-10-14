@@ -566,7 +566,6 @@ pagosRouter.post('/:id/reenviar-aviso', requireRol('admin', 'operador', 'finanza
 
       await enviarTicketPorWhatsApp({
         ticketId: ticket.ticket_id,
-        numeroPedido: info.numero_pedido,
         contenedor: ticket.contenedor_numero,
         zona: info.zona ?? '—',
         destinoDireccion: info.destino_direccion,
@@ -775,7 +774,6 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
     // Envío del PDF (no bloqueante para la respuesta HTTP)
     enviarTicketPorWhatsApp({
       ticketId: result.ticket_id,
-      numeroPedido: info?.numero_pedido ?? null,
       contenedor: result.contenedor,
       zona: info?.zona ?? '—',
       destinoDireccion: info?.destino_direccion ?? null,

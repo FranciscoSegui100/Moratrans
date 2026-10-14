@@ -1,11 +1,11 @@
 import { query } from '../../config/db';
 import { env } from '../../config/env';
-import { sendList, sendText } from './graphApi';
+import { sendList, sendText, sendButtons } from './graphApi';
 import { getSesion, clearSesion, setSesion } from './session.store';
 import { botEstaActivo } from '../../services/botConfig.service';
 import { MENSAJE_BOT_DESACTIVADO } from '../../config/bot.config';
 import { handleCotizacion, handlePedirNuevoContenedor } from './flows/cotizacion.flow';
-import { handlePago, pedidosAbiertos, mensajePedidoPendiente } from './flows/pago.flow';
+import { handlePago, pedidosAbiertos, mensajePedidoPendiente, opcionesMetodoPago } from './flows/pago.flow';
 import { handleChofer } from './flows/chofer.flow';
 import { handleAsesor, escalarAAsesor } from './flows/asesor.flow';
 import { handleRecambio } from './flows/recambio.flow';
@@ -15,7 +15,7 @@ import { iniciarPedidoCatalogo, handlePedidoCatalogo } from './flows/pedidoCatal
 import { handleDetalleMovimientos } from './flows/movimientos.flow';
 import { handleAlargarRetiro } from './flows/alargarRetiro.flow';
 import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
-import { esAsesorDirecto, manejarAsesorDirecto } from './estados';
+import { esAsesorDirecto, manejarAsesorDirecto, manejarRespuestaInvalida } from './estados';
 import type { Sesion } from './session.store';
 
 /**
@@ -271,6 +271,7 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   if (sesion.flujo === 'pedir_entrega') return handlePedirEntrega(m, sesion);
   if (sesion.flujo === 'alargar_retiro') return handleAlargarRetiro(m, sesion);
   if (sesion.flujo === 'pedido_catalogo') return handlePedidoCatalogo(m, sesion);
+  if (sesion.flujo === 'pedido_pendiente') return manejarPedidoPendiente(m, sesion);
 
   // 5) Comandos de arranque
   if (m.seleccionId === 'opt_cotizar' || m.seleccionId === 'opt_serv_contenedores' || t.includes('cotiz') || t.includes('nuevo contenedor') || t.includes('pedir contenedor')) {
@@ -312,10 +313,11 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
  *    "Pedir entrega" (sin comprobante, se confirma solo) — no aplica el
  *    bloqueo de "pagá el anterior primero" de abajo, ahí no hay comprobante
  *    que esperar.
- *  - Resto: si ya tiene un pedido cotizado/confirmado sin pagar, se le pide
- *    que pague ese primero (ver mensajePedidoPendiente en pago.flow.ts) —
- *    evita que se acumulen pedidos sin dueño claro cuando después manda un
- *    comprobante.
+ *  - Resto: si ya tiene un pedido cotizado/confirmado sin pagar, no se lo
+ *    bloquea sin salida — se le ofrece pagar ese o cancelarlo y arrancar uno
+ *    nuevo (ver manejarPedidoPendiente). Antes esto cortaba la conversación
+ *    de punta a punta: un pedido viejo que el cliente ya no quería pagar
+ *    dejaba sin forma de pedir otra cosa hasta mandar un comprobante.
  *  - Ocasional que YA tiene un contenedor: ofrece reusar la última ubicación
  *    verificada en vez de arrancar de cero (handlePedirNuevoContenedor).
  *  - Resto (cliente nuevo o sin contenedor todavía): flujo completo de
@@ -332,8 +334,11 @@ async function iniciarPedirContenedor(m: MensajeEntrante, sesion: Sesion): Promi
 
   const [pendiente] = await pedidosAbiertos(m.from);
   if (pendiente) {
-    await clearSesion(m.from);
-    await sendText(m.from, mensajePedidoPendiente(pendiente));
+    await sendButtons(m.from, mensajePedidoPendiente(pendiente), [
+      { id: 'pedido_pendiente_pagar', title: '💸 Pagar ese' },
+      { id: 'pedido_pendiente_cancelar', title: '❌ Cancelar y pedir otro' },
+    ]);
+    await setSesion({ telefono: m.from, flujo: 'pedido_pendiente', paso: 'elegir_accion', contexto: { pedidoId: pendiente.id } });
     return;
   }
 
@@ -341,6 +346,32 @@ async function iniciarPedirContenedor(m: MensajeEntrante, sesion: Sesion): Promi
     return handlePedirNuevoContenedor(m, { ...sesion, flujo: 'cotizacion', paso: null });
   }
   return handleCotizacion(m, { ...sesion, flujo: 'cotizacion', paso: null });
+}
+
+/**
+ * Respuesta a "Pagar ese" / "Cancelar y pedir otro" (ver iniciarPedirContenedor).
+ * Cancelar solo cambia el estado del pedido viejo a 'cancelado' — no toca
+ * pagos ni contenedores, porque un pedido 'cotizado'/'confirmado' sin pago
+ * validado nunca llegó a reservar nada — y relanza iniciarPedirContenedor,
+ * que ahora sigue de largo porque pedidosAbiertos() ya no lo va a encontrar.
+ */
+async function manejarPedidoPendiente(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  if (m.seleccionId === 'pedido_pendiente_pagar') {
+    // No se delega a handlePago con paso null: esa función solo sabe arrancar
+    // desde un mensaje de texto libre (m.tipo === 'text'); con la respuesta
+    // de un botón caía al mensaje genérico de "mandá la imagen o PDF" en vez
+    // de preguntar el medio de pago.
+    await setSesion({ ...sesion, flujo: 'pago', paso: 'elegir_metodo_pago', contexto: {} });
+    await sendButtons(m.from, '💳 ¿Cómo vas a pagar?', await opcionesMetodoPago(m.from));
+    return;
+  }
+  if (m.seleccionId === 'pedido_pendiente_cancelar') {
+    const pedidoId = sesion.contexto?.pedidoId as string | undefined;
+    if (pedidoId) await query(`UPDATE pedidos SET estado = 'cancelado' WHERE id = $1`, [pedidoId]);
+    await sendText(m.from, '👍 Cancelamos ese pedido.');
+    return iniciarPedirContenedor(m, { ...sesion, flujo: null, paso: null, contexto: {} });
+  }
+  await manejarRespuestaInvalida(m, 'Elegí "💸 Pagar ese" o "❌ Cancelar y pedir otro".');
 }
 
 /**

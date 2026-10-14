@@ -697,7 +697,6 @@ async function finalizarPedidoCuentaCorriente(
 
   enviarTicketPorWhatsApp({
     ticketId: result.ticket_id,
-    numeroPedido: pedido.numero_pedido,
     contenedor: result.contenedor,
     zona: datos.departamento,
     destinoDireccion: datos.destinoDireccion,

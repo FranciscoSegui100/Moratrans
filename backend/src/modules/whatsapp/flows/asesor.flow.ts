@@ -48,10 +48,7 @@ export async function escalarAAsesor(to: string, sesion: Sesion, motivo: string)
   // La conversación pasa a "Requiere vos": que la lista de Conversaciones lo
   // muestre en vivo, no recién tras un F5.
   emitConversacionActualizada({ telefono: to, modo_humano: true });
-  const textoAviso =
-    '🙋 ¡Ya avisamos a un asesor! En breve te va a contactar por acá mismo.\n\n' +
-    '_Tenés una ventana de 24hs para seguir esta conversación: si pasa ese tiempo sin que escribas, ' +
-    'WhatsApp la cierra y vas a tener que volver a escribirnos para retomarla._';
+  const textoAviso = '🙋 ¡Ya avisamos a un asesor! En breve te va a contactar por acá mismo.';
   await sendText(to, textoAviso);
 }
 
