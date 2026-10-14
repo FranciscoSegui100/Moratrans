@@ -1,4 +1,5 @@
 import { query } from '../../config/db';
+import { env } from '../../config/env';
 import { sendList, sendText } from './graphApi';
 import { getSesion, clearSesion, setSesion } from './session.store';
 import { botEstaActivo } from '../../services/botConfig.service';
@@ -37,6 +38,45 @@ async function enviarMenuGestionar(to: string): Promise<void> {
     ],
   );
   await setSesion({ telefono: to, flujo: 'menu', paso: null, contexto: {} });
+}
+
+/**
+ * Rubros del catálogo de WhatsApp, en el mismo orden en que figuran ahí.
+ * `opt_serv_contenedores` es el único que el bot resuelve solo (va al flujo
+ * de cotización de siempre); el resto escala a un asesor nombrando el rubro.
+ */
+const OTROS_SERVICIOS = [
+  { id: 'opt_serv_maquinaria_vial', title: '🚜 Maquinaria vial' },
+  { id: 'opt_serv_maquinaria_agricola', title: '🌾 Maquinaria agrícola' },
+  { id: 'opt_serv_safe_box', title: '🔒 Safe box' },
+  { id: 'opt_serv_camiones', title: '🚛 Camiones' },
+  { id: 'opt_serv_contenedores', title: '📦 Contenedores' },
+  { id: 'opt_serv_aridos', title: '🪨 Áridos' },
+];
+
+/** Submenú "Otros servicios": mismo esquema de un solo paso que enviarMenuGestionar. */
+async function enviarMenuOtrosServicios(to: string): Promise<void> {
+  await sendList(
+    to,
+    '📨 Otros servicios',
+    '¿Sobre qué servicio querés consultar?',
+    'Ver opciones',
+    OTROS_SERVICIOS,
+  );
+  await setSesion({ telefono: to, flujo: 'menu', paso: null, contexto: {} });
+}
+
+const IDS_CONTENEDOR_CATALOGO = env.WA_CATALOGO_IDS_CONTENEDOR.split(',').map((id) => id.trim().toLowerCase()).filter(Boolean);
+
+/**
+ * ¿El carrito del catálogo trae únicamente contenedores? Meta manda solo el
+ * retailer_id de cada producto (sin nombre), así que se compara contra los
+ * ids configurados. Un carrito mixto no cuenta: lo que no es contenedor lo
+ * tiene que cotizar un asesor, y partir el pedido en dos confundiría más.
+ */
+function esPedidoDeContenedor(m: MensajeEntrante): boolean {
+  const items = m.orderItems ?? [];
+  return items.length > 0 && items.every((it) => IDS_CONTENEDOR_CATALOGO.includes(String(it.retailerId ?? '').trim().toLowerCase()));
 }
 
 /** Mensaje normalizado, agnóstico del formato crudo de Meta. */
@@ -174,20 +214,30 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
     return;
   }
 
-  // "Otros servicios": a diferencia de "Hablar con asesor" (pideAsesor, abajo),
-  // que primero ofrece self-service y recién escala tras un par de pedidos
-  // (ver handleAsesor), acá no hay nada que el bot pueda resolver solo — el
-  // precio y las condiciones de un servicio fuera del alquiler los define un
-  // asesor, así que se escala directo al primer toque.
+  // "Otros servicios": muestra los rubros del catálogo. A diferencia de
+  // "Hablar con asesor" (pideAsesor, abajo), que primero ofrece self-service
+  // y recién escala tras un par de pedidos (ver handleAsesor), al elegir un
+  // rubro no hay nada que el bot pueda resolver solo — el precio y las
+  // condiciones los define un asesor, así que se escala directo, ya con el
+  // rubro en la alerta. La excepción es "Contenedores", que es el alquiler
+  // de siempre y sigue por el flujo de cotización.
   if (!enModoHumano && m.seleccionId === 'opt_otros_servicios') {
-    return escalarAAsesor(m.from, sesion, `${m.from} consultó por "Otros servicios" (fuera del alquiler de contenedores)`);
+    return enviarMenuOtrosServicios(m.from);
+  }
+  const servicio = OTROS_SERVICIOS.find((s) => s.id === m.seleccionId);
+  if (!enModoHumano && servicio && servicio.id !== 'opt_serv_contenedores') {
+    const rubro = servicio.title.replace(/^\S+\s/, ''); // sin el emoji
+    return escalarAAsesor(m.from, sesion, `${m.from} consultó por "${rubro}" (Otros servicios)`);
   }
 
   // Pedido armado en el catálogo de WhatsApp (carrito): no hay precio ni
   // condiciones que el bot pueda resolver solo, así que junta primero
   // nombre, dirección, descripción y medio de pago (ver
   // pedidoCatalogo.flow.ts) antes de escalar al asesor con todo el detalle.
+  // Excepción: un pedido de contenedor sí lo resuelve el bot, así que entra
+  // directo al flujo de cotización, igual que si hubiera tocado "Cotizar".
   if (!enModoHumano && m.tipo === 'order') {
+    if (esPedidoDeContenedor(m)) return iniciarPedirContenedor(m, sesion);
     return iniciarPedidoCatalogo(m, sesion);
   }
 
@@ -219,7 +269,7 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   if (sesion.flujo === 'pedido_catalogo') return handlePedidoCatalogo(m, sesion);
 
   // 5) Comandos de arranque
-  if (m.seleccionId === 'opt_cotizar' || t.includes('cotiz') || t.includes('nuevo contenedor') || t.includes('pedir contenedor')) {
+  if (m.seleccionId === 'opt_cotizar' || m.seleccionId === 'opt_serv_contenedores' || t.includes('cotiz') || t.includes('nuevo contenedor') || t.includes('pedir contenedor')) {
     return iniciarPedirContenedor(m, sesion);
   }
   if (
@@ -334,7 +384,7 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
           : []),
         { id: 'opt_detalle_movimientos', title: '📊 Resumen de cuenta', description: 'Descargá el detalle de tus entregas y retiros en Excel' },
         { id: 'opt_pagar', title: '💸 Enviar comprobante', description: 'Si querés transferir algo a tu cuenta corriente ahora' },
-        { id: 'opt_otros_servicios', title: '📨 Otros servicios', description: 'Consultas fuera del alquiler de contenedores' },
+        { id: 'opt_otros_servicios', title: '📨 Otros servicios', description: 'Maquinaria, safe box, camiones, áridos y más' },
         { id: 'opt_asesor', title: '🙋 Hablar con asesor', description: 'Te comunicamos con una persona del equipo de MoraTrans' },
       ],
     );
@@ -348,7 +398,7 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
       ? [{ id: 'opt_gestionar', title: '🛠️ Gestionar contenedor', description: 'Retiro anticipado, cambio de contenedor o extensión del plazo' }]
       : []),
     { id: 'opt_pagar', title: '💸 Enviar comprobante', description: 'Mandá la foto o PDF de tu transferencia para que la validemos' },
-    { id: 'opt_otros_servicios', title: '📨 Otros servicios', description: 'Consultas fuera del alquiler de contenedores' },
+    { id: 'opt_otros_servicios', title: '📨 Otros servicios', description: 'Maquinaria, safe box, camiones, áridos y más' },
     { id: 'opt_asesor', title: '🙋 Hablar con asesor', description: 'Te comunicamos con una persona del equipo de MoraTrans' },
   ];
 

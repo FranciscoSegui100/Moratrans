@@ -7,9 +7,17 @@ import { logMensaje } from '../whatsapp/chatLog.service';
 import { getSesion, setSesion } from '../whatsapp/session.store';
 import { resolverAsesor } from '../whatsapp/flows/asesor.flow';
 import { emitConversacionActualizada } from '../../config/socket';
+import path from 'path';
+import { decrypt, decryptBuffer } from '../../services/crypto.service';
+import { descargarArchivo } from '../../services/storage.service';
+import { mimeDeExtension } from '../pagos/pagos.routes';
+import type { Rol } from '../../middleware/rbac';
 
 export const chatRouter = Router();
 chatRouter.use(requireAuth);
+
+/** Quién puede abrir los archivos que mandan los clientes — mismo criterio que GET /api/pagos/:id/comprobante. */
+const ROLES_ADJUNTOS: Rol[] = ['admin', 'operador', 'finanzas'];
 
 /**
  * GET /api/chat — lista TODAS las conversaciones del bot (no solo las que piden asesor), con hilo completo y pausa manual. Suma el nombre del
@@ -76,14 +84,43 @@ chatRouter.get('/', async (_req: Request, res: Response) => {
  * más de 200 mensajes).
  */
 chatRouter.get('/:telefono', async (req: Request, res: Response) => {
+  // `tiene_adjunto`: el cliente mandó una imagen/PDF en ese mensaje y quedó
+  // guardada (ver adjuntarAUltimoMensaje) — el panel la abre con la ruta de
+  // abajo. Mismos roles que pueden abrir comprobantes en Pagos.
+  const verAdjuntos = ROLES_ADJUNTOS.includes(req.user!.rol);
   const rows = await query(
-    `SELECT id, origen, texto, creado_en FROM (
-       SELECT id, origen, texto, creado_en FROM mensajes_chat
+    `SELECT id, origen, texto, creado_en, tiene_adjunto FROM (
+       SELECT id, origen, texto, creado_en, ($2::boolean AND adjunto_ruta IS NOT NULL) AS tiene_adjunto
+         FROM mensajes_chat
         WHERE telefono = $1 ORDER BY creado_en DESC LIMIT 200
      ) ultimos ORDER BY creado_en ASC`,
-    [req.params.telefono],
+    [req.params.telefono, verAdjuntos],
   );
   res.json(rows);
+});
+
+/**
+ * GET /api/chat/mensaje/:id/adjunto — sirve el archivo que el cliente mandó
+ * en ese mensaje. Se guarda cifrado en el bucket (ver pago.flow.ts) y se
+ * descifra recién acá, en memoria — igual que GET /api/pagos/:id/comprobante.
+ */
+chatRouter.get('/mensaje/:id/adjunto', requireRol(...ROLES_ADJUNTOS), async (req: Request, res: Response) => {
+  const [mensaje] = await query<{ adjunto_ruta: string | null }>(
+    'SELECT adjunto_ruta FROM mensajes_chat WHERE id = $1',
+    [req.params.id],
+  );
+  if (!mensaje?.adjunto_ruta) return res.status(404).json({ error: 'Adjunto no encontrado' });
+
+  // basename() evita path traversal aunque el valor descifrado sea de confianza (defensa en profundidad).
+  const filename = path.basename(decrypt(mensaje.adjunto_ruta));
+  try {
+    const buffer = decryptBuffer(await descargarArchivo(`comprobantes/${filename}`));
+    res.setHeader('Content-Type', mimeDeExtension(path.extname(filename)));
+    res.send(buffer);
+  } catch (e) {
+    console.error('Error descargando adjunto de chat de Supabase Storage:', e);
+    res.status(404).json({ error: 'Archivo no encontrado en el storage' });
+  }
 });
 
 /**

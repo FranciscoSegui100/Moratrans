@@ -21,3 +21,22 @@ export async function logMensaje(
   );
   if (row) emitMensajeChat(row);
 }
+
+/**
+ * Cuelga un archivo recién guardado en Storage del mensaje del cliente que
+ * lo trajo (el último "📎 Imagen"/"📎 Documento" de ese teléfono: el webhook
+ * lo loguea justo antes de enrutar), para que se pueda abrir desde
+ * Conversaciones. Nunca corta el flujo: es solo para la vista del panel.
+ */
+export async function adjuntarAUltimoMensaje(telefono: string, rutaCifrada: string): Promise<void> {
+  await query(
+    `UPDATE mensajes_chat SET adjunto_ruta = $2
+      WHERE id = (
+        SELECT id FROM mensajes_chat
+         WHERE telefono = $1 AND origen = 'cliente' AND adjunto_ruta IS NULL
+           AND texto IN ('📎 Imagen', '📎 Documento')
+         ORDER BY creado_en DESC LIMIT 1
+      )`,
+    [telefono, rutaCifrada],
+  ).catch((e) => console.error('Error adjuntando archivo al mensaje:', e));
+}

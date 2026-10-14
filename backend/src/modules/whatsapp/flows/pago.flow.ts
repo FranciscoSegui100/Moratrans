@@ -1,6 +1,7 @@
 import { query } from '../../../config/db';
 import { sendText, sendButtons, sendList } from '../graphApi';
 import { downloadMedia } from '../graphApi';
+import { adjuntarAUltimoMensaje } from '../chatLog.service';
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { encrypt, encryptBuffer } from '../../../services/crypto.service';
@@ -90,19 +91,7 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   }
 
   try {
-    // 0) Sin ningún pedido abierto no hay nada que pagar — antes esto
-    // igual registraba un pago 'pendiente' con pedido_id NULL, que le
-    // llegaba al operador sin zona ni precio ni contexto para revisar.
-    const pedidosPrevios = await pedidosAbiertos(to);
-    if (pedidosPrevios.length === 0) {
-      await sendText(
-        to,
-        '🙁 Todavía no tenés ningún pedido para pagar.\n\nEscribí *Cotizar* para pedir un contenedor y después mandame el comprobante.',
-      );
-      return;
-    }
-
-    // 1) Descargar el media desde la Graph API y guardarlo en Supabase Storage
+    // 0) Descargar el media desde la Graph API y guardarlo en Supabase Storage
     // (no en disco: el filesystem de Railway es efímero y se pierde en cada redeploy).
     // El contenido se cifra ANTES de subirlo (sección 9): el bucket de un
     // tercero nunca guarda el binario en claro, ni siquiera si su config de
@@ -113,7 +102,29 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     const rutaStorage = `comprobantes/${filename}`;
     await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
     const rutaCifrada = encrypt(rutaStorage);
+    // Va antes del chequeo de pedidos a propósito: aunque no haya nada que
+    // pagar todavía, el operador tiene que poder ver en Conversaciones lo que
+    // mandó el cliente.
+    await adjuntarAUltimoMensaje(to, rutaCifrada);
     const mediaId = m.mediaId ?? null;
+
+    // 1) Sin ningún pedido abierto no hay nada que pagar — antes esto
+    // igual registraba un pago 'pendiente' con pedido_id NULL, que le
+    // llegaba al operador sin zona ni precio ni contexto para revisar.
+    const pedidosPrevios = await pedidosAbiertos(to);
+    if (pedidosPrevios.length === 0) {
+      // Conversación tomada por un operador (modo humano): las imágenes
+      // siguen entrando acá para no frenar un pago real (ver messageRouter,
+      // paso 3), pero si no hay nada que pagar es una foto cualquiera de la
+      // charla con el operador — el archivo ya quedó visible en
+      // Conversaciones (arriba) y el bot no tiene que meterse a contestar.
+      if (sesion.contexto?.modoHumano) return;
+      await sendText(
+        to,
+        '🙁 Todavía no tenés ningún pedido para pagar.\n\nEscribí *Cotizar* para pedir un contenedor y después mandame el comprobante.',
+      );
+      return;
+    }
 
     // 2) ¿A qué pedido corresponde? Si el cliente tiene más de una cotización
     // abierta a la vez, no lo podemos asumir por orden cronológico solo —
@@ -471,6 +482,7 @@ async function registrarAbonoCuentaCorriente(m: MensajeEntrante): Promise<void> 
     const rutaStorage = `comprobantes/${filename}`;
     await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
     const rutaCifrada = encrypt(rutaStorage);
+    await adjuntarAUltimoMensaje(to, rutaCifrada);
 
     const [pago] = await query<{ id: string }>(
       `INSERT INTO pagos (cliente_telefono, url_comprobante, media_id, estado, es_cuenta_corriente, tipo)

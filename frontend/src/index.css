@@ -1380,6 +1380,8 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   margin-bottom: 2px;
 }
 .chat-burbuja-texto { font-size: 0.84rem; color: var(--text-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Comprobante intercalado en el hilo: más grande que la miniatura de 56px de Comprobantes. */
+.chat-burbuja .comprobante-thumb { display: block; width: 180px; height: auto; max-height: 240px; margin-top: 6px; }
 .chat-burbuja-hora { font-size: 0.66rem; color: var(--text-muted); margin-top: 2px; font-family: var(--font-mono); }
 .chat-asesor-input { display: flex; gap: 8px; }
 .chat-asesor-input .form-input { flex: 1; }

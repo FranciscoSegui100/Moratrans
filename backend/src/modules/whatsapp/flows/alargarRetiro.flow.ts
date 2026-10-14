@@ -4,6 +4,7 @@ import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { encrypt, encryptBuffer } from '../../../services/crypto.service';
 import { subirArchivo } from '../../../services/storage.service';
+import { adjuntarAUltimoMensaje } from '../chatLog.service';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { datosBancarios, tieneCuentaCorrienteAprobada } from './pago.flow';
 import { manejarRespuestaInvalida } from '../estados';
@@ -194,6 +195,7 @@ async function manejarComprobante(m: MensajeEntrante, sesion: Sesion): Promise<v
     const rutaStorage = `comprobantes/${filename}`;
     await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
     const rutaCifrada = encrypt(rutaStorage);
+    await adjuntarAUltimoMensaje(to, rutaCifrada);
     await registrarAlargue(to, sesion, { rutaCifrada, mediaId: m.mediaId ?? null });
   } catch (err) {
     console.error('Error en flujo de alargue:', err);

@@ -29,6 +29,12 @@ const schema = z.object({
   WA_ACCESS_TOKEN: z.string().default('mock'),
   WA_VERIFY_TOKEN: z.string().default('dev-verify'),
   WA_APP_SECRET: z.string().default(''),
+  // Content IDs (retailer_id) de los productos del catálogo de WhatsApp que
+  // son alquiler de contenedores, separados por coma. Un pedido del catálogo
+  // con solo esos productos arranca el flujo de cotización en vez de escalar
+  // a un asesor (ver messageRouter.ts). Vacío = todo pedido va al asesor.
+  // Default: el Content ID que tiene hoy el producto "Contenedores".
+  WA_CATALOGO_IDS_CONTENEDOR: z.string().default('Contenedores'),
 
   SYNC_API_KEY: z.string().min(16),
 

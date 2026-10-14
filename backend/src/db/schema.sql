@@ -338,6 +338,7 @@ CREATE TABLE mensajes_chat (
   origen     origen_mensaje_chat NOT NULL,
   texto      TEXT NOT NULL,
   usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL, -- sólo si origen = 'operador'
+  adjunto_ruta TEXT,                          -- ruta cifrada del archivo que mandó el cliente (imagen/PDF)
   creado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_mensajes_chat_telefono ON mensajes_chat(telefono, creado_en);

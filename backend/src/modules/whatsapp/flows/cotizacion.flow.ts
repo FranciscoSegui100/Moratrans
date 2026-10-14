@@ -635,7 +635,7 @@ async function finalizarPedido(to: string, m: MensajeEntrante, sesion: Sesion): 
 
   await sendButtons(
     to,
-    `✅ *Pedido #${pedido.numero_pedido} confirmado*\n\n¿Cómo vas a pagar?`,
+    '✅ *Pedido confirmado*\n\n¿Cómo vas a pagar?',
     await opcionesMetodoPago(to),
   );
   // Reusa la misma máquina de estados de pago.flow.ts (elegir_metodo_pago):
@@ -712,7 +712,7 @@ async function finalizarPedidoCuentaCorriente(
   await clearSesion(to);
   await sendText(
     to,
-    `✅ ¡Listo! Tu pedido #${pedido.numero_pedido} quedó *confirmado* por cuenta corriente — en breve te asignamos contenedor y chofer.\n\n` +
+    `✅ ¡Listo! Tu pedido quedó *confirmado* por cuenta corriente — en breve te asignamos contenedor y chofer.\n\n` +
       '_Para ver el detalle y el total pendiente de tu cuenta, escribí *Resumen de cuenta* en el menú._',
   );
 }
