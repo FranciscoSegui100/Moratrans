@@ -336,7 +336,7 @@ async function iniciarPedirContenedor(m: MensajeEntrante, sesion: Sesion): Promi
   if (pendiente) {
     await sendButtons(m.from, mensajePedidoPendiente(pendiente), [
       { id: 'pedido_pendiente_pagar', title: '💸 Pagar ese' },
-      { id: 'pedido_pendiente_cancelar', title: '❌ Cancelar y pedir otro' },
+      { id: 'pedido_pendiente_cancelar', title: '❌ Cancelarlo' },
     ]);
     await setSesion({ telefono: m.from, flujo: 'pedido_pendiente', paso: 'elegir_accion', contexto: { pedidoId: pendiente.id } });
     return;
