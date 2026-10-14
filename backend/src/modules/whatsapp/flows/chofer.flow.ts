@@ -377,7 +377,17 @@ async function aplicarVacioRecambio(
         WHERE numero = $1`,
       [numero, DIAS_ALQUILER_ANTES_RETIRO, `chofer:${choferId}`],
     );
-    await query(`UPDATE viajes SET completada_en = now() WHERE id = $1`, [entregaId]);
+    const [entregaViaje] = await query<{ cliente_telefono: string | null }>(
+      `UPDATE viajes SET completada_en = now() WHERE id = $1 RETURNING cliente_telefono`,
+      [entregaId],
+    );
+    if (entregaViaje?.cliente_telefono) {
+      notificarClienteServicioFinalizado({
+        clienteTelefono: entregaViaje.cliente_telefono,
+        tipo: 'entrega',
+        contenedorNumero: numero,
+      }).catch((e) => console.error('Error enviando encuesta al cliente (recambio):', e));
+    }
 
     const { texto: mensajeLleno, siguienteEnviada: siguienteLleno } = await cascadearParejaRecambio(numero, choferId, choferNombre);
 
@@ -545,16 +555,24 @@ async function aplicarEstado(
         return menuChofer(to, choferNombre);
       }
       const retiroId = retiroExistente.id;
-      await query(
+      const [retiroActualizado] = await query<{ cliente_telefono: string | null }>(
         `UPDATE viajes SET estado = 'en_curso', completada_en = now(),
                 chofer_id = COALESCE(chofer_id, $2),
                 destino_direccion = COALESCE(destino_direccion, $3),
                 zona = COALESCE(zona, $4),
                 ubicacion_id = COALESCE(ubicacion_id, $5),
                 ubicacion_direccion = COALESCE(ubicacion_direccion, $6)
-          WHERE id = $1`,
+          WHERE id = $1
+          RETURNING cliente_telefono`,
         [retiroExistente.id, choferId, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
       );
+      if (retiroActualizado?.cliente_telefono) {
+        notificarClienteServicioFinalizado({
+          clienteTelefono: retiroActualizado.cliente_telefono,
+          tipo: 'retiro',
+          contenedorNumero: numero,
+        }).catch((e) => console.error('Error enviando encuesta de retiro al cliente:', e));
+      }
       await query(
         `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
         [numero, `chofer:${choferId}`],
@@ -640,13 +658,22 @@ async function aplicarEstado(
     // hace X min" por chofer). Solo aplica acá — 'retirado' ya se marca más
     // arriba, donde crea/actualiza su propia fila de viajes.
     const entregasCompletadas = estado === 'entregado'
-      ? await query<{ id: string }>(
+      ? await query<{ id: string; cliente_telefono: string | null }>(
           `UPDATE viajes SET completada_en = now()
             WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
-            RETURNING id`,
+            RETURNING id, cliente_telefono`,
           [numero, choferId],
         )
       : [];
+    for (const ec of entregasCompletadas) {
+      if (ec.cliente_telefono) {
+        notificarClienteServicioFinalizado({
+          clienteTelefono: ec.cliente_telefono,
+          tipo: 'entrega',
+          contenedorNumero: numero,
+        }).catch((e) => console.error('Error enviando encuesta de entrega al cliente:', e));
+      }
+    }
     // Si esto es el vacío de un recambio y el lleno pareja ya está listo
     // (entregado), se retira en el mismo momento (yendo a vaciar) — así no
     // importa si el chofer marca primero el vacío o el lleno.

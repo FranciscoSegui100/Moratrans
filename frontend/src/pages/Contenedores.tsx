@@ -314,11 +314,15 @@ export function Contenedores() {
                   )}
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
-                  {c.vence_en ? (
-                    <span style={{ color: new Date(c.vence_en) < new Date() ? 'var(--danger)' : 'var(--warning)' }}>
-                      {formatearFechaHora(c.vence_en)}
-                    </span>
-                  ) : (
+                  {c.vence_en ? (() => {
+                    const diffMs = new Date(c.vence_en).getTime() - Date.now();
+                    const color = diffMs < 0 ? 'var(--danger)' : diffMs <= 48 * 3600 * 1000 ? 'var(--warning)' : 'inherit';
+                    return (
+                      <span style={{ color, fontWeight: diffMs <= 48 * 3600 * 1000 ? 600 : 'normal' }}>
+                        {formatearFechaHora(c.vence_en)}
+                      </span>
+                    );
+                  })() : (
                     <span className="text-muted">—</span>
                   )}
                 </td>

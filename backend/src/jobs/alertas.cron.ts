@@ -31,18 +31,23 @@ async function generarAlertas(): Promise<void> {
       cliente_nombre: string | null;
     }>(
       `SELECT c.numero, to_char(c.vence_en, 'DD/MM HH24:MI') AS vence_en,
-              v.cliente_telefono, cl.nombre AS cliente_nombre
+              ultima.cliente_telefono, cl.nombre AS cliente_nombre
          FROM contenedores c
-         JOIN viajes v ON v.contenedor_numero = c.numero AND v.tipo = 'entrega'
-         LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
+         CROSS JOIN LATERAL (
+           SELECT v.cliente_telefono
+             FROM viajes v
+            WHERE v.contenedor_numero = c.numero AND v.tipo = 'entrega' AND v.estado <> 'cancelado'
+            ORDER BY v.creado_en DESC LIMIT 1
+         ) ultima
+         LEFT JOIN clientes cl ON cl.telefono = ultima.cliente_telefono
         WHERE c.estado = 'entregado'
           AND c.vence_en IS NOT NULL
           AND c.vence_en BETWEEN now() AND now() + interval '48 hours'
-          AND v.cliente_telefono IS NOT NULL
+          AND ultima.cliente_telefono IS NOT NULL
           -- Evita enviar más de un aviso por WhatsApp para el mismo contenedor cada 24 horas:
           AND NOT EXISTS (
             SELECT 1 FROM mensajes_chat m
-             WHERE m.telefono = v.cliente_telefono
+             WHERE m.telefono = ultima.cliente_telefono
                AND m.origen = 'bot'
                AND m.texto LIKE '%Contenedor ' || c.numero || '%'
                AND m.creado_en > now() - interval '24 hours'

@@ -170,7 +170,6 @@ async function avisarChoferAsignacion(
       avisoEfectivoChofer(info?.medio_pago, info?.precio),
     [{ id: `cont:entregado:${contenedor}`, title: '📦 Ya entregué' }],
   );
-  await menuChofer(chofer.telefono, chofer.nombre);
 }
 
 /**

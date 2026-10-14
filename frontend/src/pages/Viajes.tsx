@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X, Plus, MapPin, Printer, FileText } from 'lucide-react';
+import { ArrowUpFromLine, ArrowDownToLine, RefreshCw, X, Plus, MapPin, Printer, FileText, Ban } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -193,6 +193,17 @@ export function Viajes() {
     }
   }
 
+  async function cancelarViaje(id: string) {
+    if (!confirm('¿Seguro que deseás cancelar este viaje? Si tiene un contenedor asignado o reservado, quedará liberado.')) return;
+    try {
+      await api.patch(`/api/viajes/${id}`, { estado: 'cancelado' });
+      cargar();
+      show('info', 'Viaje cancelado');
+    } catch (err: any) {
+      show('error', 'No se pudo cancelar el viaje', err.response?.data?.error);
+    }
+  }
+
   const viajesActivos = viajesEnRango.filter((v) => v.estado === 'programado' || v.estado === 'en_curso');
   const viajesHistorial = viajesEnRango.filter((v) => v.estado === 'completado' || v.estado === 'cancelado');
   const viajesAMostrar = pestana === 'activos' ? viajesActivos : viajesHistorial;
@@ -298,6 +309,7 @@ export function Viajes() {
               <th>Importe</th>
               <th>Ruta</th>
               <th>Comprobantes</th>
+              <th style={{ width: '40px' }} />
             </tr>
           </thead>
           <tbody>
@@ -485,11 +497,25 @@ export function Viajes() {
                     );
                   })()}
                 </td>
+                <td>
+                  {(v.estado === 'programado' || v.estado === 'en_curso') && (
+                    <RoleGate roles={['admin', 'operador']}>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ color: 'var(--danger)', padding: '4px 6px' }}
+                        title="Cancelar viaje"
+                        onClick={() => cancelarViaje(v.id)}
+                      >
+                        <Ban size={13} strokeWidth={2} />
+                      </button>
+                    </RoleGate>
+                  )}
+                </td>
               </tr>
             ))}
             {viajesAMostrar.length === 0 && (
               <tr>
-                <td colSpan={14} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={15} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   {pestana === 'activos' ? 'No hay viajes activos o programados en el rango' : 'No hay viajes en el historial para el rango'}
                 </td>
               </tr>

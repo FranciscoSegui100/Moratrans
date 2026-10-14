@@ -28,7 +28,6 @@ export const pool = new Pool({
   keepAlive: true,
   keepAliveInitialDelayMillis: 10_000,
   connectionTimeoutMillis: 10_000,
-  statement_timeout: 30_000,
   query_timeout: 30_000,
   ssl: esSupabase
     ? { rejectUnauthorized: true, ca: SUPABASE_CA }

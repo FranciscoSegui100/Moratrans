@@ -99,21 +99,13 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     return;
   }
 
-  // Retiro ANTICIPADO: no tiene sentido ofrecer una fecha que ya supere la
-  // que estaba pactada (vence_en) — eso ya no sería "adelantarlo". Si no hay
-  // vence_en cargado, no hay tope que aplicar y se ofrecen los 3 días igual.
+  // Retiro: si todavía faltan varios días para el vencimiento se ofrecen los
+  // días antes de la fecha pactada; si ya está en fecha de vencimiento (o vencido),
+  // se ofrecen los próximos días hábiles disponibles para coordinar el retiro.
   const venceEn = sesion.contexto.venceEn as string | null;
-  const dias = proximosDiasHabiles(DIAS_A_OFRECER_RETIRO_ANTICIPADO).filter((d) => !venceEn || d.fecha <= venceEn);
-
-  if (dias.length === 0) {
-    const numero = sesion.contexto.numero as string;
-    await escalarAAsesor(
-      to,
-      sesion,
-      `${to} pidió un retiro anticipado del contenedor ${numero}, pero ya está en la fecha pactada de retiro (${venceEn}) o después`,
-    );
-    return;
-  }
+  const todosDias = proximosDiasHabiles(DIAS_A_OFRECER_RETIRO_ANTICIPADO);
+  const diasAnticipados = todosDias.filter((d) => !venceEn || d.fecha <= venceEn);
+  const dias = diasAnticipados.length > 0 ? diasAnticipados : todosDias;
 
   await sendList(
     to,
