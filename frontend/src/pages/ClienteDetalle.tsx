@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Download, Send, Pencil, Check, X, Wallet, Receipt, CircleDollarSign, Plus, Trash2, Printer } from 'lucide-react';
+import { ArrowLeft, Download, Send, Pencil, Check, X, Wallet, Receipt, CircleDollarSign, Plus, Trash2, Printer, MessageCircle } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -425,11 +425,16 @@ export function ClienteDetalle() {
           <Link to="/clientes" className="btn btn-ghost btn-sm" style={{ margin: 0 }}>
             <ArrowLeft size={14} strokeWidth={1.75} /> Volver a Clientes
           </Link>
-          <RoleGate roles={['admin', 'operador', 'finanzas']}>
-            <button className="btn btn-danger btn-sm" onClick={eliminarCliente} title="Eliminar cliente">
-              <Trash2 size={13} strokeWidth={1.75} /> Eliminar cliente
-            </button>
-          </RoleGate>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <Link to={`/conversaciones?tel=${encodeURIComponent(telefono)}`} className="btn btn-primary btn-sm">
+              <MessageCircle size={13} strokeWidth={1.75} /> Ir a la conversación
+            </Link>
+            <RoleGate roles={['admin', 'operador', 'finanzas']}>
+              <button className="btn btn-danger btn-sm" onClick={eliminarCliente} title="Eliminar cliente">
+                <Trash2 size={13} strokeWidth={1.75} /> Eliminar cliente
+              </button>
+            </RoleGate>
+          </div>
         </div>
         <h2>{cliente?.nombre ?? telefono}</h2>
         <p>

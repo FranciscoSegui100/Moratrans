@@ -189,7 +189,7 @@ export function Clientes() {
           onClick={() => setSoloConDeuda((v) => !v)}
           style={{ marginLeft: 'auto' }}
         >
-          💸 Solo con deuda ({clientesConDeudaCount})
+          💸 Clientes con deuda ({clientesConDeudaCount})
         </button>
       </div>
 
