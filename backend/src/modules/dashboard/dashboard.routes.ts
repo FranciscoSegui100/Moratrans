@@ -20,6 +20,8 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
     contenedores_activos: number;
     contenedores_reservados: number;
     contenedores_disponibles: number;
+    contenedores_por_vencer: number;
+    contenedores_vencidos: number;
     cobros_pendientes: number;
     cobros_pendientes_monto: string;
     cobros_vencidos: number;
@@ -82,6 +84,19 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
        (SELECT count(*) FROM contenedores WHERE estado = 'entregado')::int                AS contenedores_activos,
        (SELECT count(*) FROM contenedores WHERE estado = 'reservado')::int                AS contenedores_reservados,
        (SELECT count(*) FROM contenedores WHERE estado = 'disponible')::int               AS contenedores_disponibles,
+       -- Mismo criterio que alertas.cron.ts (ventana de 48hs) para que el
+       -- número de acá y la alerta que genera el cron nunca se contradigan.
+       (SELECT count(*) FROM contenedores
+         WHERE estado = 'entregado' AND vence_en IS NOT NULL
+           AND vence_en BETWEEN now() AND now() + interval '48 hours')::int
+                                                                                           AS contenedores_por_vencer,
+       -- Contenedores que ya pasaron su vencimiento: el cron de alertas HOY
+       -- deja de avisar sobre ellos apenas se cruza la fecha (solo cubre la
+       -- ventana previa), así que sin este número quedaban sin seguimiento
+       -- en ningún lado del panel.
+       (SELECT count(*) FROM contenedores
+         WHERE estado = 'entregado' AND vence_en IS NOT NULL AND vence_en < now())::int
+                                                                                           AS contenedores_vencidos,
        (SELECT count(*) FROM pagos WHERE estado = 'pendiente'
                                        OR (medio_pago = 'efectivo' AND estado = 'validado' AND efectivo_cobrado = FALSE))::int
                                                                                            AS cobros_pendientes,

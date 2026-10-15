@@ -1044,6 +1044,10 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 }
 .alerta-contenedor_por_vencer { border-left-color: var(--warning); }
 .alerta-contenedor_por_vencer .alerta-tipo { color: var(--warning); }
+/* Mismo tipo que arriba, pero ya vencido (ver Alertas.tsx::yaVencio): se
+   distingue en rojo para que no se confunda con "todavía falta". */
+.alerta-contenedor_por_vencer.alerta-vencida { border-left-color: var(--danger); }
+.alerta-contenedor_por_vencer.alerta-vencida .alerta-tipo { color: var(--danger); }
 .alerta-pago_vencido { border-left-color: var(--danger); }
 .alerta-pago_vencido .alerta-tipo { color: var(--danger); }
 .alerta-pago_pendiente_validacion { border-left-color: var(--accent); }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { X, Wrench, CircleCheck, Pencil, Trash2, Check } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { X, Wrench, CircleCheck, Pencil, Trash2, Check, MessageCircle } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -166,7 +167,11 @@ export function Contenedores() {
   }
 
   const [busqueda, setBusqueda] = useState('');
-  const [filtroEstado, setFiltroEstado] = useState('todos');
+  // Permite llegar con un filtro ya aplicado (ej. desde la tarjeta de
+  // "Contenedores por vencer" del Dashboard): /contenedores?filtro=proximos_vencer
+  const [filtroEstado, setFiltroEstado] = useState(
+    () => new URLSearchParams(window.location.search).get('filtro') || 'todos',
+  );
 
   const contenedoresFiltrados = contenedores.filter((c) => {
     if (filtroEstado !== 'todos' && c.estado_contrato !== filtroEstado && c.estado !== filtroEstado) {
@@ -291,9 +296,22 @@ export function Contenedores() {
                 </td>
                 <td>
                   {etiquetaCliente(c) ? (
-                    <div>
-                      <div>{etiquetaCliente(c)}</div>
-                      {c.destino_direccion && <div className="text-muted" style={{ fontSize: '0.78rem' }}>{c.destino_direccion}</div>}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+                      <div>
+                        <div>{etiquetaCliente(c)}</div>
+                        {c.destino_direccion && <div className="text-muted" style={{ fontSize: '0.78rem' }}>{c.destino_direccion}</div>}
+                      </div>
+                      {c.cliente_telefono && (
+                        <Link
+                          to={`/conversaciones?tel=${encodeURIComponent(c.cliente_telefono)}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="btn btn-ghost btn-sm"
+                          title="Hablar con este cliente en Conversaciones"
+                          style={{ flexShrink: 0, padding: '4px 6px', color: 'var(--accent)' }}
+                        >
+                          <MessageCircle size={16} />
+                        </Link>
+                      )}
                     </div>
                   ) : (
                     <span className="text-muted">—</span>

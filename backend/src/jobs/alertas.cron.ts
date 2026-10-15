@@ -8,16 +8,31 @@ import { sendButtons } from '../modules/whatsapp/graphApi';
  * y las empuja por Socket.io a la sala 'alertas'.
  */
 async function generarAlertas(): Promise<void> {
-  // 1) Contenedores que vencen en las próximas 48h (alerta interna para panel)
+  // 1) Contenedores que vencen en las próximas 48h, Y TAMBIÉN los que ya
+  //    vencieron (antes la condición cortaba en BETWEEN now() Y +48h: pasado
+  //    ese punto el contenedor dejaba de generar o actualizar cualquier
+  //    alerta — quedaba "mudo" para siempre, con una alerta vieja que seguía
+  //    diciendo "vence el DD/MM" aunque ya hubiera vencido hace días. Acá se
+  //    cubre todo el rango de una sola condición y, si la alerta ya existía
+  //    (ON CONFLICT), se ACTUALIZA el mensaje en vez de ignorarse — así el
+  //    pasaje de "por vencer" a "ya venció" se refleja solo. El UPDATE queda
+  //    condicionado a que el mensaje realmente haya cambiado para no re-emitir
+  //    (ni volver a 'nueva') una alerta sin novedad real cada 15 minutos.
   const porVencer = await query<{ id: string; tipo: string; referencia_id: string; mensaje: string; creado_en: string }>(
     `INSERT INTO alertas (tipo, referencia_id, mensaje)
      SELECT 'contenedor_por_vencer', numero,
-            'Contenedor ' || numero || ' vence el ' || to_char(vence_en, 'DD/MM HH24:MI')
+            CASE
+              WHEN vence_en < now()
+                THEN 'Contenedor ' || numero || ' YA VENCIÓ (' || to_char(vence_en, 'DD/MM HH24:MI') || ')'
+              ELSE 'Contenedor ' || numero || ' vence el ' || to_char(vence_en, 'DD/MM HH24:MI')
+            END
        FROM contenedores
       WHERE vence_en IS NOT NULL
-        AND vence_en BETWEEN now() AND now() + interval '48 hours'
+        AND vence_en <= now() + interval '48 hours'
         AND estado IN ('reservado', 'entregado')
-     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta'
+       DO UPDATE SET mensaje = EXCLUDED.mensaje, estado = 'nueva'
+       WHERE alertas.mensaje IS DISTINCT FROM EXCLUDED.mensaje
      RETURNING id, tipo, referencia_id, mensaje, creado_en`,
   );
 

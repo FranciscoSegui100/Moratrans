@@ -137,10 +137,15 @@ export function Alertas() {
           {alertas.map((a) => {
             const esPago = a.tipo === 'pago_pendiente_validacion' || a.tipo === 'cuenta_corriente_solicitada';
             const esRetiro = a.tipo === 'confirmar_retiro';
+            // Mismo tipo de alerta para "por vencer" y "ya venció" (ver
+            // alertas.cron.ts) — distinguimos acá por el texto para que lo
+            // ya vencido se note en rojo en vez de confundirse con el
+            // naranja de "todavía falta".
+            const yaVencio = a.tipo === 'contenedor_por_vencer' && a.mensaje.includes('YA VENCIÓ');
             return (
               <div
                 key={a.id}
-                className={`alerta-card alerta-${a.tipo} ${esPago ? 'alerta-card-pago' : ''}`}
+                className={`alerta-card alerta-${a.tipo} ${esPago ? 'alerta-card-pago' : ''} ${yaVencio ? 'alerta-vencida' : ''}`}
               >
                 <div className="alerta-card-top">
                   <div>

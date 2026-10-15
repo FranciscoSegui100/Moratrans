@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, Power, TriangleAlert,
-  Wallet, Bell, type LucideIcon,
+  Wallet, Bell, Clock, type LucideIcon,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
@@ -37,6 +37,8 @@ interface Kpis {
   contenedores_activos: number;
   contenedores_reservados: number;
   contenedores_disponibles: number;
+  contenedores_por_vencer: number;
+  contenedores_vencidos: number;
   cobros_pendientes: number;
   cobros_pendientes_monto: string;
   cobros_vencidos: number;
@@ -261,6 +263,19 @@ export function Dashboard() {
           icon={CircleCheck} tint="var(--success-bg)" fg="var(--success)"
           label="Disponibles" value={kpis ? kpis.contenedores_disponibles : null}
           caption={kpis ? `${kpis.contenedores_reservados} reservados` : undefined}
+        />
+        <KpiCard
+          icon={Clock} tint="var(--danger-bg)" fg="var(--danger)"
+          label="Contenedores por vencer" value={kpis ? kpis.contenedores_por_vencer : null}
+          caption={kpis ? (
+            <>
+              <span>próximas 48hs</span>
+              {kpis.contenedores_vencidos > 0 && (
+                <span style={{ color: 'var(--danger)' }}>· {kpis.contenedores_vencidos} ya vencido{kpis.contenedores_vencidos !== 1 ? 's' : ''}</span>
+              )}
+              <Link to="/contenedores?filtro=proximos_vencer" style={{ fontWeight: 600 }}>Ver →</Link>
+            </>
+          ) : undefined}
         />
         <KpiCard
           icon={Truck} tint="var(--purple-bg)" fg="var(--purple)"
