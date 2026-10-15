@@ -12,4 +12,6 @@ vite.config.*.timestamp-*
 *.bak
 scratch/
 backend/scratch/
+*.pdf
+
 
