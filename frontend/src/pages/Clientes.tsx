@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, Link } from 'react-router-dom';
-import { Download, Pencil, Plus, MessageCircle } from 'lucide-react';
+import { Download, Pencil, Plus, MessageCircle, ArrowUpDown } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -47,7 +47,25 @@ export function Clientes() {
   });
   const clientesCC = todosLosClientes.filter(esCuentaCorriente);
   const clientesOcasionales = todosLosClientes.filter((c) => !esCuentaCorriente(c));
-  const clientes = pestana === 'cuenta_corriente' ? clientesCC : clientesOcasionales;
+  const clientesPestana = pestana === 'cuenta_corriente' ? clientesCC : clientesOcasionales;
+
+  // Con 100 clientes el orden alfabético de la API no alcanza para
+  // encontrar "quién me debe plata" sin escanear toda la tabla a mano —
+  // un toggle de "solo con deuda" + poder ordenar por esa columna lo
+  // resuelve sin tocar nada del backend (el monto ya viene en la respuesta).
+  // Permite llegar con el filtro ya aplicado desde la tarjeta "Deuda de
+  // clientes" del Dashboard: /clientes?deuda=1
+  const [soloConDeuda, setSoloConDeuda] = useState(
+    () => new URLSearchParams(window.location.search).get('deuda') === '1',
+  );
+  const [ordenarPorDeuda, setOrdenarPorDeuda] = useState(
+    () => new URLSearchParams(window.location.search).get('deuda') === '1',
+  );
+  const clientesConDeudaCount = clientesPestana.filter((c) => Number(c.deuda) > 0).length;
+
+  const clientes = (soloConDeuda ? clientesPestana.filter((c) => Number(c.deuda) > 0) : clientesPestana)
+    .slice()
+    .sort((a, b) => (ordenarPorDeuda ? Number(b.deuda) - Number(a.deuda) : 0));
 
   async function crearCliente() {
     if (!altaForm.nombre.trim() || !altaForm.telefono.trim()) {
@@ -166,6 +184,13 @@ export function Clientes() {
         >
           Ocasionales ({clientesOcasionales.length})
         </button>
+        <button
+          className={`btn btn-sm ${soloConDeuda ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setSoloConDeuda((v) => !v)}
+          style={{ marginLeft: 'auto' }}
+        >
+          💸 Solo con deuda ({clientesConDeudaCount})
+        </button>
       </div>
 
       <div className="table-wrapper">
@@ -176,7 +201,13 @@ export function Clientes() {
               <th>Teléfono</th>
               <th>Nº plan</th>
               <th>Pedidos</th>
-              <th>Deuda</th>
+              <th
+                onClick={() => setOrdenarPorDeuda((v) => !v)}
+                style={{ cursor: 'pointer', userSelect: 'none' }}
+                title="Ordenar por deuda"
+              >
+                Deuda {ordenarPorDeuda ? <ArrowUpDown size={12} style={{ verticalAlign: 'middle' }} /> : null}
+              </th>
             </tr>
           </thead>
           <tbody>

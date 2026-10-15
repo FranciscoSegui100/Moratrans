@@ -302,7 +302,7 @@ export function Dashboard() {
           caption={kpis ? (
             <>
               <span>{kpis.clientes_con_deuda} cliente{kpis.clientes_con_deuda !== 1 ? 's' : ''} con saldo pendiente</span>
-              <Link to="/clientes" style={{ fontWeight: 600 }}>Ver →</Link>
+              <Link to="/clientes?deuda=1" style={{ fontWeight: 600 }}>Ver →</Link>
             </>
           ) : undefined}
         />
