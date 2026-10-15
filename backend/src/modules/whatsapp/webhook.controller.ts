@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { env } from '../../config/env';
+import { env, isProd } from '../../config/env';
 import { verifySignature, motivoErrorWa } from './graphApi';
 import { normalizar, enrutar } from './messageRouter';
 import { query } from '../../config/db';
@@ -42,7 +42,12 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
   const signature = req.header('x-hub-signature-256');
   const raw = (req as any).rawBody as Buffer | undefined;
 
-  if (raw && env.WA_APP_SECRET && !verifySignature(raw, signature)) {
+  // En producción la firma es obligatoria y se rechaza cualquier request no firmado o inválido
+  if (isProd) {
+    if (!raw || !signature || !verifySignature(raw, signature)) {
+      return res.sendStatus(401);
+    }
+  } else if (raw && env.WA_APP_SECRET && !verifySignature(raw, signature)) {
     return res.sendStatus(401);
   }
 

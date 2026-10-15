@@ -67,6 +67,7 @@ export function requireRol(...roles: Rol[]) {
 
 /**
  * Reglas de visibilidad de datos sensibles según rol.
- * - Comprobantes de pago (url_comprobante): admin y finanzas.
+ * - Comprobantes de pago (url_comprobante): admin, operador y finanzas.
+ *   El rol 'lectura' queda estrictamente excluido de la visualización y descarga.
  */
-export const puedeVerComprobante = (rol: Rol) => rol === 'admin' || rol === 'finanzas';
+export const puedeVerComprobante = (rol: Rol) => rol === 'admin' || rol === 'operador' || rol === 'finanzas';

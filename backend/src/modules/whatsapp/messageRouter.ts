@@ -1,6 +1,6 @@
 import { query } from '../../config/db';
 import { env } from '../../config/env';
-import { sendList, sendText, sendButtons } from './graphApi';
+import { sendList, sendText, sendButtons, motivoErrorWa } from './graphApi';
 import { getSesion, clearSesion, setSesion } from './session.store';
 import { botEstaActivo } from '../../services/botConfig.service';
 import { MENSAJE_BOT_DESACTIVADO } from '../../config/bot.config';
@@ -207,10 +207,14 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   // Respuestas a encuesta de satisfacción de cliente post-servicio
   if (m.seleccionId && m.seleccionId.startsWith('encuesta_')) {
     const estrellas = m.seleccionId === 'encuesta_5' ? '⭐⭐⭐⭐⭐' : m.seleccionId === 'encuesta_3' ? '⭐⭐⭐' : '⭐';
-    await sendText(
-      m.from,
-      `¡Muchísimas gracias por tu calificación (${estrellas})! 🙌 Valoramos mucho que elijas a Moratrans. Si necesitás algo más, acá estamos.`,
-    );
+    try {
+      await sendText(
+        m.from,
+        `¡Muchísimas gracias por tu calificación (${estrellas})! 🙌 Valoramos mucho que elijas a Moratrans. Si necesitás algo más, acá estamos.`,
+      );
+    } catch (err: any) {
+      console.error('Error enviando agradecimiento de encuesta:', motivoErrorWa(err));
+    }
     return;
   }
 
