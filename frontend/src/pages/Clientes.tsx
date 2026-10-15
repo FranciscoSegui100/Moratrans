@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
-import { Download, Pencil, Plus } from 'lucide-react';
+import { useNavigate, Link } from 'react-router-dom';
+import { Download, Pencil, Plus, MessageCircle } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -190,7 +190,20 @@ export function Clientes() {
                   title="Ver perfil del cliente"
                 >
                   <td className="strong">{c.nombre}</td>
-                  <td>{c.telefono}</td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span>{c.telefono}</span>
+                      <Link
+                        to={`/conversaciones?tel=${encodeURIComponent(c.telefono)}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="btn btn-ghost btn-sm"
+                        title="Hablar con este cliente en Conversaciones"
+                        style={{ flexShrink: 0, padding: '4px 6px', color: 'var(--accent)' }}
+                      >
+                        <MessageCircle size={16} />
+                      </Link>
+                    </div>
+                  </td>
                   <td className="mono" onClick={(e) => e.stopPropagation()}>
                     {editandoPlan === c.id ? (
                       <div style={{ display: 'flex', gap: '4px' }}>

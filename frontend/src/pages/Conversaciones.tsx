@@ -134,11 +134,16 @@ export function Conversaciones() {
   });
   const visibles = filtro === 'requieren' ? requierenVosOrdenadas : conversaciones;
 
-  // Si la seleccionada ya no está en la lista (o no hay ninguna elegida todavía), autoseleccioná la primera.
-  // El guard de largo > 0 evita pisar el ?tel= del deep-link mientras la
-  // lista todavía está cargando (conversaciones = [] antes de que responda la API).
+  // Si no hay ninguna conversación elegida todavía, autoseleccioná la
+  // primera. Si SÍ hay una elegida pero no está en la lista, la dejamos tal
+  // cual en vez de reemplazarla por otra — pasa con el atajo de chat desde
+  // Clientes/Contenedores cuando ese cliente todavía nunca le escribió al
+  // bot: antes esto pisaba el ?tel= del deep-link con la primera conversación
+  // de la lista sin avisar, mostrando el chat de OTRO cliente como si fuera
+  // el que se pidió. Ahora en ese caso "activa" queda en null y la pantalla
+  // lo deja claro (ver más abajo) en vez de mentir.
   useEffect(() => {
-    if (conversaciones.length > 0 && !conversaciones.find((c) => c.telefono === seleccionado)) {
+    if (conversaciones.length > 0 && seleccionado === null) {
       setSeleccionado(conversaciones[0]?.telefono ?? null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -292,6 +297,15 @@ export function Conversaciones() {
                 <ChatAsesor telefono={activa.telefono} ventanaCerrada={ventanaActiva.cerrada} />
               </RoleGate>
             </>
+          ) : seleccionado ? (
+            <div className="empty-state">
+              <div className="empty-state-icon"><MessageCircle strokeWidth={1.5} /></div>
+              <div className="empty-state-title">Este cliente todavía no te escribió</div>
+              <div className="empty-state-text">
+                {seleccionado} no tiene conversación con el bot — por ahora no se le puede mandar texto libre por WhatsApp,
+                solo responder si él escribe primero.
+              </div>
+            </div>
           ) : (
             <div className="empty-state">
               <div className="empty-state-icon"><MessageCircle strokeWidth={1.5} /></div>
