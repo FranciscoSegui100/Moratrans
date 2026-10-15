@@ -288,17 +288,17 @@ export function Dashboard() {
         />
         <KpiCard
           icon={CircleDollarSign} tint="var(--warning-bg)" fg="var(--warning)"
-          label="Cobros pendientes" value={kpis ? kpis.cobros_pendientes : null}
+          label="Comprobantes sin validar" value={kpis ? kpis.cobros_pendientes : null}
           caption={kpis ? (
             <>
-              <span>${Number(kpis.cobros_pendientes_monto).toLocaleString('es-AR')} adeudado</span>
-              {kpis.cobros_vencidos > 0 && <span style={{ color: 'var(--danger)' }}>· {kpis.cobros_vencidos} vencidos (+24h)</span>}
+              {kpis.cobros_vencidos > 0 && <span style={{ color: 'var(--danger)' }}>{kpis.cobros_vencidos} vencidos (+24h)</span>}
+              <Link to="/pagos" style={{ fontWeight: 600 }}>Ir a Validar pagos →</Link>
             </>
           ) : undefined}
         />
         <KpiCard
           icon={Wallet} tint="var(--neutral-bg)" fg="var(--neutral)"
-          label="Deuda de clientes" value={kpis ? Number(kpis.deuda_total) : null} formato="dinero"
+          label="Deuda del cliente" value={kpis ? Number(kpis.deuda_total) : null} formato="dinero"
           caption={kpis ? (
             <>
               <span>{kpis.clientes_con_deuda} cliente{kpis.clientes_con_deuda !== 1 ? 's' : ''} con saldo pendiente</span>
