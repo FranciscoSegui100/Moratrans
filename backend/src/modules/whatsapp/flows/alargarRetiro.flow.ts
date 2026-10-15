@@ -3,7 +3,7 @@ import { sendText, sendButtons, sendList, downloadMedia } from '../graphApi';
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { encrypt, encryptBuffer } from '../../../services/crypto.service';
-import { subirArchivo } from '../../../services/storage.service';
+import { subirArchivo, detectarExtensionSegura } from '../../../services/storage.service';
 import { adjuntarAUltimoMensaje } from '../chatLog.service';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { datosBancarios, tieneCuentaCorrienteAprobada } from './pago.flow';
@@ -190,7 +190,11 @@ async function manejarComprobante(m: MensajeEntrante, sesion: Sesion): Promise<v
 
   try {
     const { buffer, mime } = await downloadMedia(m.mediaId!);
-    const ext = mime.includes('pdf') ? 'pdf' : mime.split('/')[1] || 'jpg';
+    const ext = detectarExtensionSegura(buffer, mime);
+    if (!ext) {
+      await sendText(to, '📎 El archivo enviado no es una imagen o PDF válido. Por favor, enviá una foto o el archivo PDF de tu comprobante.');
+      return;
+    }
     const filename = `${to}_${Date.now()}.${ext}`;
     const rutaStorage = `comprobantes/${filename}`;
     await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');

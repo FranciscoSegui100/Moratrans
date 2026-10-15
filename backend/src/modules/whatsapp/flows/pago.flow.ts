@@ -5,7 +5,7 @@ import { adjuntarAUltimoMensaje } from '../chatLog.service';
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { encrypt, encryptBuffer } from '../../../services/crypto.service';
-import { subirArchivo } from '../../../services/storage.service';
+import { subirArchivo, detectarExtensionSegura } from '../../../services/storage.service';
 import { obtenerOCrearCliente } from '../../../services/clientes.service';
 import { env } from '../../../config/env';
 import { manejarRespuestaInvalida } from '../estados';
@@ -97,7 +97,11 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     // tercero nunca guarda el binario en claro, ni siquiera si su config de
     // privacidad fallara — solo la referencia cifrada vive en la DB.
     const { buffer, mime } = await downloadMedia(m.mediaId!);
-    const ext = mime.includes('pdf') ? 'pdf' : mime.split('/')[1] || 'jpg';
+    const ext = detectarExtensionSegura(buffer, mime);
+    if (!ext) {
+      await sendText(to, '📎 El archivo enviado no es una imagen o PDF válido. Por favor, enviá una foto o el archivo PDF de tu comprobante.');
+      return;
+    }
     const filename = `${to}_${Date.now()}.${ext}`;
     const rutaStorage = `comprobantes/${filename}`;
     await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
@@ -487,7 +491,11 @@ async function registrarAbonoCuentaCorriente(m: MensajeEntrante): Promise<void> 
   const to = m.from;
   try {
     const { buffer, mime } = await downloadMedia(m.mediaId!);
-    const ext = mime.includes('pdf') ? 'pdf' : mime.split('/')[1] || 'jpg';
+    const ext = detectarExtensionSegura(buffer, mime);
+    if (!ext) {
+      await sendText(to, '📎 El archivo enviado no es una imagen o PDF válido. Por favor, enviá una foto o el archivo PDF de tu comprobante.');
+      return;
+    }
     const filename = `${to}_${Date.now()}.${ext}`;
     const rutaStorage = `comprobantes/${filename}`;
     await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');

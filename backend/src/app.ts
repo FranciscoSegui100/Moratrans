@@ -10,6 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import { env, isProd } from './config/env';
 import { requireCsrf } from './middleware/csrf';
+import { apiGeneralLimiter } from './middleware/rateLimit';
 import { broadcastCambios } from './middleware/broadcastCambios';
 import { webhookRouter } from './modules/whatsapp/webhook.controller';
 import { authRouter } from './modules/auth/auth.routes';
@@ -68,13 +69,14 @@ export function crearApp() {
   }));
   app.use(cookieParser());
 
-  // LOG TEMPORAL: registra toda visita al webhook (GET de verificación y POST
-  // de eventos) para saber si Meta está llegando a este servicio. Solo imprime
-  // y sigue, no cambia el comportamiento. Borrar cuando se resuelva el problema.
-  app.use('/webhook', (req, _res, next) => {
-    console.log('[WA]', req.method, req.originalUrl, new Date().toISOString());
-    next();
-  });
+  // Registro de visitas al webhook: sólo en desarrollo para no saturar ni
+  // registrar datos de clientes en logs de producción.
+  if (!isProd) {
+    app.use('/webhook', (req, _res, next) => {
+      console.log('[WA]', req.method, req.originalUrl, new Date().toISOString());
+      next();
+    });
+  }
 
   // Webhook de Meta: necesita el cuerpo CRUDO para validar la firma HMAC.
   app.use(
@@ -82,8 +84,9 @@ export function crearApp() {
     express.raw({ type: '*/*' }),
     (req, _res, next) => {
       (req as any).rawBody = req.body; // Buffer
-      // LOG TEMPORAL: contenido del evento (incluye estados de entrega y errores)
-      console.log('[WA] body', Buffer.isBuffer(req.body) ? req.body.toString('utf8').slice(0, 2000) : '');
+      if (!isProd) {
+        console.log('[WA] body', Buffer.isBuffer(req.body) ? req.body.toString('utf8').slice(0, 500) : '');
+      }
       next();
     },
     webhookRouter,
@@ -109,6 +112,9 @@ export function crearApp() {
       res.status(503).json({ ok: false });
     }
   });
+
+  // Límite de tasa global para la API: protege contra bombardeo y DoS
+  app.use('/api', apiGeneralLimiter);
 
   // authRouter maneja su propia protección CSRF ruta por ruta (login/mfa no
   // la necesitan porque todavía no hay sesión de cookies que un atacante

@@ -10,3 +10,6 @@ vite.config.*.timestamp-*
 *.sql.gz
 *.dump
 *.bak
+scratch/
+backend/scratch/
+

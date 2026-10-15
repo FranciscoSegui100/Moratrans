@@ -59,3 +59,17 @@ export const mfaLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Demasiados intentos. Esperá unos minutos.' },
 });
+
+/**
+ * Límite general para la API: protege contra bombardeo masivo, scripts automatizados
+ * y ataques de denegación de servicio (DoS) a la base de datos.
+ * 300 peticiones por minuto por IP es generoso para el uso del panel y sockets,
+ * pero corta cualquier loop o ataque de fuerza bruta distribuido.
+ */
+export const apiGeneralLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  limit: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas solicitudes al servidor. Por favor, esperá un momento.' },
+});

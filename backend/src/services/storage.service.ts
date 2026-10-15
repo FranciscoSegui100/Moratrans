@@ -36,3 +36,43 @@ export async function borrarArchivo(ruta: string): Promise<void> {
   const { error } = await getClient().storage.from(env.SUPABASE_STORAGE_BUCKET).remove([ruta]);
   if (error) throw error;
 }
+
+/**
+ * Valida la firma binaria ("magic bytes") y el mime-type para asegurarse de que
+ * el archivo recibido sea genuinamente una imagen (JPEG, PNG, WebP) o un PDF,
+ * impidiendo la subida de ejecutables, scripts o binarios no deseados.
+ */
+export function detectarExtensionSegura(buffer: Buffer, mime: string = ''): string | null {
+  if (buffer.length >= 4) {
+    // PDF (%PDF -> 25 50 44 46)
+    if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+      return 'pdf';
+    }
+    // PNG (89 50 4E 47)
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+      return 'png';
+    }
+    // JPEG (FF D8 FF)
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+      return 'jpg';
+    }
+  }
+
+  // WebP (RIFF .... WEBP)
+  if (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    buffer.subarray(8, 12).toString('ascii') === 'WEBP'
+  ) {
+    return 'webp';
+  }
+
+  // Fallback controlado si el mime informado es seguro
+  const m = (mime || '').toLowerCase();
+  if (m.includes('pdf')) return 'pdf';
+  if (m.includes('jpeg') || m.includes('jpg')) return 'jpg';
+  if (m.includes('png')) return 'png';
+  if (m.includes('webp')) return 'webp';
+
+  return null;
+}

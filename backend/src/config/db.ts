@@ -5,7 +5,7 @@ import { SUPABASE_CA } from './supabaseCa';
 // Parsear DATE (OID 1082) como string 'YYYY-MM-DD' en lugar de convertir a Date UTC
 types.setTypeParser(1082, (val: string) => val);
 
-const esSupabase = env.DATABASE_URL.includes('supabase.co');
+const esSupabase = env.DATABASE_URL.includes('supabase.');
 
 // Pool único compartido por chatbot y panel: la DB es la única fuente de verdad.
 // La conexión valida el certificado del servidor (rejectUnauthorized: true) en

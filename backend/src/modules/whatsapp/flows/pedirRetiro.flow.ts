@@ -107,6 +107,7 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
   const diasAnticipados = todosDias.filter((d) => !venceEn || d.fecha <= venceEn);
   const dias = diasAnticipados.length > 0 ? diasAnticipados : todosDias;
 
+  await setSesion({ ...sesion, paso: 'elegir_dia_retiro' });
   await sendList(
     to,
     '📅 Día de retiro',
@@ -114,7 +115,6 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     'Ver días',
     dias.map((d) => ({ id: `dia:${d.fecha}`, title: d.etiqueta })),
   );
-  await setSesion({ ...sesion, paso: 'elegir_dia_retiro' });
 }
 
 async function manejarDia(m: MensajeEntrante, sesion: Sesion): Promise<void> {
