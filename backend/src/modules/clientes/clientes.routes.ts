@@ -11,6 +11,7 @@ import { emitRecursoActualizado } from '../../config/socket';
 import { encrypt, encryptBuffer } from '../../services/crypto.service';
 import { subirArchivo } from '../../services/storage.service';
 import { normalizarTelefonoAR } from '../../services/telefono.service';
+import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
 
 export const clientesRouter = Router();
 clientesRouter.use(requireAuth);
@@ -174,6 +175,34 @@ clientesRouter.post(
 clientesRouter.get('/:telefono/deuda', async (req: Request, res: Response) => {
   const resumen = await deudaCliente(req.params.telefono);
   res.json(resumen);
+});
+
+/**
+ * GET /api/clientes/:telefono/resumen-chat — lo mínimo para la franja de
+ * contexto que se ve arriba del hilo en Conversaciones (deuda total +
+ * contenedor que tiene entregado, si tiene) sin que el asesor tenga que
+ * abrir otra pestaña a mitad de una charla. Mismo cálculo de deuda
+ * combinada (cuenta corriente + ocasional) que ya usa GET /api/clientes.
+ */
+clientesRouter.get('/:telefono/resumen-chat', async (req: Request, res: Response) => {
+  const telefono = req.params.telefono;
+  const [saldoCC, deudaOc, contenedores] = await Promise.all([
+    resumenCuentaCorriente(telefono).then((r) => r.saldo),
+    deudaCliente(telefono),
+    contenedoresDelCliente(telefono),
+  ]);
+  const deuda = Math.max(saldoCC, 0) + deudaOc.total;
+  // El que vence antes es el que más le importa ver al asesor; si ninguno
+  // tiene fecha cargada, mostrar cualquiera igual sirve de contexto.
+  const contenedor = [...contenedores].sort((a, b) => {
+    if (!a.vence_en) return 1;
+    if (!b.vence_en) return -1;
+    return a.vence_en.localeCompare(b.vence_en);
+  })[0] ?? null;
+  res.json({
+    deuda,
+    contenedor: contenedor ? { numero: contenedor.numero, vence_en: contenedor.vence_en } : null,
+  });
 });
 
 const viajeManualSchema = z.object({

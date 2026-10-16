@@ -1436,6 +1436,33 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .asesoria-panel .chat-asesor { flex: 1; min-height: 0; }
 .asesoria-panel .chat-asesor-hilo { flex: 1; max-height: none; }
 
+/* ===== BÚSQUEDA DE CONVERSACIONES ===== */
+.conv-busqueda { position: relative; margin-bottom: 8px; }
+.conv-busqueda input { width: 100%; padding-left: 30px; }
+.conv-busqueda-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* ===== FRANJA DE CONTEXTO DEL CLIENTE (Conversaciones) ===== */
+.conv-resumen-cliente { display: flex; gap: 8px; flex-wrap: wrap; margin-top: -4px; }
+.conv-resumen-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+.conv-resumen-chip--deuda { background: var(--warning-bg); color: var(--warning); }
+.conv-resumen-chip--vence { background: var(--warning-bg); color: var(--warning); }
+.conv-resumen-chip--vencido { background: var(--danger-bg); color: var(--danger); }
+
 /* ===== FILTROS DE CONVERSACIONES ===== */
 .conv-filtros { display: flex; gap: 6px; }
 .conv-filtro {

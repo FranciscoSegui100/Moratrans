@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { MessageCircle, Pause, Play, UserPlus } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { MessageCircle, Pause, Play, UserPlus, Search, Wallet, Clock } from 'lucide-react';
 import { useConversaciones, Conversacion } from '../hooks/useConversaciones';
 import { RoleGate } from '../components/RoleGate';
 import { ChatAsesor } from '../components/ChatAsesor';
@@ -9,6 +10,8 @@ import { useVentanaWhatsapp } from '../hooks/useVentanaWhatsapp';
 import { useTiempoEspera } from '../hooks/useTiempoEspera';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
+import { api } from '../api/client';
+import { formatearFecha } from '../lib/fechas';
 
 const origenPreviewPrefix: Record<string, string> = {
   cliente: '',
@@ -33,6 +36,44 @@ function formatHora(iso: string): string {
   ayer.setDate(hoy.getDate() - 1);
   if (fecha.toDateString() === ayer.toDateString()) return 'Ayer';
   return fecha.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
+}
+
+interface ResumenChat {
+  deuda: number;
+  contenedor: { numero: string; vence_en: string | null } | null;
+}
+
+/**
+ * Franja de contexto arriba del hilo de chat: deuda y contenedor/vencimiento
+ * del cliente activo, para que el asesor no tenga que abrir otra pestaña a
+ * mitad de una conversación. Deliberadamente chica y de solo lectura.
+ */
+function ResumenCliente({ telefono }: { telefono: string }) {
+  const { data } = useQuery({
+    queryKey: ['cliente-resumen-chat', telefono],
+    queryFn: () => api.get<ResumenChat>(`/api/clientes/${encodeURIComponent(telefono)}/resumen-chat`).then((r) => r.data),
+  });
+  if (!data) return null;
+  if (data.deuda <= 0 && !data.contenedor) return null;
+
+  const vencido = data.contenedor?.vence_en ? new Date(data.contenedor.vence_en).getTime() < Date.now() : false;
+
+  return (
+    <div className="conv-resumen-cliente">
+      {data.deuda > 0 && (
+        <span className="conv-resumen-chip conv-resumen-chip--deuda">
+          <Wallet size={13} strokeWidth={1.75} /> Debe ${data.deuda.toLocaleString('es-AR')}
+        </span>
+      )}
+      {data.contenedor && (
+        <span className={`conv-resumen-chip ${vencido ? 'conv-resumen-chip--vencido' : 'conv-resumen-chip--vence'}`}>
+          <Clock size={13} strokeWidth={1.75} />
+          Contenedor {data.contenedor.numero}
+          {data.contenedor.vence_en && (vencido ? ` · venció el ${formatearFecha(data.contenedor.vence_en)}` : ` · vence el ${formatearFecha(data.contenedor.vence_en)}`)}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function ChipEstado({ c }: { c: Conversacion }) {
@@ -112,6 +153,7 @@ export function Conversaciones() {
   const [searchParams] = useSearchParams();
   const [seleccionado, setSeleccionado] = useState<string | null>(() => searchParams.get('tel'));
   const [filtro, setFiltro] = useState<'todas' | 'requieren'>('todas');
+  const [busqueda, setBusqueda] = useState('');
   // Fuerza un re-render por minuto para que los chips de "ventana cerrada" de
   // la lista se actualicen solos aunque no llegue ningún mensaje nuevo.
   const [, forzarTick] = useState(0);
@@ -132,7 +174,13 @@ export function Conversaciones() {
     const tb = new Date(b.escalado_en ?? b.asignado_en ?? b.ultimo_en).getTime();
     return ta - tb;
   });
-  const visibles = filtro === 'requieren' ? requierenVosOrdenadas : conversaciones;
+  const visiblesPorFiltro = filtro === 'requieren' ? requierenVosOrdenadas : conversaciones;
+  const visibles = busqueda.trim()
+    ? visiblesPorFiltro.filter((c) => {
+        const q = busqueda.trim().toLowerCase();
+        return c.telefono.includes(q) || (c.nombre?.toLowerCase().includes(q) ?? false);
+      })
+    : visiblesPorFiltro;
 
   // Si no hay ninguna conversación elegida todavía, autoseleccioná la
   // primera. Si SÍ hay una elegida pero no está en la lista, la dejamos tal
@@ -200,6 +248,16 @@ export function Conversaciones() {
 
       <div className="asesoria-layout">
         <div className="asesoria-lista-col">
+          <div className="conv-busqueda">
+            <Search size={14} className="conv-busqueda-icon" />
+            <input
+              className="form-input"
+              placeholder="Buscar por nombre o teléfono..."
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+            />
+          </div>
+
           <div className="conv-filtros">
             <button
               className={`conv-filtro ${filtro === 'todas' ? 'active' : ''}`}
@@ -274,6 +332,8 @@ export function Conversaciones() {
                   )}
                 </RoleGate>
               </div>
+
+              <ResumenCliente telefono={activa.telefono} />
 
               {activa.motivo && (
                 <div className="asesoria-motivo">
