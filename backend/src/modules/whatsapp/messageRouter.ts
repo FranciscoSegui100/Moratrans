@@ -34,10 +34,36 @@ async function enviarMenuGestionar(to: string): Promise<void> {
       { id: 'opt_pedir_retiro', title: '📥 Retiro anticipado', description: 'Se llenó antes de tiempo: que lo pasen a buscar' },
       { id: 'opt_recambio', title: '🔄 Recambio', description: 'Cambiar el contenedor lleno por uno vacío' },
       { id: 'opt_alargar_retiro', title: '⏳ Extender 5 días', description: 'Sumar 5 días más antes de que lo retiremos' },
+      { id: 'opt_ver_vencimiento', title: '📅 Ver vencimiento', description: 'Cuándo vence el alquiler de tu contenedor' },
       { id: 'opt_asesor', title: '🙋 Asesor', description: 'Hablar con una persona del equipo' },
     ],
   );
   await setSesion({ telefono: to, flujo: 'menu', paso: null, contexto: {} });
+}
+
+/**
+ * "📅 Ver vencimiento": respuesta de un solo paso, sin flujo/paso propio
+ * (mismo patrón que handleDetalleMovimientos) — para que el cliente pueda
+ * consultar la fecha por su cuenta en vez de depender solo del aviso
+ * proactivo del cron (que además puede fallar si el cliente no escribió
+ * nada en las últimas 24hs, ver alertas.cron.ts).
+ */
+async function handleVerVencimiento(to: string): Promise<void> {
+  const contenedores = await contenedoresDelCliente(to);
+  if (contenedores.length === 0) {
+    await sendText(to, 'No encontramos ningún contenedor activo a tu nombre. Si te parece que es un error, escribí *asesor*.');
+    return;
+  }
+  const hoy = new Date();
+  const hoyStr = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`;
+  const lineas = contenedores.map((c) => {
+    if (!c.vence_en) return `📦 *${c.numero}* — todavía no tiene fecha de vencimiento cargada.`;
+    const [anio, mes, dia] = c.vence_en.split('-');
+    const fecha = `${dia}/${mes}/${anio}`;
+    const vencido = c.vence_en < hoyStr;
+    return `📦 *${c.numero}* — ${vencido ? 'venció el' : 'vence el'} *${fecha}*`;
+  });
+  await sendText(to, `📅 *Vencimiento de tu contenedor:*\n\n${lineas.join('\n')}`);
 }
 
 /**
@@ -304,6 +330,9 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   }
   if (m.seleccionId === 'opt_alargar_retiro' || t.includes('alargar') || t.includes('extender')) {
     return handleAlargarRetiro(m, { ...sesion, flujo: 'alargar_retiro', paso: null });
+  }
+  if (m.seleccionId === 'opt_ver_vencimiento' || t.includes('vencimiento') || t.includes('vence')) {
+    return handleVerVencimiento(m.from);
   }
 
   // 6) Fallback
