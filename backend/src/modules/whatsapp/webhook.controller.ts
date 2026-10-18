@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { env, isProd } from '../../config/env';
-import { verifySignature, motivoErrorWa } from './graphApi';
+import { verifySignature, motivoErrorWa, sendText } from './graphApi';
 import { normalizar, enrutar } from './messageRouter';
 import { query } from '../../config/db';
 import { logMensaje } from './chatLog.service';
@@ -109,7 +109,25 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
                       }`
                     : '(mensaje)');
           await logMensaje(normalizado.from, 'cliente', textoLog).catch((e) => console.error('Error logueando mensaje:', e));
-          await enrutar(normalizado).catch((e) => console.error('Error enrutando:', motivoErrorWa(e)));
+          // Mismo catch-all para CUALQUIER flujo (cliente o chofer): antes,
+          // si una query fallaba a mitad de un trámite (ej. confirmar un
+          // pedido), el que tocó el botón no recibía nada — ni error ni
+          // éxito, silencio total desde su punto de vista, porque el 200 al
+          // webhook ya se mandó antes de procesar. Ahora al menos se entera
+          // de que algo falló y qué hacer. Envuelto en su propio try/catch
+          // para que, si el aviso en sí también falla (ventana cerrada,
+          // etc.), no vuelva a tirar sin capturar.
+          await enrutar(normalizado).catch(async (e) => {
+            console.error('Error enrutando:', motivoErrorWa(e));
+            try {
+              await sendText(
+                normalizado.from,
+                '⚠️ Tuvimos un problema procesando tu mensaje. Probá de nuevo en un minuto o escribí *asesor*.',
+              );
+            } catch (e2: any) {
+              console.error('Error avisando del problema al cliente:', motivoErrorWa(e2));
+            }
+          });
         }
       }
     }

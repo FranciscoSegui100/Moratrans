@@ -303,7 +303,7 @@ async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promis
   }
 
   if (ubicacion.tipo === 'link_invalido') {
-    await sendText(to, '🙁 No pude leer ese link de Maps. Probá copiarlo de nuevo desde el botón "Compartir", o usá el botón "Enviar ubicación" que te mostramos arriba.');
+    await manejarRespuestaInvalida(m, '🙁 No pude leer ese link de Maps. Probá copiarlo de nuevo desde el botón "Compartir", o usá el botón "Enviar ubicación" que te mostramos arriba.');
     return;
   }
 

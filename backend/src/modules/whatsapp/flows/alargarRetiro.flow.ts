@@ -178,7 +178,7 @@ async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     return;
   }
 
-  await sendButtons(to, 'Por favor, elegí una de las siguientes opciones. 👇', OPCIONES_METODO_PAGO_ALARGUE);
+  await manejarRespuestaInvalida(m, 'Por favor, elegí una de las opciones que te mostramos arriba. 👆');
 }
 
 async function manejarComprobante(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -192,7 +192,7 @@ async function manejarComprobante(m: MensajeEntrante, sesion: Sesion): Promise<v
     const { buffer, mime } = await downloadMedia(m.mediaId!);
     const ext = detectarExtensionSegura(buffer, mime);
     if (!ext) {
-      await sendText(to, '📎 El archivo enviado no es una imagen o PDF válido. Por favor, enviá una foto o el archivo PDF de tu comprobante.');
+      await manejarRespuestaInvalida(m, '📎 El archivo enviado no es una imagen o PDF válido. Por favor, enviá una foto o el archivo PDF de tu comprobante.');
       return;
     }
     const filename = `${to}_${Date.now()}.${ext}`;

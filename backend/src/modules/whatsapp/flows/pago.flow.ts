@@ -99,7 +99,7 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     const { buffer, mime } = await downloadMedia(m.mediaId!);
     const ext = detectarExtensionSegura(buffer, mime);
     if (!ext) {
-      await sendText(to, '📎 El archivo enviado no es una imagen o PDF válido. Por favor, enviá una foto o el archivo PDF de tu comprobante.');
+      await manejarRespuestaInvalida(m, '📎 El archivo enviado no es una imagen o PDF válido. Por favor, enviá una foto o el archivo PDF de tu comprobante.');
       return;
     }
     const filename = `${to}_${Date.now()}.${ext}`;
@@ -311,7 +311,7 @@ async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     return;
   }
 
-  await sendButtons(to, 'Por favor, elegí una de las siguientes opciones. 👇', await opcionesMetodoPago(to));
+  await manejarRespuestaInvalida(m, 'Por favor, elegí una de las opciones que te mostramos arriba. 👆');
 }
 
 /**
@@ -526,7 +526,7 @@ async function registrarAbonoCuentaCorriente(m: MensajeEntrante): Promise<void> 
     const { buffer, mime } = await downloadMedia(m.mediaId!);
     const ext = detectarExtensionSegura(buffer, mime);
     if (!ext) {
-      await sendText(to, '📎 El archivo enviado no es una imagen o PDF válido. Por favor, enviá una foto o el archivo PDF de tu comprobante.');
+      await manejarRespuestaInvalida(m, '📎 El archivo enviado no es una imagen o PDF válido. Por favor, enviá una foto o el archivo PDF de tu comprobante.');
       return;
     }
     const filename = `${to}_${Date.now()}.${ext}`;
