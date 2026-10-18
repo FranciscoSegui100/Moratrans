@@ -7,7 +7,7 @@ import { MENSAJE_BOT_DESACTIVADO } from '../../config/bot.config';
 import { handleCotizacion, handlePedirNuevoContenedor } from './flows/cotizacion.flow';
 import { handlePago, pedidosAbiertos, opcionesMetodoPago, ofrecerPedidoPendiente } from './flows/pago.flow';
 import { handleChofer } from './flows/chofer.flow';
-import { handleAsesor, escalarAAsesor } from './flows/asesor.flow';
+import { handleAsesor, escalarAAsesor, resolverAsesor } from './flows/asesor.flow';
 import { handleRecambio } from './flows/recambio.flow';
 import { handlePedirRetiro } from './flows/pedirRetiro.flow';
 import { handlePedirEntrega } from './flows/pedirEntrega.flow';
@@ -213,7 +213,16 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   const t = (m.texto ?? '').toLowerCase();
   if (m.tipo === 'text' || m.tipo === 'interactive_list' || m.tipo === 'interactive_button') {
     if (COMANDOS_MENU.includes(t) || m.seleccionId === 'menu_principal') {
-      await clearSesion(m.from);
+      // Si estaba en modo humano (pidió asesor y el bot se había callado),
+      // "menú" tiene que resolver la alerta de verdad, no solo limpiar la
+      // sesión — si no, la alerta vieja queda abierta para siempre y la
+      // próxima vez que este cliente pida asesor, el ON CONFLICT evita una
+      // alerta nueva aunque el bot le confirme "ya avisamos a un asesor".
+      if (sesion.contexto?.modoHumano) {
+        await resolverAsesor(m.from);
+      } else {
+        await clearSesion(m.from);
+      }
       return enviarMenuPrincipal(m.from);
     }
   }
