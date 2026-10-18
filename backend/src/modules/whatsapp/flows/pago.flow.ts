@@ -249,6 +249,39 @@ export function mensajePedidoPendiente(pedido: PedidoCandidato): string {
   );
 }
 
+/**
+ * De qué flujo venía el cliente cuando se topó con un pedido pendiente —
+ * así, si elige cancelarlo, `manejarPedidoPendiente` (messageRouter.ts) sabe
+ * a qué flujo volver (pedir contenedor nuevo o recambio) en vez de perderlo
+ * en el menú principal.
+ */
+export type OrigenPedidoPendiente = 'cotizacion' | 'recambio';
+
+/**
+ * Ofrece pagar/cancelar un pedido pendiente con botones de verdad (no texto
+ * suelto) y deja la sesión en `pedido_pendiente` esperando la respuesta —
+ * mismo mecanismo para cualquier flujo que se tope con esto (cotización,
+ * recambio). Antes cada flujo tenía su propia versión: la de recambio.flow.ts
+ * mandaba la pregunta como texto plano sin botones y encima borraba la
+ * sesión en el acto, dejando al cliente sin ninguna forma de contestar.
+ */
+export async function ofrecerPedidoPendiente(
+  to: string,
+  pedido: PedidoCandidato,
+  origen: OrigenPedidoPendiente,
+): Promise<void> {
+  await sendButtons(to, mensajePedidoPendiente(pedido), [
+    { id: 'pedido_pendiente_pagar', title: '💸 Pagar ese' },
+    { id: 'pedido_pendiente_cancelar', title: '❌ Cancelarlo' },
+  ]);
+  await setSesion({
+    telefono: to,
+    flujo: 'pedido_pendiente',
+    paso: 'elegir_accion',
+    contexto: { pedidoId: pedido.id, origenPedidoPendiente: origen },
+  });
+}
+
 /** Maneja la respuesta a "¿Cómo vas a pagar?". */
 async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;

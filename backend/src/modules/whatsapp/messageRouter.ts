@@ -5,7 +5,7 @@ import { getSesion, clearSesion, setSesion } from './session.store';
 import { botEstaActivo } from '../../services/botConfig.service';
 import { MENSAJE_BOT_DESACTIVADO } from '../../config/bot.config';
 import { handleCotizacion, handlePedirNuevoContenedor } from './flows/cotizacion.flow';
-import { handlePago, pedidosAbiertos, mensajePedidoPendiente, opcionesMetodoPago } from './flows/pago.flow';
+import { handlePago, pedidosAbiertos, opcionesMetodoPago, ofrecerPedidoPendiente } from './flows/pago.flow';
 import { handleChofer } from './flows/chofer.flow';
 import { handleAsesor, escalarAAsesor } from './flows/asesor.flow';
 import { handleRecambio } from './flows/recambio.flow';
@@ -367,11 +367,7 @@ async function iniciarPedirContenedor(m: MensajeEntrante, sesion: Sesion): Promi
 
   const [pendiente] = await pedidosAbiertos(m.from);
   if (pendiente) {
-    await sendButtons(m.from, mensajePedidoPendiente(pendiente), [
-      { id: 'pedido_pendiente_pagar', title: '💸 Pagar ese' },
-      { id: 'pedido_pendiente_cancelar', title: '❌ Cancelarlo' },
-    ]);
-    await setSesion({ telefono: m.from, flujo: 'pedido_pendiente', paso: 'elegir_accion', contexto: { pedidoId: pendiente.id } });
+    await ofrecerPedidoPendiente(m.from, pendiente, 'cotizacion');
     return;
   }
 
@@ -402,7 +398,12 @@ async function manejarPedidoPendiente(m: MensajeEntrante, sesion: Sesion): Promi
     const pedidoId = sesion.contexto?.pedidoId as string | undefined;
     if (pedidoId) await query(`UPDATE pedidos SET estado = 'cancelado' WHERE id = $1`, [pedidoId]);
     await sendText(m.from, '👍 Cancelamos ese pedido.');
-    return iniciarPedirContenedor(m, { ...sesion, flujo: null, paso: null, contexto: {} });
+    const sesionLimpia = { ...sesion, flujo: null, paso: null, contexto: {} };
+    // Vuelve al flujo del que vino (ver ofrecerPedidoPendiente) — si no hay
+    // ninguno guardado (sesiones viejas de antes de este cambio), cae al
+    // comportamiento de siempre: pedir un contenedor nuevo.
+    if (sesion.contexto?.origenPedidoPendiente === 'recambio') return handleRecambio(m, sesionLimpia);
+    return iniciarPedirContenedor(m, sesionLimpia);
   }
   await manejarRespuestaInvalida(m, 'Elegí "💸 Pagar ese" o "❌ Cancelar y pedir otro".');
 }

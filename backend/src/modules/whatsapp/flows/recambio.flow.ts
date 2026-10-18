@@ -6,7 +6,7 @@ import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
-import { opcionesMetodoPago, tieneCuentaCorrienteAprobada, pedidosAbiertos, mensajePedidoPendiente } from './pago.flow';
+import { opcionesMetodoPago, tieneCuentaCorrienteAprobada, pedidosAbiertos, ofrecerPedidoPendiente } from './pago.flow';
 import { reverseGeocode } from '../../../services/geocoding.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
@@ -100,12 +100,13 @@ export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promis
 
   // Igual que Cotizar: si no es cuenta corriente (ahí no hay comprobante que
   // esperar) y ya tiene un pedido sin pagar, se le pide que pague ese
-  // primero antes de arrancar un recambio nuevo.
+  // primero antes de arrancar un recambio nuevo — con botones de verdad y
+  // guardando que volvió acá (recambio) si elige cancelarlo, no con un
+  // texto suelto sin forma de contestar (ver ofrecerPedidoPendiente).
   if (!(await tieneCuentaCorrienteAprobada(to))) {
     const [pendiente] = await pedidosAbiertos(to);
     if (pendiente) {
-      await clearSesion(to);
-      await sendText(to, mensajePedidoPendiente(pendiente));
+      await ofrecerPedidoPendiente(to, pendiente, 'recambio');
       return;
     }
   }
