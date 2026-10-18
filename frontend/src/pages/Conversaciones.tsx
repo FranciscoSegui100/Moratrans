@@ -386,9 +386,6 @@ export function Conversaciones() {
                     {formatVentana(ventanaActiva)}
                   </span>
                 </div>
-                <div className="ventana-barra">
-                  <span style={{ width: `${ventanaActiva.porcentaje}%` }} />
-                </div>
               </div>
 
               <RoleGate roles={['admin', 'operador']}>
