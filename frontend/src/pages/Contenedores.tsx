@@ -193,16 +193,48 @@ export function Contenedores() {
     );
   });
 
-  // Ordenar por "Vence" con un click en el header: el que vence antes primero,
-  // los que no tienen fecha cargada quedan al final sin importar la dirección.
-  const [ordenarPorVence, setOrdenarPorVence] = useState<'asc' | 'desc' | null>(null);
-  if (ordenarPorVence) {
+  // Ordenar la tabla con un click en el header de Número/Tamaño/Estado/Vence.
+  // Null (sin dato) siempre al final, sin importar la dirección — evita que
+  // "nada cargado" se mezcle con valores reales al ordenar.
+  type Columna = 'numero' | 'tamano' | 'estado' | 'vence';
+  const [orden, setOrden] = useState<{ columna: Columna; dir: 'asc' | 'desc' } | null>(null);
+
+  function pedirOrden(columna: Columna) {
+    setOrden((actual) => {
+      if (!actual || actual.columna !== columna) return { columna, dir: 'asc' };
+      if (actual.dir === 'asc') return { columna, dir: 'desc' };
+      return null;
+    });
+  }
+
+  function iconoOrden(columna: Columna) {
+    if (orden?.columna !== columna) return <ArrowUpDown size={12} style={{ verticalAlign: 'middle', opacity: 0.4 }} />;
+    return orden.dir === 'asc'
+      ? <ArrowUp size={12} style={{ verticalAlign: 'middle' }} />
+      : <ArrowDown size={12} style={{ verticalAlign: 'middle' }} />;
+  }
+
+  if (orden) {
+    const { columna, dir } = orden;
+    const signo = dir === 'asc' ? 1 : -1;
     contenedoresFiltrados.sort((a, b) => {
+      if (columna === 'numero') return signo * a.numero.localeCompare(b.numero);
+      if (columna === 'estado') {
+        const la = ETIQUETAS_ESTADO[a.estado_contrato] ?? a.estado_contrato;
+        const lb = ETIQUETAS_ESTADO[b.estado_contrato] ?? b.estado_contrato;
+        return signo * la.localeCompare(lb);
+      }
+      if (columna === 'tamano') {
+        if (a.tamano == null && b.tamano == null) return 0;
+        if (a.tamano == null) return 1;
+        if (b.tamano == null) return -1;
+        return signo * (a.tamano - b.tamano);
+      }
+      // vence
       if (!a.vence_en && !b.vence_en) return 0;
       if (!a.vence_en) return 1;
       if (!b.vence_en) return -1;
-      const diff = new Date(a.vence_en).getTime() - new Date(b.vence_en).getTime();
-      return ordenarPorVence === 'asc' ? diff : -diff;
+      return signo * (new Date(a.vence_en).getTime() - new Date(b.vence_en).getTime());
     });
   }
 
@@ -286,20 +318,19 @@ export function Contenedores() {
         <table className="data-table">
           <thead>
             <tr>
-              <th>Número</th>
-              <th>Tamaño</th>
-              <th>Estado</th>
+              <th onClick={() => pedirOrden('numero')} style={{ cursor: 'pointer', userSelect: 'none' }} title="Ordenar por número">
+                Número {iconoOrden('numero')}
+              </th>
+              <th onClick={() => pedirOrden('tamano')} style={{ cursor: 'pointer', userSelect: 'none' }} title="Ordenar por tamaño">
+                Tamaño {iconoOrden('tamano')}
+              </th>
+              <th onClick={() => pedirOrden('estado')} style={{ cursor: 'pointer', userSelect: 'none' }} title="Ordenar por estado">
+                Estado {iconoOrden('estado')}
+              </th>
               <th>Cliente y dirección</th>
               <th>Chofer asignado</th>
-              <th
-                onClick={() => setOrdenarPorVence((v) => (v === null ? 'asc' : v === 'asc' ? 'desc' : null))}
-                style={{ cursor: 'pointer', userSelect: 'none' }}
-                title="Ordenar por fecha de vencimiento"
-              >
-                Vence{' '}
-                {ordenarPorVence === 'asc' ? <ArrowUp size={12} style={{ verticalAlign: 'middle' }} />
-                  : ordenarPorVence === 'desc' ? <ArrowDown size={12} style={{ verticalAlign: 'middle' }} />
-                  : <ArrowUpDown size={12} style={{ verticalAlign: 'middle', opacity: 0.4 }} />}
+              <th onClick={() => pedirOrden('vence')} style={{ cursor: 'pointer', userSelect: 'none' }} title="Ordenar por fecha de vencimiento">
+                Vence {iconoOrden('vence')}
               </th>
               <th>Última actualización</th>
             </tr>
