@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { X, Wrench, CircleCheck, Pencil, Trash2, Check, MessageCircle } from 'lucide-react';
+import { X, Wrench, CircleCheck, Pencil, Trash2, Check, MessageCircle, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -193,6 +193,19 @@ export function Contenedores() {
     );
   });
 
+  // Ordenar por "Vence" con un click en el header: el que vence antes primero,
+  // los que no tienen fecha cargada quedan al final sin importar la dirección.
+  const [ordenarPorVence, setOrdenarPorVence] = useState<'asc' | 'desc' | null>(null);
+  if (ordenarPorVence) {
+    contenedoresFiltrados.sort((a, b) => {
+      if (!a.vence_en && !b.vence_en) return 0;
+      if (!a.vence_en) return 1;
+      if (!b.vence_en) return -1;
+      const diff = new Date(a.vence_en).getTime() - new Date(b.vence_en).getTime();
+      return ordenarPorVence === 'asc' ? diff : -diff;
+    });
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -278,7 +291,16 @@ export function Contenedores() {
               <th>Estado</th>
               <th>Cliente y dirección</th>
               <th>Chofer asignado</th>
-              <th>Vence</th>
+              <th
+                onClick={() => setOrdenarPorVence((v) => (v === null ? 'asc' : v === 'asc' ? 'desc' : null))}
+                style={{ cursor: 'pointer', userSelect: 'none' }}
+                title="Ordenar por fecha de vencimiento"
+              >
+                Vence{' '}
+                {ordenarPorVence === 'asc' ? <ArrowUp size={12} style={{ verticalAlign: 'middle' }} />
+                  : ordenarPorVence === 'desc' ? <ArrowDown size={12} style={{ verticalAlign: 'middle' }} />
+                  : <ArrowUpDown size={12} style={{ verticalAlign: 'middle', opacity: 0.4 }} />}
+              </th>
               <th>Última actualización</th>
             </tr>
           </thead>
