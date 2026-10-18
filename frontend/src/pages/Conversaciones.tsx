@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { MessageCircle, Pause, Play, UserPlus, Search, Wallet, Clock } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { MessageCircle, Pause, Play, UserPlus, Search, Wallet, Clock, X } from 'lucide-react';
 import { useConversaciones, Conversacion } from '../hooks/useConversaciones';
 import { RoleGate } from '../components/RoleGate';
 import { ChatAsesor } from '../components/ChatAsesor';
@@ -41,22 +41,43 @@ function formatHora(iso: string): string {
 interface ResumenChat {
   deuda: number;
   contenedor: { numero: string; vence_en: string | null } | null;
+  pedidoPendiente: { zona: string; precio: string | null; cantidad: number } | null;
 }
 
 /**
- * Franja de contexto arriba del hilo de chat: deuda y contenedor/vencimiento
- * del cliente activo, para que el asesor no tenga que abrir otra pestaña a
- * mitad de una conversación. Deliberadamente chica y de solo lectura.
+ * Franja de contexto arriba del hilo de chat: deuda, contenedor/vencimiento
+ * y pedido sin pagar del cliente activo, para que el asesor no tenga que
+ * abrir otra pestaña a mitad de una conversación. El pedido pendiente suma
+ * un botón de cancelar — el cliente no tiene esa opción en el bot a
+ * propósito (ver messageRouter.ts), así que si queda trabado sin poder
+ * pedir algo nuevo, la única salida es que el asesor lo destrabe desde acá.
  */
 function ResumenCliente({ telefono }: { telefono: string }) {
+  const { show } = useToast();
+  const queryClient = useQueryClient();
+  const [cancelando, setCancelando] = useState(false);
   const { data } = useQuery({
     queryKey: ['cliente-resumen-chat', telefono],
     queryFn: () => api.get<ResumenChat>(`/api/clientes/${encodeURIComponent(telefono)}/resumen-chat`).then((r) => r.data),
   });
   if (!data) return null;
-  if (data.deuda <= 0 && !data.contenedor) return null;
+  if (data.deuda <= 0 && !data.contenedor && !data.pedidoPendiente) return null;
 
   const vencido = data.contenedor?.vence_en ? new Date(data.contenedor.vence_en).getTime() < Date.now() : false;
+
+  async function cancelarPedido() {
+    if (!confirm('¿Cancelar el pedido pendiente de este cliente? Se le avisa por WhatsApp y queda libre para pedir algo nuevo.')) return;
+    setCancelando(true);
+    try {
+      await api.post(`/api/chat/${encodeURIComponent(telefono)}/cancelar-pedido`);
+      show('success', 'Pedido cancelado', 'Se le avisó al cliente por WhatsApp');
+      queryClient.invalidateQueries({ queryKey: ['cliente-resumen-chat', telefono] });
+    } catch (err: any) {
+      show('error', 'No se pudo cancelar', err.response?.data?.error || 'Error desconocido');
+    } finally {
+      setCancelando(false);
+    }
+  }
 
   return (
     <div className="conv-resumen-cliente">
@@ -70,6 +91,23 @@ function ResumenCliente({ telefono }: { telefono: string }) {
           <Clock size={13} strokeWidth={1.75} />
           Contenedor {data.contenedor.numero}
           {data.contenedor.vence_en && (vencido ? ` · venció el ${formatearFecha(data.contenedor.vence_en)}` : ` · vence el ${formatearFecha(data.contenedor.vence_en)}`)}
+        </span>
+      )}
+      {data.pedidoPendiente && (
+        <span className="conv-resumen-chip conv-resumen-chip--pendiente">
+          📦 Pedido sin pagar: {data.pedidoPendiente.zona}
+          {data.pedidoPendiente.precio && ` · $${Number(data.pedidoPendiente.precio).toLocaleString('es-AR')}`}
+          {data.pedidoPendiente.cantidad > 1 && ` (+${data.pedidoPendiente.cantidad - 1} más)`}
+          <RoleGate roles={['admin', 'operador']}>
+            <button
+              onClick={cancelarPedido}
+              disabled={cancelando}
+              className="conv-resumen-chip-cancelar"
+              title="Cancelar este pedido"
+            >
+              <X size={12} strokeWidth={2.5} />
+            </button>
+          </RoleGate>
         </span>
       )}
     </div>

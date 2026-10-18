@@ -1462,6 +1462,23 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .conv-resumen-chip--deuda { background: var(--warning-bg); color: var(--warning); }
 .conv-resumen-chip--vence { background: var(--warning-bg); color: var(--warning); }
 .conv-resumen-chip--vencido { background: var(--danger-bg); color: var(--danger); }
+.conv-resumen-chip--pendiente { background: var(--neutral-bg); color: var(--neutral); }
+.conv-resumen-chip-cancelar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.12);
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 2px;
+}
+.conv-resumen-chip-cancelar:hover:not(:disabled) { background: var(--danger); color: white; }
+.conv-resumen-chip-cancelar:disabled { opacity: 0.5; cursor: default; }
 
 /* ===== FILTROS DE CONVERSACIONES ===== */
 .conv-filtros { display: flex; gap: 6px; }

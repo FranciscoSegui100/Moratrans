@@ -5,7 +5,7 @@ import { query, withTx } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { excelClientes, enviarExcelClientePorWhatsApp, enviarResumenCuentaCorrientePorWhatsApp, resumenCuentaCorriente, deudaCliente, enviarDeudaClientePorWhatsApp } from '../reportes/reportes.service';
 import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
-import { datosBancarios } from '../whatsapp/flows/pago.flow';
+import { datosBancarios, pedidosAbiertos } from '../whatsapp/flows/pago.flow';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitRecursoActualizado } from '../../config/socket';
 import { encrypt, encryptBuffer } from '../../services/crypto.service';
@@ -186,10 +186,11 @@ clientesRouter.get('/:telefono/deuda', async (req: Request, res: Response) => {
  */
 clientesRouter.get('/:telefono/resumen-chat', async (req: Request, res: Response) => {
   const telefono = req.params.telefono;
-  const [saldoCC, deudaOc, contenedores] = await Promise.all([
+  const [saldoCC, deudaOc, contenedores, pendientes] = await Promise.all([
     resumenCuentaCorriente(telefono).then((r) => r.saldo),
     deudaCliente(telefono),
     contenedoresDelCliente(telefono),
+    pedidosAbiertos(telefono),
   ]);
   const deuda = Math.max(saldoCC, 0) + deudaOc.total;
   // El que vence antes es el que más le importa ver al asesor; si ninguno
@@ -199,9 +200,13 @@ clientesRouter.get('/:telefono/resumen-chat', async (req: Request, res: Response
     if (!b.vence_en) return -1;
     return a.vence_en.localeCompare(b.vence_en);
   })[0] ?? null;
+  const pedidoPendiente = pendientes[0] ?? null;
   res.json({
     deuda,
     contenedor: contenedor ? { numero: contenedor.numero, vence_en: contenedor.vence_en } : null,
+    pedidoPendiente: pedidoPendiente
+      ? { zona: pedidoPendiente.zona, precio: pedidoPendiente.precio, cantidad: pendientes.length }
+      : null,
   });
 });
 

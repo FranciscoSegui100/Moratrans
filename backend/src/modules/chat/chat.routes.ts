@@ -4,8 +4,9 @@ import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { sendText } from '../whatsapp/graphApi';
 import { logMensaje } from '../whatsapp/chatLog.service';
-import { getSesion, setSesion } from '../whatsapp/session.store';
+import { getSesion, setSesion, clearSesion } from '../whatsapp/session.store';
 import { resolverAsesor } from '../whatsapp/flows/asesor.flow';
+import { pedidosAbiertos } from '../whatsapp/flows/pago.flow';
 import { emitConversacionActualizada } from '../../config/socket';
 import path from 'path';
 import { decrypt, decryptBuffer } from '../../services/crypto.service';
@@ -235,4 +236,41 @@ chatRouter.post('/:telefono/reclamar', requireRol('admin', 'operador'), async (r
   const reclamo = await reclamarConversacion(telefono, req.user!.id);
   if (!reclamo.ok) return res.status(409).json({ error: `Ya la está atendiendo ${reclamo.ocupadaPor}.` });
   res.json({ ok: true, asignadoA: reclamo.asignadoA, asignadoANombre: reclamo.asignadoANombre });
+});
+
+/**
+ * POST /api/chat/:telefono/cancelar-pedido — a pedido del dueño: el cliente
+ * NO tiene un comando de "cancelar" en el bot a propósito, pero el asesor sí
+ * necesita poder destrabarlo desde el panel cuando se queda con un pedido
+ * cotizado/confirmado sin pagar (mismo criterio que pedidosAbiertos(), lo
+ * que ya bloquea pedir uno nuevo — ver pago.flow.ts). Cancela TODOS los que
+ * encuentre (puede haber más de uno acumulado), limpia la sesión del bot
+ * para que no quede flujo/paso apuntando a algo cancelado, y le avisa al
+ * cliente por WhatsApp — si el envío falla (ventana de 24hs cerrada, etc.)
+ * igual se cancela en la base, el aviso es best-effort.
+ */
+chatRouter.post('/:telefono/cancelar-pedido', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const telefono = req.params.telefono;
+  const pendientes = await pedidosAbiertos(telefono);
+  if (pendientes.length === 0) {
+    return res.status(404).json({ error: 'Este cliente no tiene ningún pedido pendiente de pago para cancelar.' });
+  }
+
+  await query(
+    `UPDATE pedidos SET estado = 'cancelado' WHERE id = ANY($1::uuid[])`,
+    [pendientes.map((p) => p.id)],
+  );
+  await clearSesion(telefono);
+
+  try {
+    await sendText(
+      telefono,
+      '👍 Cancelamos tu pedido pendiente. Cuando quieras hacer uno nuevo, escribí *menú*.',
+    );
+  } catch (e: any) {
+    console.error('Error avisando cancelación de pedido al cliente:', e.response?.data?.error?.message ?? e.message);
+  }
+
+  emitConversacionActualizada({ telefono, modo_humano: false, asignado_a: null, asignado_a_nombre: null });
+  res.json({ ok: true, canceladas: pendientes.length });
 });
