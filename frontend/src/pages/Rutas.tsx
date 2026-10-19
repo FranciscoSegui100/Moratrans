@@ -835,6 +835,238 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   );
 }
 
+// ── Auto-armado de rutas (Nivel 1): agrupa la bolsa del día por zona+horario y la ────
+// reparte entre choferes activos como PROPUESTA editable — no escribe nada en la base
+// hasta "Confirmar y armar", que recién ahí usa los mismos endpoints que el armado a
+// mano (POST /api/rutas + POST /api/rutas/:id/paradas). No dispara ningún aviso al
+// chofer: la ruta queda "sin confirmar" igual que una armada a mano, a la espera del
+// botón "Confirmar ruta" de siempre.
+
+interface ClusterPropuesto {
+  id: string;
+  zona: string;
+  horario: string | null;
+  visitas: VisitaPendiente[];
+}
+interface AsignacionChofer {
+  choferId: string;
+  choferNombre: string;
+  clusters: ClusterPropuesto[];
+}
+
+function cargaTotal(a: AsignacionChofer): number {
+  return a.clusters.reduce((n, c) => n + c.visitas.length, 0);
+}
+
+/** Agrupa por zona+horario y reparte cada cluster al chofer con menos carga hasta ahora (greedy, sin geocoding). */
+function armarPropuesta(visitas: VisitaPendiente[], choferes: Chofer[]): AsignacionChofer[] {
+  const porClave = new Map<string, ClusterPropuesto>();
+  for (const v of visitas) {
+    const zona = v.zona ?? (v.destino_direccion ? v.destino_direccion.split(',')[0] : 'Sin zona');
+    const horario = v.horario_preferido ?? null;
+    const clave = `${zona}__${horario ?? 'sin-horario'}`;
+    const c = porClave.get(clave) ?? { id: clave, zona, horario, visitas: [] };
+    c.visitas.push(v);
+    porClave.set(clave, c);
+  }
+  const clusters = [...porClave.values()].sort((a, b) => b.visitas.length - a.visitas.length);
+
+  const asignaciones: AsignacionChofer[] = choferes.map((c) => ({ choferId: c.id, choferNombre: c.nombre, clusters: [] }));
+  if (asignaciones.length === 0) return [];
+  for (const cluster of clusters) {
+    asignaciones.sort((a, b) => cargaTotal(a) - cargaTotal(b));
+    asignaciones[0].clusters.push(cluster);
+  }
+  return asignaciones;
+}
+
+function AutoArmarModal({
+  fecha, cola, choferes, onClose, onConfirmado,
+}: {
+  fecha: string;
+  cola: ViajePendiente[];
+  choferes: Chofer[];
+  onClose: () => void;
+  onConfirmado: () => void;
+}) {
+  const { show } = useToast();
+  const visitasDelDia = agruparPendientes(cola).filter((v) => v.fecha === fecha);
+  const [asignaciones, setAsignaciones] = useState<AsignacionChofer[]>(() => armarPropuesta(visitasDelDia, choferes));
+  const [confirmando, setConfirmando] = useState(false);
+
+  const totalAsignado = asignaciones.reduce((n, a) => n + cargaTotal(a), 0);
+  const zonas = new Set(visitasDelDia.map((v) => v.zona ?? 'Sin zona')).size;
+
+  function moverCluster(clusterId: string, nuevoChoferId: string) {
+    setAsignaciones((prev) => {
+      let cluster: ClusterPropuesto | undefined;
+      const sinEse = prev.map((a) => {
+        const idx = a.clusters.findIndex((c) => c.id === clusterId);
+        if (idx === -1) return a;
+        cluster = a.clusters[idx];
+        return { ...a, clusters: a.clusters.filter((c) => c.id !== clusterId) };
+      });
+      if (!cluster) return prev;
+      return sinEse.map((a) => (a.choferId === nuevoChoferId ? { ...a, clusters: [...a.clusters, cluster!] } : a));
+    });
+  }
+
+  function quitarVisita(clusterId: string, visitaId: string) {
+    setAsignaciones((prev) =>
+      prev.map((a) => ({
+        ...a,
+        clusters: a.clusters
+          .map((c) => (c.id === clusterId ? { ...c, visitas: c.visitas.filter((v) => v.id !== visitaId) } : c))
+          .filter((c) => c.visitas.length > 0),
+      })),
+    );
+  }
+
+  /** "No vino" — sus clusters se reparten entre los choferes que quedan, mismo criterio greedy. */
+  function excluirChofer(choferId: string) {
+    setAsignaciones((prev) => {
+      const saliente = prev.find((a) => a.choferId === choferId);
+      const resto = prev.filter((a) => a.choferId !== choferId);
+      if (!saliente || resto.length === 0) return resto;
+      const clusters = [...saliente.clusters].sort((a, b) => b.visitas.length - a.visitas.length);
+      const copia = resto.map((a) => ({ ...a, clusters: [...a.clusters] }));
+      for (const cluster of clusters) {
+        copia.sort((a, b) => cargaTotal(a) - cargaTotal(b));
+        copia[0].clusters.push(cluster);
+      }
+      return copia;
+    });
+  }
+
+  async function confirmarYArmar() {
+    setConfirmando(true);
+    let rutasCreadas = 0;
+    let paradasOk = 0;
+    const errores: string[] = [];
+    for (const a of asignaciones) {
+      const visitasChofer = a.clusters.flatMap((c) => c.visitas);
+      if (visitasChofer.length === 0) continue;
+      let rutaId: string;
+      try {
+        const existentes = await api.get<Ruta[]>(`/api/rutas?fecha=${fecha}&chofer_id=${a.choferId}`).then((r) => r.data);
+        if (existentes[0]) {
+          rutaId = existentes[0].id;
+        } else {
+          const nueva = await api.post<Ruta>('/api/rutas', { fecha, chofer_id: a.choferId }).then((r) => r.data);
+          rutaId = nueva.id;
+          rutasCreadas++;
+        }
+      } catch (e: any) {
+        errores.push(`${a.choferNombre}: ${e.response?.data?.error ?? 'no se pudo crear la ruta'}`);
+        continue;
+      }
+      for (const v of visitasChofer) {
+        const viajeId = v.entrega?.id ?? v.retiro?.id;
+        if (!viajeId) continue;
+        try {
+          await api.post(`/api/rutas/${rutaId}/paradas`, { viaje_id: viajeId });
+          paradasOk++;
+        } catch (e: any) {
+          errores.push(`${a.choferNombre} · ${v.cliente_telefono ?? viajeId}: ${e.response?.data?.error ?? 'error'}`);
+        }
+      }
+    }
+    setConfirmando(false);
+    onConfirmado();
+    if (errores.length === 0) {
+      show('success', 'Rutas armadas', `${rutasCreadas} ruta(s) nueva(s), ${paradasOk} pedido(s) asignados — quedan sin confirmar, revisalas y confirmá cada una para avisar al chofer.`);
+      onClose();
+    } else {
+      show('error', `${paradasOk} asignados, ${errores.length} con error`, errores.slice(0, 3).join(' · '));
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '920px' }}>
+        <div className="modal-header">
+          <div className="section-title" style={{ margin: 0 }}>⚡ Auto-armar rutas · {formatearFecha(fecha)}</div>
+          <button className="modal-close" onClick={onClose}><X size={18} strokeWidth={2} /></button>
+        </div>
+
+        {visitasDelDia.length === 0 ? (
+          <div className="rc-empty" style={{ textAlign: 'center', padding: '24px 0' }}>No hay pedidos sin rutear para este día.</div>
+        ) : (
+          <>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>
+              {visitasDelDia.length} pedido(s) en {zonas} zona(s), repartidos en {asignaciones.length} chofer(es) — editá lo que haga falta antes de confirmar.
+              Esto solo arma el borrador: no reserva contenedores ni avisa a nadie todavía.
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
+              {asignaciones.map((a) => (
+                <div key={a.choferId} className="card" style={{ padding: '12px 14px', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div style={{ fontWeight: 700, fontSize: '0.86rem' }}>
+                      {a.choferNombre} <span className="text-muted" style={{ fontWeight: 400 }}>· {cargaTotal(a)} pedido(s)</span>
+                    </div>
+                    {cargaTotal(a) > 0 && (
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => excluirChofer(a.choferId)} title="No vino hoy — reparte lo suyo entre el resto">
+                        No vino, reasignar
+                      </button>
+                    )}
+                  </div>
+                  {cargaTotal(a) === 0 ? (
+                    <div className="text-muted" style={{ fontSize: '0.78rem' }}>Sin pedidos asignados.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {a.clusters.map((c) => (
+                        <div key={c.id} style={{ background: 'var(--bg-subtle, var(--neutral-bg))', borderRadius: 'var(--radius-sm)', padding: '8px 10px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 600 }}>
+                              📍 {c.zona}{c.horario ? ` · ${c.horario}` : ''} <span className="text-muted" style={{ fontWeight: 400 }}>({c.visitas.length})</span>
+                            </div>
+                            <select
+                              className="form-select"
+                              style={{ fontSize: '0.74rem', padding: '2px 6px', width: 'auto' }}
+                              value={a.choferId}
+                              onChange={(e) => moverCluster(c.id, e.target.value)}
+                            >
+                              {choferes.map((ch) => <option key={ch.id} value={ch.id}>{ch.nombre}</option>)}
+                            </select>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            {c.visitas.map((v) => (
+                              <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+                                <span>{v.cliente_telefono ?? 'Sin teléfono'}{v.destino_direccion ? ` — ${v.destino_direccion}` : ''}</span>
+                                <button
+                                  type="button"
+                                  className="modal-close"
+                                  style={{ padding: '2px' }}
+                                  title="Sacar este pedido del borrador (queda en la bolsa)"
+                                  onClick={() => quitarVisita(c.id, v.id)}
+                                >
+                                  <X size={12} strokeWidth={2} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
+              <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+              <button type="button" className="btn btn-primary" onClick={confirmarYArmar} disabled={confirmando || totalAsignado === 0}>
+                {confirmando ? 'Armando...' : `Confirmar y armar (${totalAsignado})`}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Página principal: layout 2 columnas (Bolsa a la izquierda, Choferes a la derecha) ────
 
 export function Rutas() {
@@ -870,6 +1102,7 @@ export function Rutas() {
   const [formViaje, setFormViaje] = useState(() => ({ ...formViajeInicial, fecha: paramFecha || hoyISO() }));
   const [mostrarFormViaje, setMostrarFormViaje] = useState(() => paramNuevo === '1');
   const [creandoViaje, setCreandoViaje] = useState(false);
+  const [mostrarAutoArmar, setMostrarAutoArmar] = useState(false);
 
   useEffect(() => {
     if (paramNuevo === '1') {
@@ -1225,8 +1458,28 @@ export function Rutas() {
           >
             <ExternalLink size={13} strokeWidth={2} /> Ver en Viajes
           </Link>
+          <RoleGate roles={['admin', 'operador']}>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => setMostrarAutoArmar(true)}
+              title="Arma un borrador de rutas agrupando la bolsa por zona y horario — lo revisás y confirmás antes de que se escriba nada"
+            >
+              ⚡ Auto-armar rutas del día
+            </button>
+          </RoleGate>
         </div>
       </div>
+
+      {mostrarAutoArmar && (
+        <AutoArmarModal
+          fecha={fecha}
+          cola={cola}
+          choferes={choferes}
+          onClose={() => setMostrarAutoArmar(false)}
+          onConfirmado={recargarListas}
+        />
+      )}
 
       <RoleGate roles={['admin', 'operador']}>
         <div className="form-card">
