@@ -296,6 +296,28 @@ function esVisitaEnCurso(v: Visita, visitas: Visita[]): boolean {
   return primeraPendiente?.id === v.id;
 }
 
+/** Un punto de la guía "elegir chofer → agregar pedidos → confirmar ruta" en el detalle de una ruta. */
+function PasoRuta({ estado, numero, label }: { estado: 'pendiente' | 'activo' | 'hecho'; numero?: number; label: string }) {
+  const color = estado === 'hecho' ? 'var(--success)' : estado === 'activo' ? 'var(--accent)' : 'var(--border-light)';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+      <div style={{
+        width: '20px', height: '20px', borderRadius: '50%', flexShrink: 0,
+        background: estado === 'pendiente' ? 'var(--bg-surface)' : color,
+        border: estado === 'pendiente' ? '1.5px solid var(--border-light)' : 'none',
+        color: estado === 'pendiente' ? 'var(--text-muted)' : '#fff',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10.5px', fontWeight: 700,
+      }}>
+        {estado === 'hecho' ? '✓' : numero}
+      </div>
+      <span style={{ color: estado === 'activo' ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: estado === 'activo' ? 700 : 500 }}>{label}</span>
+    </div>
+  );
+}
+function PasoLinea({ activa }: { activa: boolean }) {
+  return <div style={{ width: '40px', height: '2px', background: activa ? 'var(--success)' : 'var(--border-light)', margin: '0 10px', flexShrink: 0 }} />;
+}
+
 function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado, onInsertarPedido }: {
   rutaId: string;
   rutasDelDia: Ruta[];
@@ -582,6 +604,13 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
 
   const finalizadasCount = visitas.filter(visitaFinalizada).length;
   const estado = badgeRuta({ paradas: visitas.length, sinConfirmar: paradasSinConfirmar.length, finalizadas: finalizadasCount });
+  // Guía de "dónde estoy parado" armando esta ruta: elegir chofer ya pasó (se
+  // llega acá después de tocar su tarjeta), agregar pedidos está en curso
+  // mientras no haya ninguna parada, y confirmar queda pendiente hasta que no
+  // quede ninguna parada sin confirmar.
+  const pasoAgregar: 'activo' | 'hecho' = visitas.length === 0 ? 'activo' : 'hecho';
+  const pasoConfirmar: 'pendiente' | 'activo' | 'hecho' =
+    visitas.length === 0 ? 'pendiente' : hayCambiosSinConfirmar ? 'activo' : 'hecho';
   let invalid = 0;
   for (const v of visitas) {
     if (visitaFinalizada(v)) continue; // ya hecha: su contenedor no se toca más
@@ -597,6 +626,15 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
           <div className="s">Patente {ruta.patente ?? '—'} · {formatearFecha(ruta.fecha)}</div>
         </div>
         <span className={`badge ${estado.clase}`}>{estado.texto}</span>
+      </div>
+
+      {/* Guía de pasos: elegir chofer siempre está hecho acá (ya lo elegiste tocando su tarjeta). */}
+      <div style={{ display: 'flex', alignItems: 'center', padding: '12px 18px 0', fontSize: '12px' }}>
+        <PasoRuta estado="hecho" label="Elegir chofer" />
+        <PasoLinea activa />
+        <PasoRuta estado={pasoAgregar} numero={2} label="Agregar pedidos" />
+        <PasoLinea activa={visitas.length > 0} />
+        <PasoRuta estado={pasoConfirmar} numero={3} label="Confirmar ruta" />
       </div>
 
       <RoleGate roles={['admin', 'operador']}>
@@ -628,7 +666,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
             </div>
           )}
 
-          {visitas.length === 0 && <div className="rc-empty" style={{ margin: '16px 0' }}>Todavía no hay paradas en esta ruta — asigná desde la bolsa a la izquierda.</div>}
+          {visitas.length === 0 && <div className="rc-empty" style={{ margin: '16px 0' }}>Todavía no hay paradas en esta ruta — asigná desde la bolsa de arriba.</div>}
           
           <div ref={listaParadasRef} style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
             {visitas.map((v, idx) => {
@@ -1676,10 +1714,10 @@ export function Rutas() {
         <div className="stat"><div className="l">Choferes activos</div><div className="n">{choferes.length}</div></div>
       </div>
 
-      {/* Grid principal en 2 columnas: Bolsa (Izquierda) | Choferes y Detalle (Derecha) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '20px', alignItems: 'start' }}>
-        
-        {/* COLUMNA IZQUIERDA: Bolsa de pedidos sin rutear (también zona de drop para sacar paradas de una ruta) */}
+      {/* Layout apilado: Bolsa arriba (a todo el ancho), Choferes y Detalle abajo. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+        {/* Bolsa de pedidos sin rutear, horizontal (también zona de drop para sacar paradas de una ruta) */}
         <div
           className={`card${dropBolsa ? ' bolsa-drop-activo' : ''}`}
           style={{ padding: '16px 18px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}
@@ -1709,13 +1747,15 @@ export function Rutas() {
           </div>
 
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
-            Tocá un pedido para ver el detalle. Arrastralo sobre un chofer para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
+            Tocá un pedido para ver el detalle. Arrastralo sobre un chofer (abajo) para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
           </div>
 
           {visitasPendientes.length === 0 ? (
             <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes en la bolsa.</div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: 'calc(100vh - 240px)', overflowY: 'auto', paddingRight: '4px' }}>
+            // Se ven ~2 filas de tarjetas; si hay más, scroll vertical acá adentro
+            // en vez de alargar toda la página.
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '340px', overflowY: 'auto', paddingRight: '4px' }}>
               {bolsaAgrupada.map(({ fecha, categoria, titulo, zonas }) => (
                 <div key={fecha} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <div style={{
@@ -1734,6 +1774,7 @@ export function Rutas() {
                       <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', background: 'var(--bg-surface)', padding: '4px 8px', borderRadius: 'var(--radius-sm)' }}>
                         📍 {zona} ({items.length})
                       </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px' }}>
                       {items.map((visita) => {
                     const fuenteDireccion = visita.destino_direccion
                       ? visita
@@ -1774,7 +1815,7 @@ export function Rutas() {
                         }}
                         onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDragVisita(visita); }}
                         onDragEnd={() => { setDragVisita(null); setDropChofer(null); setDropDetalle(false); }}
-                        style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px', cursor: 'grab' }}
+                        style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px', cursor: 'grab', marginBottom: 0 }}
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                           <div>
@@ -1817,6 +1858,7 @@ export function Rutas() {
                       </div>
                     );
                       })}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1825,7 +1867,7 @@ export function Rutas() {
           )}
         </div>
 
-        {/* COLUMNA DERECHA: Rutas por Chofer + Detalle de Ruta */}
+        {/* Choferes y Rutas del Día, abajo de la bolsa, a todo el ancho */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
