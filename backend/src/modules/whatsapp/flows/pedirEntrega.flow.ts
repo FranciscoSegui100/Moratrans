@@ -288,7 +288,7 @@ async function manejarIndicacion(m: MensajeEntrante, sesion: Sesion): Promise<vo
 }
 
 async function pedirDiaEntrega(to: string, sesion: Sesion): Promise<void> {
-  const dias = proximosDiasHabiles(DIAS_A_OFRECER_ENTREGA_CC);
+  const dias = proximosDiasHabiles(DIAS_A_OFRECER_ENTREGA_CC, { incluirHoy: true });
   await sendList(
     to,
     '📅 Día de entrega',

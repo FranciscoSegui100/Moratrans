@@ -103,7 +103,7 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
   // días antes de la fecha pactada; si ya está en fecha de vencimiento (o vencido),
   // se ofrecen los próximos días hábiles disponibles para coordinar el retiro.
   const venceEn = sesion.contexto.venceEn as string | null;
-  const todosDias = proximosDiasHabiles(DIAS_A_OFRECER_RETIRO_ANTICIPADO);
+  const todosDias = proximosDiasHabiles(DIAS_A_OFRECER_RETIRO_ANTICIPADO, { incluirHoy: true });
   const diasAnticipados = todosDias.filter((d) => !venceEn || d.fecha <= venceEn);
   const dias = diasAnticipados.length > 0 ? diasAnticipados : todosDias;
 

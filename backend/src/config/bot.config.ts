@@ -17,6 +17,9 @@ export const DIAS_ALQUILER_ANTES_RETIRO = 7;
 /** Cantidad de próximos días hábiles (lunes a viernes) que se le ofrecen al cliente para elegir. */
 export const CANTIDAD_DIAS_HABILES_A_OFRECER = 6;
 
+/** Hasta esta hora (Mendoza, exclusiva) el bot ofrece "hoy" como día de entrega/retiro. A partir de ahí arranca mañana. */
+export const HORA_LIMITE_PEDIDO_MISMO_DIA = 15;
+
 /** Días que suma "extender el retiro". Solo se puede aplicar una vez por ciclo (ver alargarRetiro.flow.ts). */
 export const DIAS_ALARGUE = 5;
 
