@@ -331,7 +331,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   const { show } = useToast();
   const queryClient = useQueryClient();
   const [agregandoVaciado, setAgregandoVaciado] = useState(false);
-  const [vaciadoForm, setVaciadoForm] = useState({ ubicacion_id: '', notas: '' });
+  const [vaciadoNotas, setVaciadoNotas] = useState('');
   const [confirmando, setConfirmando] = useState(false);
   const [reordenando, setReordenando] = useState(false);
   // Índice de la parada sobre cuyo borde superior caería un pedido arrastrado desde la bolsa.
@@ -349,12 +349,6 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     // para que los selects de contenedor muestren siempre el stock real.
     refetchInterval: 15000,
   });
-  const { data: ubicaciones = [] } = useQuery({
-    queryKey: ['ubicaciones'],
-    queryFn: () => api.get<Ubicacion[]>('/api/ubicaciones').then((r) => r.data.filter((u) => u.activo)),
-  });
-  const vaciaderos = ubicaciones.filter((u) => u.tipo === 'vaciadero');
-
   const cargar = () => {
     queryClient.invalidateQueries({ queryKey: ['rutas', rutaId] });
     onCambio();
@@ -382,11 +376,10 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     e.preventDefault();
     try {
       await api.post(`/api/rutas/${rutaId}/paradas/vaciado`, {
-        ubicacion_id: vaciadoForm.ubicacion_id || undefined,
-        notas: vaciadoForm.notas || undefined,
+        notas: vaciadoNotas || undefined,
       });
       setAgregandoVaciado(false);
-      setVaciadoForm({ ubicacion_id: '', notas: '' });
+      setVaciadoNotas('');
       cargar();
       show('success', 'Vaciado agregado a la ruta');
     } catch (err: any) {
@@ -879,21 +872,20 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
             {agregandoVaciado ? (
               <form onSubmit={agregarVaciado} className="form-row">
                 <div className="form-group">
-                  <label className="form-label">Vaciadero</label>
-                  <select className="form-select" value={vaciadoForm.ubicacion_id} onChange={(e) => setVaciadoForm({ ...vaciadoForm, ubicacion_id: e.target.value })}>
-                    <option value="">— Elegir —</option>
-                    {vaciaderos.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Notas</label>
-                  <input className="form-input" value={vaciadoForm.notas} onChange={(e) => setVaciadoForm({ ...vaciadoForm, notas: e.target.value })} />
+                  <label className="form-label">Notas (opcional)</label>
+                  <input
+                    className="form-input"
+                    placeholder="Ej: contenedor CAFE123"
+                    value={vaciadoNotas}
+                    onChange={(e) => setVaciadoNotas(e.target.value)}
+                    autoFocus
+                  />
                 </div>
                 <button type="submit" className="btn btn-primary btn-sm">Agregar</button>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAgregandoVaciado(false)}>Cancelar</button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setAgregandoVaciado(false); setVaciadoNotas(''); }}>Cancelar</button>
               </form>
             ) : (
-              <button className="btn btn-ghost" onClick={() => setAgregandoVaciado(true)}>
+              <button className="btn btn-ghost" onClick={() => setAgregandoVaciado(true)} title="Vaciado manual del contenedor que ya tiene el chofer (no hace falta elegir vaciadero)">
                 <Plus size={14} strokeWidth={2} /> Agregar vaciado
               </button>
             )}

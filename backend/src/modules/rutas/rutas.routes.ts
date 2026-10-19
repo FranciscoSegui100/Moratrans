@@ -224,7 +224,7 @@ async function insertarVaciadoAutomatico(c: PoolClient, rutaId: string, orden: n
   const ubicacion = await resolverUbicacion('vaciadero');
   await c.query(
     `INSERT INTO ruta_vaciados (ruta_id, orden, ubicacion_id, notas) VALUES ($1,$2,$3,$4)`,
-    [rutaId, orden, ubicacion?.id ?? null, 'Vaciado insertado automáticamente (capacidad de llenos del camión).'],
+    [rutaId, orden, ubicacion?.id ?? null, 'Vaciado agregado automáticamente.'],
   );
 }
 
@@ -511,8 +511,12 @@ rutasRouter.post('/:id/paradas', requireRol('admin', 'operador'), async (req: Re
         );
       }
 
-      if (viaje!.tipo === 'retiro') {
-        await resolverVaciadosAutomaticos(c, rutaId);
+      // Recambio: grupo_id implica que la mitad "retiro" existe aunque el
+      // viaje_id apuntado haya sido el de la mitad "entrega". Cada retiro
+      // (solo o de un recambio) se vacía solo: se agrega automáticamente un
+      // vaciado justo después, así el operador no tiene que acordarse.
+      if (viaje!.tipo === 'retiro' || viaje!.grupo_id) {
+        await insertarVaciadoAutomatico(c, rutaId, nuevoOrden + 1);
       }
 
       // Mismo lock optimista que ya usa PATCH /:id/orden: agregar una parada
@@ -729,8 +733,8 @@ rutasRouter.post('/:id/paradas/:tipo/:paradaId/mover', requireRol('admin', 'oper
         }
       }
 
-      if (viaje!.tipo === 'retiro') {
-        await resolverVaciadosAutomaticos(c, rutaDestinoId);
+      if (viaje!.tipo === 'retiro' || viaje!.grupo_id) {
+        await insertarVaciadoAutomatico(c, rutaDestinoId, nuevoOrden + 1);
       }
 
       await c.query(`UPDATE rutas SET version = version + 1 WHERE id = ANY($1)`, [[rutaOrigenId, rutaDestinoId]]);
