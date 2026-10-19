@@ -27,8 +27,8 @@ export async function getSesion(telefono: string): Promise<Sesion> {
               -- modo humano ni los mensajes del cliente ni los del operador
               -- tocan actualizado_en, así que a los 10 min se borraba la
               -- sesión, el bot volvía a contestar con el menú y el chat
-              -- desaparecía de "Necesitan asesor". Termina solo con "menú"
-              -- del cliente o cuando el operador la resuelve/libera.
+              -- desaparecía de "Necesitan asesor". Termina solo cuando el
+              -- operador la resuelve o la libera desde el panel.
               AND (contexto->>'modoHumano') IS DISTINCT FROM 'true') AS vencida
        FROM sesiones_chat WHERE telefono = $1`,
     [telefono, String(SESION_TTL_MIN)],
