@@ -182,6 +182,6 @@ async function manejarDia(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   await clearSesion(to);
   await sendText(
     to,
-    `✅ ¡Listo! Coordinamos el retiro del contenedor *${numero}* para el *${formatearFechaLarga(fecha)}*.\n\n_Si en un rato no tenés novedades, escribí *asesor*._`,
+    `✅ ¡Listo! Coordinamos el retiro de tu contenedor para el *${formatearFechaLarga(fecha)}*.\n\n_Si en un rato no tenés novedades, escribí *asesor*._`,
   );
 }
