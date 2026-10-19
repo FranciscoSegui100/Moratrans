@@ -17,6 +17,7 @@ import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { formatearFechaCorta, formatearFechaLarga, medianocheArgentina, sumarDias } from '../../services/diasHabiles.service';
+import { hoyMendozaISO } from '../../services/fechas.service';
 import { saldoCuentaCorriente } from '../reportes/reportes.service';
 import { DIAS_ALQUILER_ANTES_RETIRO } from '../../config/bot.config';
 
@@ -700,11 +701,12 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       // eligió al pedir el pedido (pedidos.fecha_entrega) en vez de perderla
       // y caer en CURRENT_DATE.
       const fechaViaje = venceEn ?? info?.fecha_entrega ?? null;
+      const hoy = hoyMendozaISO();
       await query(
         `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion, pago_id)
-         VALUES ('retiro', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, $7, $8, $9, 'programado', 'Creado al validar el pago (recambio)', $10, $11, $12, $13)`,
+         VALUES ('retiro', COALESCE($1, $14::date), $2, $3, $4, $5, $6, $7, $8, $9, 'programado', 'Creado al validar el pago (recambio)', $10, $11, $12, $13)`,
         [fechaViaje, choferId ?? null, info!.contenedor_recambio_numero, info?.cliente_telefono ?? null, info?.zona ?? null,
-         info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, pagoId],
+         info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, pagoId, hoy],
       );
       await query(
         // El costo del recambio va en la entrega (el nuevo contenedor), no en el
@@ -712,9 +714,9 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
         // (ver recambio.flow.ts). Sin esto, el Excel de movimientos exportaba
         // este viaje con IMPORTE vacío (ver excelClientes en reportes.service.ts).
         `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, importe, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion, pago_id)
-         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, $7, $8, $9, $10, 'programado', 'Creado al validar el pago (recambio)', $11, $12, $13, $14)`,
+         VALUES ('entrega', COALESCE($1, $15::date), $2, $3, $4, $5, $6, $7, $8, $9, $10, 'programado', 'Creado al validar el pago (recambio)', $11, $12, $13, $14)`,
         [fechaViaje, choferId ?? null, result.contenedor ?? null, info?.cliente_telefono ?? null, info?.zona ?? null,
-         info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, info?.precio ?? null, grupoId, ubicacion?.id ?? null, ubicacion?.direccion ?? null, pagoId],
+         info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, info?.precio ?? null, grupoId, ubicacion?.id ?? null, ubicacion?.direccion ?? null, pagoId, hoy],
       );
 
       if (choferId && result.contenedor) {
@@ -741,10 +743,10 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
         // por transferencia/cuenta corriente con la columna IMPORTE vacía —
         // el caso más común de todos.
         `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, importe, estado, notas, ubicacion_id, ubicacion_direccion, destino_direccion, destino_lat, destino_lng, horario_preferido, pago_id)
-         VALUES ('entrega', COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6, 'programado', $7, $8, $9, $10, $11, $12, $13, $14)`,
+         VALUES ('entrega', COALESCE($1, $15::date), $2, $3, $4, $5, $6, 'programado', $7, $8, $9, $10, $11, $12, $13, $14)`,
         [fechaViaje, choferId ?? null, result.contenedor ?? null, info?.cliente_telefono ?? null, info?.zona ?? null, info?.precio ?? null,
          result.contenedor ? (result.reservado_ahora ? 'Creado al validar el pago' : 'Reservado al validar el pago; contenedor ocupado, pendiente de que vuelva') : 'Creado al validar el pago (en bolsa sin rutear)',
-         ubicacion?.id ?? null, ubicacion?.direccion ?? null, info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, pagoId],
+         ubicacion?.id ?? null, ubicacion?.direccion ?? null, info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, pagoId, hoyMendozaISO()],
       );
 
       if (choferId && result.contenedor) {

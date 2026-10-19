@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { query } from '../../config/db';
 import { requireAuth } from '../../middleware/rbac';
+import { hoyMendozaISO } from '../../services/fechas.service';
 
 export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth);
@@ -120,13 +121,18 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
        -- hoy: eso son confirmaciones de entrega, no "viajes de hoy" — excluía
        -- todos los retiros y no tenía relación con viajes.fecha (la fecha
        -- programada que usan Rutas/Viajes para todo lo demás).
-       (SELECT count(*) FROM viajes WHERE fecha = current_date AND estado <> 'cancelado')::int             AS viajes_hoy,
-       (SELECT count(*) FROM viajes WHERE fecha = current_date - 1 AND estado <> 'cancelado')::int         AS viajes_ayer,
-       (SELECT count(*) FROM historial_contenedores WHERE estado = 'entregado' AND creado_en::date = current_date)::int
+       --
+       -- "Hoy" viaja como parámetro ($1, calculado en Node con hoyMendozaISO)
+       -- en vez de usar current_date: el server corre en UTC, así que
+       -- current_date entre ~21hs y medianoche hora Mendoza ya "es mañana".
+       (SELECT count(*) FROM viajes WHERE fecha = $1::date AND estado <> 'cancelado')::int             AS viajes_hoy,
+       (SELECT count(*) FROM viajes WHERE fecha = $1::date - 1 AND estado <> 'cancelado')::int         AS viajes_ayer,
+       (SELECT count(*) FROM historial_contenedores WHERE estado = 'entregado' AND (creado_en AT TIME ZONE 'America/Mendoza')::date = $1::date)::int
                                                                                            AS entregas_hoy,
        (SELECT count(*) FROM alertas WHERE estado <> 'resuelta')::int                     AS alertas_activas,
        (SELECT COALESCE(SUM(deuda), 0) FROM deuda_por_cliente)                            AS deuda_total,
        (SELECT count(*) FROM deuda_por_cliente WHERE deuda > 0)::int                      AS clientes_con_deuda`,
+    [hoyMendozaISO()],
   );
   res.json(kpis);
 });
@@ -140,9 +146,10 @@ dashboardRouter.get('/tendencia', async (_req: Request, res: Response) => {
   const rows = await query<{ fecha: string; viajes: number; entregas: number }>(
     `SELECT to_char(d, 'YYYY-MM-DD') AS fecha,
             (SELECT count(*) FROM viajes v WHERE v.fecha = d AND v.estado <> 'cancelado')::int AS viajes,
-            (SELECT count(*) FROM historial_contenedores h WHERE h.estado = 'entregado' AND h.creado_en::date = d)::int AS entregas
-       FROM generate_series(current_date - interval '6 days', current_date, interval '1 day') d
+            (SELECT count(*) FROM historial_contenedores h WHERE h.estado = 'entregado' AND (h.creado_en AT TIME ZONE 'America/Mendoza')::date = d)::int AS entregas
+       FROM generate_series($1::date - interval '6 days', $1::date, interval '1 day') d
       ORDER BY d`,
+    [hoyMendozaISO()],
   );
   res.json(rows);
 });

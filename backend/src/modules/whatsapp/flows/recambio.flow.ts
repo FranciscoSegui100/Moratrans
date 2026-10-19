@@ -5,6 +5,7 @@ import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
+import { hoyMendozaISO } from '../../../services/fechas.service';
 import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
 import { opcionesMetodoPago, tieneCuentaCorrienteAprobada, pedidosAbiertos, ofrecerPedidoPendiente } from './pago.flow';
 import { reverseGeocode } from '../../../services/geocoding.service';
@@ -572,16 +573,17 @@ async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: s
   const grupoId = randomUUID();
   const vaciadero = await resolverUbicacion('vaciadero');
   const deposito = await resolverUbicacion('deposito');
+  const hoy = hoyMendozaISO();
 
   await query(
     `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
-     VALUES ('retiro', CURRENT_DATE, $1, $2, $3, $4, $5, $6, $7, $8, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
-    [numero, to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+     VALUES ('retiro', $12, $1, $2, $3, $4, $5, $6, $7, $8, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
+    [numero, to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, hoy],
   );
   await query(
     `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, importe, es_cuenta_corriente, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
-     VALUES ('entrega', CURRENT_DATE, $1, $2, $3, $4, $5, $6, $7, $8, TRUE, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
-    [to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, precio, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
+     VALUES ('entrega', $12, $1, $2, $3, $4, $5, $6, $7, $8, TRUE, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
+    [to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, precio, grupoId, deposito?.id ?? null, deposito?.direccion ?? null, hoy],
   );
 
   const [alerta] = await query(
