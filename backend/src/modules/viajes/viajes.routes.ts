@@ -16,6 +16,23 @@ import { notificarClienteChoferEnCamino } from '../whatsapp/notificacionesClient
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
 
+/**
+ * Reintenta una vez más, tras una espera corta, un envío de WhatsApp al
+ * chofer — cubre el hiccup transitorio típico de la API de Meta antes de
+ * darlo por fallido. Si el reintento también falla, el error se deja
+ * propagar igual para que el llamador registre la alerta de envío fallido
+ * (ver notificarEnvioFallido) — esto no la reemplaza, solo reduce cuántas
+ * veces se llega a necesitarla.
+ */
+async function conReintento(fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+  } catch {
+    await new Promise((r) => setTimeout(r, 2000));
+    await fn();
+  }
+}
+
 function fail(msg: string, status = 409): never {
   const err: any = new Error(msg);
   err.status = status;
@@ -226,8 +243,10 @@ export async function avisarChoferViaje(
     (boton ? 'Cuando la completes, tocá el botón de abajo.' : `Cuando la completes, escribime *${tipo === 'entrega' ? 'entregué' : 'retiré'}*.`) +
     avisoEfectivoChofer(medioPago, monto);
 
-  if (boton) await sendButtons(chofer.telefono, cuerpo, [boton]);
-  else await sendText(chofer.telefono, cuerpo);
+  await conReintento(async () => {
+    if (boton) await sendButtons(chofer.telefono!, cuerpo, [boton]);
+    else await sendText(chofer.telefono!, cuerpo);
+  });
   await menuChofer(chofer.telefono, chofer.nombre);
 }
 
@@ -306,8 +325,10 @@ export async function avisarChoferRecambio(
     (boton ? 'Cuando lo completes, tocá el botón de abajo.' : 'Cuando lo completes, escribime *retiré*.') +
     avisoEfectivoChofer(medioPago, monto);
 
-  if (boton) await sendButtons(chofer.telefono, cuerpo, [boton]);
-  else await sendText(chofer.telefono, cuerpo);
+  await conReintento(async () => {
+    if (boton) await sendButtons(chofer.telefono!, cuerpo, [boton]);
+    else await sendText(chofer.telefono!, cuerpo);
+  });
   await menuChofer(chofer.telefono, chofer.nombre);
 }
 

@@ -1,12 +1,12 @@
 import { query } from '../../../config/db';
 import { sendText, sendList, sendButtons } from '../graphApi';
-import { setSesion, clearSesion } from '../session.store';
+import { setSesion, clearSesion, registrarIntentoInvalido } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 
 import { finalizarRetiro } from '../../../services/retiro.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
-import { DIAS_ALQUILER_ANTES_RETIRO } from '../../../config/bot.config';
-import { avisarSiguienteParadaRuta } from '../../viajes/viajes.routes';
+import { DIAS_ALQUILER_ANTES_RETIRO, LIMITE_INTENTOS_INVALIDOS } from '../../../config/bot.config';
+import { avisarSiguienteParadaRuta, avisarChoferViaje, avisarChoferRecambio } from '../../viajes/viajes.routes';
 import { notificarClienteServicioFinalizado } from '../notificacionesCliente';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
@@ -21,6 +21,27 @@ const LABEL_ESTADO: Record<(typeof ESTADOS_CHOFER)[number], string> = {
   entregado: '📦 Ya entregué',
   retirado: '📥 Ya retiré',
 };
+
+/**
+ * Antes, un error real al aplicar un estado (no el caso común de doble
+ * toque, ya filtrado aparte) solo quedaba en el console.error de Railway —
+ * invisible para la empresa salvo que el chofer llamara a quejarse. Ahora
+ * también queda una alerta en el panel con el contenedor y el motivo.
+ */
+async function alertarErrorChofer(choferId: string, choferNombre: string, numero: string, motivo: string): Promise<void> {
+  // referencia_id distinta de la que usa "chofer trabado en el bot" (esa usa
+  // choferId pelado) para que un error real de transición no quede tapado
+  // por el ON CONFLICT si ya había una alerta de otro tipo abierta para el
+  // mismo chofer.
+  const [alerta] = await query(
+    `INSERT INTO alertas (tipo, referencia_id, mensaje)
+     VALUES ('chofer_necesita_ayuda', $1, $2)
+     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+    [`${choferId}:transicion:${numero}`, `Error aplicando un estado para ${choferNombre} en el contenedor ${numero}: ${motivo}`],
+  );
+  if (alerta) emitAlerta(alerta);
+}
 
 export async function handleChofer(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
@@ -96,6 +117,9 @@ if (chofer.length === 0) {
   if (txt.includes('entreg')) {
     return elegirContenedor(to, chofer[0].id, 'entregado');
   }
+  if (txt.includes('ruta') || txt === 'hoy' || txt.includes('pendiente')) {
+    return handleRutaDeHoy(to, chofer[0].id, chofer[0].nombre);
+  }
   if (sesion.paso === 'elegir_contenedor' && m.tipo === 'text' && m.texto) {
     const inputNumero = m.texto.trim();
     const estado = sesion.contexto?.estado as string;
@@ -115,9 +139,33 @@ if (chofer.length === 0) {
     }
   }
 
+  // No se reconoció nada de lo de arriba. Mismo contador que usa el lado
+  // cliente (sesiones_chat.intentos_invalidos — se resetea solo en la
+  // próxima transición válida vía setSesion/clearSesion), pero acá no hay
+  // un botón de "hablar con alguien" de por medio: un chofer manejando no
+  // debería tener que tocar nada más, así que al segundo intento fallido
+  // seguido se avisa directo al panel en vez de insistir con el mismo
+  // mensaje para siempre.
+  const intentosFallidos = await registrarIntentoInvalido(to);
+  if (intentosFallidos < LIMITE_INTENTOS_INVALIDOS) {
+    await sendText(
+      to,
+      `🚚 No entendí eso, ${chofer[0].nombre}. Escribí *ruta* para ver qué tenés pendiente, o tocá el botón del aviso correspondiente.`,
+    );
+    return;
+  }
+
+  const [alerta] = await query(
+    `INSERT INTO alertas (tipo, referencia_id, mensaje)
+     VALUES ('chofer_necesita_ayuda', $1, $2)
+     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+    [chofer[0].id, `${chofer[0].nombre} no está pudiendo avanzar en el bot (varios mensajes sin reconocer).`],
+  );
+  if (alerta) emitAlerta(alerta);
   await sendText(
     to,
-    `🚚 No entendí eso, ${chofer[0].nombre}. Cuando completes una entrega, retiro o recambio, tocá el botón del aviso correspondiente, o escribime *entregué* o *retiré*.`,
+    `🚚 Ya le avisé a alguien del equipo que estás con problemas, ${chofer[0].nombre}. Te van a contactar. Mientras tanto, escribí *ruta* para ver qué tenés pendiente.`,
   );
   return menuChofer(to, chofer[0].nombre);
 }
@@ -145,6 +193,72 @@ export async function menuChofer(to: string, nombre?: string): Promise<void> {
   if (!chofer) return; // no debería pasar (ya se validó identidad antes de llegar acá)
   await ofrecerVaciadosPendientes(to, chofer.id);
   await ofrecerRecambioPendiente(to, chofer.id);
+}
+
+/**
+ * El chofer escribe "ruta"/"hoy"/"pendiente" para recuperar lo que tiene
+ * asignado AHORA MISMO si se le perdió el aviso, se quedó sin señal o
+ * cambió de turno. A propósito NUNCA muestra la ruta completa de una: solo
+ * reenvía la(s) parada(s) que ya son "el frente" — la próxima a completar
+ * de cada ruta confirmada (mismo criterio que avisarSiguienteParadaRuta:
+ * la de menor `orden` sin completar), o cualquier viaje asignado suelto
+ * sin ruta (ya se le avisó individualmente al crearlo, no hay nada que
+ * esconder ahí). Mostrar toda la ruta de una dejaría que un chofer más
+ * rápido "primereara" a otros y agarrara varias paradas sin haber
+ * entregado ninguna — por eso el aviso normal también es de a una.
+ */
+async function handleRutaDeHoy(to: string, choferId: string, choferNombre: string): Promise<void> {
+  await clearSesion(to);
+
+  const frente = await query<{
+    id: string; tipo: 'entrega' | 'retiro'; contenedor_numero: string | null; destino_direccion: string | null;
+    ubicacion_id: string | null; grupo_id: string | null; cliente_telefono: string | null;
+    hora_estimada: string | null; pago_id: string | null;
+  }>(
+    `SELECT id, tipo, contenedor_numero, destino_direccion, ubicacion_id, grupo_id, cliente_telefono, hora_estimada, pago_id
+       FROM viajes v
+      WHERE v.chofer_id = $1 AND v.tipo IN ('entrega', 'retiro')
+        AND v.estado IN ('programado', 'en_curso') AND v.completada_en IS NULL
+        AND (
+          v.ruta_id IS NULL
+          OR (v.ruta_confirmada_en IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM viajes v2
+                 WHERE v2.ruta_id = v.ruta_id AND v2.orden < v.orden AND v2.completada_en IS NULL
+              ))
+        )
+      ORDER BY v.orden NULLS LAST, v.creado_en`,
+    [choferId],
+  );
+
+  if (frente.length === 0) {
+    await sendText(to, `🚚 No tenés ninguna parada asignada en este momento, ${choferNombre}. Te aviso apenas tengas algo nuevo.`);
+    return menuChofer(to, choferNombre);
+  }
+
+  await sendText(to, `🚚 Esto es lo que tenés pendiente ahora, ${choferNombre}:`);
+
+  const yaMostrados = new Set<string>();
+  for (const v of frente) {
+    if (yaMostrados.has(v.id)) continue;
+    yaMostrados.add(v.id);
+    // Recambio: las dos filas (retiro del lleno + entrega del vacío)
+    // comparten grupo_id y van juntas en un solo aviso, mismo criterio que
+    // avisarSiguienteParadaRuta — no dos mensajes separados para una sola visita.
+    const pareja = v.grupo_id ? frente.find((p) => p.grupo_id === v.grupo_id && p.id !== v.id) : undefined;
+    if (pareja) yaMostrados.add(pareja.id);
+
+    const entrega = v.tipo === 'entrega' ? v : pareja?.tipo === 'entrega' ? pareja : undefined;
+    const retiro = v.tipo === 'retiro' ? v : pareja?.tipo === 'retiro' ? pareja : undefined;
+
+    if (entrega?.grupo_id && retiro) {
+      await avisarChoferRecambio(
+        choferId, retiro.contenedor_numero!, entrega.contenedor_numero, entrega.ubicacion_id,
+        entrega.destino_direccion, entrega.cliente_telefono, entrega.hora_estimada, retiro.pago_id ?? entrega.pago_id,
+      );
+    } else {
+      await avisarChoferViaje(choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, v.hora_estimada, v.pago_id);
+    }
+  }
 }
 
 /** Contenedores propios ya retirados del cliente, esperando que confirme que los vació. */
@@ -433,6 +547,7 @@ async function aplicarVacioRecambio(
   } catch (err: any) {
     await sendText(to, `⚠️ No pudimos completar el recambio con el contenedor ${numero}. Probá de nuevo.`);
     console.error('Error en aplicarVacioRecambio:', err.message);
+    await alertarErrorChofer(choferId, choferNombre, numero, err.message).catch((e) => console.error('Error registrando alerta:', e));
   }
   return menuChofer(to, choferNombre);
 }
@@ -478,20 +593,27 @@ async function elegirContenedor(to: string, choferId: string, estado: string): P
         AND v.tipo = $3
         AND v.estado IN ('programado', 'en_curso')
       ORDER BY c.numero, c.actualizado_en DESC
-      LIMIT 10`,
+      LIMIT 11`,
     [origen, choferId, tipoRequerido],
   );
   if (conts.length === 0) {
     await sendText(to, `🙁 No tenés contenedores en estado "${origen}" para pasar a "${estado.replace('_', ' ')}".`);
     return menuChofer(to);
   }
+  // Una lista de WhatsApp admite 10 filas como máximo — si hay más, se le
+  // avisa que puede escribir el número directo (ver sesion.paso ===
+  // 'elegir_contenedor' en handleChofer) en vez de dejarlo sin saber que
+  // le faltan opciones.
+  const hayMas = conts.length > 10;
+  const candidatos = conts.slice(0, 10);
   await setSesion({ telefono: to, flujo: 'chofer', paso: 'elegir_contenedor', contexto: { estado } });
   await sendList(
     to,
     LABEL_ESTADO[estado as keyof typeof LABEL_ESTADO],
-    '¿Cuál contenedor? Fijate el cliente y la dirección para confirmar que es la parada correcta.',
+    '¿Cuál contenedor? Fijate el cliente y la dirección para confirmar que es la parada correcta.' +
+      (hayMas ? '\n\n_Tenés más de 10 — si no está en la lista, escribime directamente el número._' : ''),
     'Ver contenedores',
-    conts.map((c) => {
+    candidatos.map((c) => {
       const clienteODireccion = [c.cliente_nombre, c.destino_direccion].filter(Boolean).join(' — ') || 'Sin datos del cliente';
       const recambio = c.grupo_id
         ? c.pareja_tipo === 'retiro'
@@ -543,8 +665,8 @@ async function aplicarEstado(
       // los estados (ver elegirContenedor, que ya filtra por esto para no
       // ofrecerlo como opción en primer lugar; esto es la segunda barrera
       // por si igual llega un id de contenedor que no corresponde).
-      const [retiroExistente] = await query<{ id: string }>(
-        `SELECT id FROM viajes
+      const [retiroExistente] = await query<{ id: string; completada_en: string | null }>(
+        `SELECT id, completada_en FROM viajes
           WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
           ORDER BY creado_en DESC LIMIT 1`,
         [numero],
@@ -552,6 +674,16 @@ async function aplicarEstado(
       if (!retiroExistente) {
         await sendText(to, `🙁 El contenedor ${numero} todavía no tiene un retiro solicitado, no se puede marcar como retirado.`);
         await clearSesion(to);
+        return menuChofer(to, choferNombre);
+      }
+      // Doble toque sobre el mismo aviso viejo (típico con señal mala — el
+      // chofer no ve que ya se registró y vuelve a tocar): ya estaba hecho,
+      // no es un error. Sin este chequeo, el resto de la función se repetía
+      // entera — reenviaba la encuesta al cliente y la parada siguiente de
+      // la ruta DE NUEVO, como si fueran dos entregas distintas.
+      if (retiroExistente.completada_en) {
+        await clearSesion(to);
+        await sendText(to, `👍 Tranqui, el retiro de *${numero}* ya estaba registrado. Todo bien.`);
         return menuChofer(to, choferNombre);
       }
       const retiroId = retiroExistente.id;
@@ -609,6 +741,7 @@ async function aplicarEstado(
     } catch (err: any) {
       await sendText(to, `⚠️ No pudimos registrar el retiro del contenedor ${numero}. Probá de nuevo.`);
       console.error('Error registrando retiro pendiente:', err.message);
+      await alertarErrorChofer(choferId, choferNombre, numero, err.message).catch((e) => console.error('Error registrando alerta:', e));
     }
     return menuChofer(to, choferNombre);
   }
@@ -623,8 +756,8 @@ async function aplicarEstado(
     // del contenedor, no que este chofer tenga de verdad una entrega asignada
     // — sin este chequeo, cualquier "entregado" con id de contenedor ajeno
     // pasaría igual (mismo tipo de problema que 'retirado', ver arriba).
-    const [entregaAsignada] = await query<{ id: string }>(
-      `SELECT id FROM viajes
+    const [entregaAsignada] = await query<{ id: string; completada_en: string | null }>(
+      `SELECT id, completada_en FROM viajes
         WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
         LIMIT 1`,
       [numero, choferId],
@@ -632,6 +765,14 @@ async function aplicarEstado(
     if (!entregaAsignada) {
       await sendText(to, `🙁 No tenés ninguna entrega asignada para el contenedor ${numero}.`);
       await clearSesion(to);
+      return menuChofer(to, choferNombre);
+    }
+    // Mismo chequeo de doble toque que el branch 'retirado' de arriba: ya
+    // estaba completada, no es un error — y evita reenviar la encuesta al
+    // cliente y la parada siguiente de la ruta por segunda vez.
+    if (entregaAsignada.completada_en) {
+      await clearSesion(to);
+      await sendText(to, `👍 Tranqui, la entrega de *${numero}* ya estaba registrada. Todo bien.`);
       return menuChofer(to, choferNombre);
     }
     // El trigger fn_validar_transicion_contenedor rechaza transiciones ilegales.
@@ -716,12 +857,18 @@ async function aplicarEstado(
       if (enviada) siguienteEnviada = true;
     }
   } catch (err: any) {
-    // Error de transición inválida u otro
+    // Error de transición inválida u otro. Se suma el estado actual real del
+    // contenedor al mensaje — "puede que no esté en el estado correcto" sin
+    // decir cuál es no le sirve al chofer para saber qué pasó.
+    const [contActual] = await query<{ estado: string }>('SELECT estado FROM contenedores WHERE numero = $1', [numero]).catch(() => [] as { estado: string }[]);
     await sendText(
       to,
-      `⚠️ No pudimos aplicar el cambio en el contenedor ${numero}. Puede que no esté en el estado correcto para esta acción.`,
+      `⚠️ No pudimos aplicar el cambio en el contenedor ${numero}.` +
+        (contActual ? ` Ahora mismo figura como "${contActual.estado.replace('_', ' ')}".` : '') +
+        ' Avisé al equipo para que lo revise.',
     );
     console.error('Error aplicarEstado:', err.message);
+    await alertarErrorChofer(choferId, choferNombre, numero, err.message).catch((e) => console.error('Error registrando alerta:', e));
   }
   // El aviso de la parada siguiente ya trajo su propio menú: no duplicarlo.
   if (!siguienteEnviada) return menuChofer(to, choferNombre);
