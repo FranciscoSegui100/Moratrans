@@ -7,7 +7,7 @@ import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
 import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
-import { reservarParaEntrega } from '../../services/contenedorReserva.service';
+import { reservarParaEntrega, liberarReservaEntrega } from '../../services/contenedorReserva.service';
 import { emitRecursoActualizado } from '../../config/socket';
 import { avisoEfectivoChofer } from '../whatsapp/avisoEfectivo';
 import { formatearTelefonoLegible } from '../../services/telefono.service';
@@ -735,11 +735,32 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
   }
 });
 
-/** DELETE /api/viajes/:id — eliminar un viaje (solo admin, idealmente cuando está completado o cancelado). */
+/**
+ * DELETE /api/viajes/:id — eliminar un viaje (solo admin, idealmente cuando
+ * está completado o cancelado). No está cableado a ningún botón del panel
+ * hoy (soporte manual vía API) — igual se envuelve en transacción y libera
+ * la reserva del contenedor si borra una entrega que todavía lo tenía
+ * reservado, para no dejarlo colgado como 'reservado' sin ningún viaje real
+ * detrás.
+ */
 viajesRouter.delete('/:id', requireRol('admin'), async (req: Request, res: Response) => {
   try {
-    const [row] = await query('DELETE FROM viajes WHERE id = $1 RETURNING id', [req.params.id]);
+    const row = await withTx(async (c) => {
+      const { rows } = await c.query<{ id: string; tipo: string; contenedor_numero: string | null }>(
+        'SELECT id, tipo, contenedor_numero FROM viajes WHERE id = $1 FOR UPDATE',
+        [req.params.id],
+      );
+      const viaje = rows[0];
+      if (!viaje) return null;
+      if (viaje.tipo === 'entrega' && viaje.contenedor_numero) {
+        await liberarReservaEntrega(c, viaje.contenedor_numero, `admin:${req.user!.id}`);
+      }
+      await c.query('DELETE FROM viajes WHERE id = $1', [viaje.id]);
+      return viaje;
+    });
     if (!row) return res.status(404).json({ error: 'Viaje inexistente' });
+    emitRecursoActualizado('viajes');
+    emitRecursoActualizado('contenedores');
     res.json({ success: true });
   } catch (e: any) {
     console.error('Error al eliminar viaje:', e);

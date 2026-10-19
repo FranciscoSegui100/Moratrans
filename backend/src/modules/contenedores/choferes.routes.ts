@@ -17,12 +17,14 @@ function presentar(row: any, rol: Rol) {
     telefono: row.telefono,
     patente: row.patente,
     activo: row.activo,
+    capacidad_llenos: row.capacidad_llenos,
+    capacidad_vacios: row.capacidad_vacios,
   };
 }
 
 /** GET /api/choferes — lista de choferes. */
 choferesRouter.get('/', async (req: Request, res: Response) => {
-  const rows = await query('SELECT id, nombre, telefono, patente, activo FROM choferes ORDER BY nombre');
+  const rows = await query('SELECT id, nombre, telefono, patente, activo, capacidad_llenos, capacidad_vacios FROM choferes ORDER BY nombre');
   res.json(rows.map((r) => presentar(r, req.user!.rol)));
 });
 
@@ -30,18 +32,24 @@ const nuevoSchema = z.object({
   nombre: z.string().min(2),
   telefono: z.string().min(6),
   patente: z.string().min(1).optional(),
+  // Capacidad física del camión: a lo sumo un lleno a bordo sin vaciar, y un
+  // tope de vacíos transportados (ver disponibilidad.service.ts). Antes
+  // quedaba fija en el default de la migración (1/6) para toda la flota.
+  capacidad_llenos: z.coerce.number().int().positive().optional(),
+  capacidad_vacios: z.coerce.number().int().positive().optional(),
 });
 
 /** POST /api/choferes — alta de chofer (solo admin/operador). */
 choferesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = nuevoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const { nombre, telefono, patente } = parsed.data;
+  const { nombre, telefono, patente, capacidad_llenos, capacidad_vacios } = parsed.data;
   try {
     const [row] = await query(
-      `INSERT INTO choferes (nombre, telefono, patente)
-       VALUES ($1,$2,$3) RETURNING id, nombre, telefono, patente, activo`,
-      [nombre, normalizarTelefonoAR(telefono), patente?.toUpperCase() ?? null],
+      `INSERT INTO choferes (nombre, telefono, patente, capacidad_llenos, capacidad_vacios)
+       VALUES ($1,$2,$3, COALESCE($4, 1), COALESCE($5, 6))
+       RETURNING id, nombre, telefono, patente, activo, capacidad_llenos, capacidad_vacios`,
+      [nombre, normalizarTelefonoAR(telefono), patente?.toUpperCase() ?? null, capacidad_llenos ?? null, capacidad_vacios ?? null],
     );
     res.status(201).json(presentar(row, req.user!.rol));
   } catch (e: any) {
@@ -54,6 +62,8 @@ const patchSchema = z.object({
   telefono: z.string().min(6).optional(),
   patente: z.string().min(1).nullable().optional(),
   activo: z.boolean().optional(),
+  capacidad_llenos: z.coerce.number().int().positive().optional(),
+  capacidad_vacios: z.coerce.number().int().positive().optional(),
   // Pisa la advertencia de abajo y desactiva igual (el operador ya confirmó
   // en el panel que quiere hacerlo con paradas de hoy pendientes).
   confirmar: z.boolean().optional(),
@@ -106,7 +116,8 @@ choferesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Reques
 
   try {
     const [row] = await query(
-      `UPDATE choferes SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id, nombre, telefono, patente, activo, desactivado_en`,
+      `UPDATE choferes SET ${sets.join(', ')} WHERE id = $${params.length}
+       RETURNING id, nombre, telefono, patente, activo, desactivado_en, capacidad_llenos, capacidad_vacios`,
       params,
     );
     if (!row) return res.status(404).json({ error: 'Chofer inexistente' });

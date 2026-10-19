@@ -5,7 +5,10 @@ import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 
-interface Chofer { id: string; nombre: string; telefono: string | null; patente: string | null; activo: boolean; }
+interface Chofer {
+  id: string; nombre: string; telefono: string | null; patente: string | null; activo: boolean;
+  capacidad_llenos: number; capacidad_vacios: number;
+}
 
 function initials(name: string) {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -14,10 +17,10 @@ function initials(name: string) {
 export function Choferes() {
   const { show } = useToast();
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ nombre: '', telefono: '', patente: '' });
+  const [form, setForm] = useState({ nombre: '', telefono: '', patente: '', capacidad_llenos: '1', capacidad_vacios: '6' });
   const [loading, setLoading] = useState(false);
   const [editando, setEditando] = useState<string | null>(null);
-  const [edit, setEdit] = useState({ nombre: '', telefono: '', patente: '' });
+  const [edit, setEdit] = useState({ nombre: '', telefono: '', patente: '', capacidad_llenos: '1', capacidad_vacios: '6' });
 
   const { data: choferes = [] } = useQuery({
     queryKey: ['choferes'],
@@ -32,7 +35,7 @@ export function Choferes() {
     setLoading(true);
     try {
       await api.post('/api/choferes', { ...form, patente: form.patente || undefined });
-      setForm({ nombre: '', telefono: '', patente: '' });
+      setForm({ nombre: '', telefono: '', patente: '', capacidad_llenos: '1', capacidad_vacios: '6' });
       cargar();
       show('success', 'Chofer creado', form.nombre);
     } catch (err: any) {
@@ -44,13 +47,18 @@ export function Choferes() {
 
   function empezarEdicion(c: Chofer) {
     setEditando(c.id);
-    setEdit({ nombre: c.nombre, telefono: c.telefono ?? '', patente: c.patente ?? '' });
+    setEdit({
+      nombre: c.nombre, telefono: c.telefono ?? '', patente: c.patente ?? '',
+      capacidad_llenos: String(c.capacidad_llenos), capacidad_vacios: String(c.capacidad_vacios),
+    });
   }
 
   async function guardarEdicion(id: string) {
     try {
-      const { nombre, telefono, patente } = edit;
-      const payload: Record<string, string | null> = { nombre, telefono, patente: patente || null };
+      const { nombre, telefono, patente, capacidad_llenos, capacidad_vacios } = edit;
+      const payload: Record<string, string | number | null> = {
+        nombre, telefono, patente: patente || null, capacidad_llenos: Number(capacidad_llenos), capacidad_vacios: Number(capacidad_vacios),
+      };
       await api.patch(`/api/choferes/${id}`, payload);
       setEditando(null);
       cargar();
@@ -132,6 +140,15 @@ export function Choferes() {
               <input className="form-input" placeholder="Ej. AF469SO" value={form.patente}
                 onChange={(e) => setForm({ ...form, patente: e.target.value.toUpperCase() })} />
             </div>
+            <div className="form-group">
+              <label className="form-label">Capacidad (llenos / vacíos)</label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <input type="number" min={1} className="form-input" style={{ width: '70px' }} value={form.capacidad_llenos}
+                  onChange={(e) => setForm({ ...form, capacidad_llenos: e.target.value })} />
+                <input type="number" min={1} className="form-input" style={{ width: '70px' }} value={form.capacidad_vacios}
+                  onChange={(e) => setForm({ ...form, capacidad_vacios: e.target.value })} />
+              </div>
+            </div>
             <button type="submit" className="btn btn-primary" disabled={loading}>
               {loading ? 'Guardando...' : 'Agregar chofer'}
             </button>
@@ -147,6 +164,7 @@ export function Choferes() {
 
               <th>Teléfono</th>
               <th>Patente</th>
+              <th title="Contenedores llenos / vacíos que carga el camión">Capacidad</th>
               <th>Estado</th>
               <th>Acciones</th>
             </tr>
@@ -199,6 +217,18 @@ export function Choferes() {
                       <span className="text-muted">Sin patente</span>
                     )}
                   </td>
+                  <td className="mono">
+                    {enEdicion ? (
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <input type="number" min={1} className="form-input" style={{ width: '56px' }} value={edit.capacidad_llenos}
+                          onChange={(e) => setEdit({ ...edit, capacidad_llenos: e.target.value })} />
+                        <input type="number" min={1} className="form-input" style={{ width: '56px' }} value={edit.capacidad_vacios}
+                          onChange={(e) => setEdit({ ...edit, capacidad_vacios: e.target.value })} />
+                      </div>
+                    ) : (
+                      `${c.capacidad_llenos} / ${c.capacidad_vacios}`
+                    )}
+                  </td>
                   <td>
                     <span className={`badge ${c.activo ? 'disponible' : 'cancelado'}`}>
                       {c.activo ? '● Activo' : '● Inactivo'}
@@ -244,7 +274,7 @@ export function Choferes() {
             })}
             {choferes.length === 0 && (
               <tr>
-                <td colSpan={5} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={6} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No hay choferes registrados
                 </td>
               </tr>
