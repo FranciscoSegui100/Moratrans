@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowUp, ArrowDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown, ExternalLink } from 'lucide-react';
+import { AlertTriangle, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown, ExternalLink } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -794,8 +794,14 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                   </div>
 
                   <div className="arrows">
+                    {visitas.length > 3 && (
+                      <button disabled={idx === 0 || bloqueada || reordenando} onClick={() => moverA(idx, 0)} title="Mover al tope"><ChevronsUp size={12} strokeWidth={2} /></button>
+                    )}
                     <button disabled={idx === 0 || bloqueada || reordenando} onClick={() => mover(idx, -1)} title="Subir orden"><ArrowUp size={12} strokeWidth={2} /></button>
                     <button disabled={idx === visitas.length - 1 || bloqueada || reordenando} onClick={() => mover(idx, 1)} title="Bajar orden"><ArrowDown size={12} strokeWidth={2} /></button>
+                    {visitas.length > 3 && (
+                      <button disabled={idx === visitas.length - 1 || bloqueada || reordenando} onClick={() => moverA(idx, visitas.length - 1)} title="Mover al final"><ChevronsDown size={12} strokeWidth={2} /></button>
+                    )}
                   </div>
 
                   {!bloqueada && (
@@ -1135,6 +1141,9 @@ export function Rutas() {
   const [mostrarFormViaje, setMostrarFormViaje] = useState(() => paramNuevo === '1');
   const [creandoViaje, setCreandoViaje] = useState(false);
   const [mostrarAutoArmar, setMostrarAutoArmar] = useState(false);
+  // Un día sin rutas armadas muestra igual las tarjetas vacías de todos los
+  // choferes — con una flota grande es puro ruido visual la mayoría de los días.
+  const [ocultarSinRuta, setOcultarSinRuta] = useState(false);
 
   useEffect(() => {
     if (paramNuevo === '1') {
@@ -1802,13 +1811,20 @@ export function Rutas() {
         {/* COLUMNA DERECHA: Rutas por Chofer + Detalle de Ruta */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div>
-            <div className="section-title" style={{ marginBottom: '10px', fontSize: '0.9rem', fontWeight: 700 }}>
-              Choferes y Rutas del Día
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <div className="section-title" style={{ fontSize: '0.9rem', fontWeight: 700, marginBottom: 0 }}>
+                Choferes y Rutas del Día
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={ocultarSinRuta} onChange={(e) => setOcultarSinRuta(e.target.checked)} />
+                Ocultar sin ruta
+              </label>
             </div>
             <div className="routes-grid">
               {choferes.map((chofer) => {
                 const ruta = rutas.find((r) => r.chofer_id === chofer.id);
                 if (!ruta) {
+                  if (ocultarSinRuta) return null;
                   return (
                     <button
                       key={chofer.id}
