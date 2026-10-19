@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown, ExternalLink } from 'lucide-react';
@@ -339,6 +339,8 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   };
 
   const visitas = ruta ? agruparVisitas(ruta.paradas) : [];
+  const listaParadasRef = useRef<HTMLDivElement>(null);
+  useAnimarReacomodo(listaParadasRef, rutaId, visitas.map((v) => `${v.tipoParada}-${v.id}`).join('|'));
   // La ruta siempre está abierta ("ruta viva"): lo único que no se toca es una
   // parada que el chofer ya terminó (ver `visitaFinalizada`).
   const paradasSinConfirmar = ruta
@@ -628,7 +630,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
 
           {visitas.length === 0 && <div className="rc-empty" style={{ margin: '16px 0' }}>Todavía no hay paradas en esta ruta — asigná desde la bolsa a la izquierda.</div>}
           
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
+          <div ref={listaParadasRef} style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
             {visitas.map((v, idx) => {
               const disponibles = v.entrega?.disponibles ?? [];
               const necesitaContenedor = !!v.entrega;
@@ -642,6 +644,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
               return (
                 <div
                   key={`${v.tipoParada}-${v.id}`}
+                  data-flip-key={`${v.tipoParada}-${v.id}`}
                   className={`stop${finalizada ? ' finalizada' : ''}${enCurso ? ' en-curso-bloqueada' : ''}${dragIdx === idx ? ' dragging' : ''}${overIdx === idx && dragIdx !== null && dragIdx !== idx ? ' drop-target' : ''}${insertIdx === idx ? ' insert-antes' : ''}`}
                   onDragOver={(e) => {
                     if (dragIdx !== null) {
@@ -918,191 +921,56 @@ function armarPropuesta(visitas: VisitaPendiente[], choferes: Chofer[]): Asignac
   return asignaciones;
 }
 
-function AutoArmarModal({
-  fecha, cola, choferes, onClose, onConfirmado,
-}: {
-  fecha: string;
-  cola: ViajePendiente[];
-  choferes: Chofer[];
-  onClose: () => void;
-  onConfirmado: () => void;
-}) {
-  const { show } = useToast();
-  const visitasDelDia = agruparPendientes(cola).filter((v) => v.fecha === fecha);
-  const [asignaciones, setAsignaciones] = useState<AsignacionChofer[]>(() => armarPropuesta(visitasDelDia, choferes));
-  const [confirmando, setConfirmando] = useState(false);
+/** Mañana primero, después tarde, al final el resto (barrio privado, sin franja). */
+function rangoHorario(horario: string | null): number {
+  const t = (horario ?? '').toLowerCase();
+  if (t.includes('mañana')) return 0;
+  if (t.includes('tarde')) return 1;
+  return 2;
+}
 
-  const totalAsignado = asignaciones.reduce((n, a) => n + cargaTotal(a), 0);
-  const zonas = new Set(visitasDelDia.map((v) => v.zona ?? 'Sin zona')).size;
-
-  function moverCluster(clusterId: string, nuevoChoferId: string) {
-    setAsignaciones((prev) => {
-      let cluster: ClusterPropuesto | undefined;
-      const sinEse = prev.map((a) => {
-        const idx = a.clusters.findIndex((c) => c.id === clusterId);
-        if (idx === -1) return a;
-        cluster = a.clusters[idx];
-        return { ...a, clusters: a.clusters.filter((c) => c.id !== clusterId) };
-      });
-      if (!cluster) return prev;
-      return sinEse.map((a) => (a.choferId === nuevoChoferId ? { ...a, clusters: [...a.clusters, cluster!] } : a));
-    });
-  }
-
-  function quitarVisita(clusterId: string, visitaId: string) {
-    setAsignaciones((prev) =>
-      prev.map((a) => ({
-        ...a,
-        clusters: a.clusters
-          .map((c) => (c.id === clusterId ? { ...c, visitas: c.visitas.filter((v) => v.id !== visitaId) } : c))
-          .filter((c) => c.visitas.length > 0),
-      })),
-    );
-  }
-
-  /** "No vino" — sus clusters se reparten entre los choferes que quedan, mismo criterio greedy. */
-  function excluirChofer(choferId: string) {
-    setAsignaciones((prev) => {
-      const saliente = prev.find((a) => a.choferId === choferId);
-      const resto = prev.filter((a) => a.choferId !== choferId);
-      if (!saliente || resto.length === 0) return resto;
-      const clusters = [...saliente.clusters].sort((a, b) => b.visitas.length - a.visitas.length);
-      const copia = resto.map((a) => ({ ...a, clusters: [...a.clusters] }));
-      for (const cluster of clusters) {
-        copia.sort((a, b) => cargaTotal(a) - cargaTotal(b));
-        copia[0].clusters.push(cluster);
-      }
-      return copia;
-    });
-  }
-
-  async function confirmarYArmar() {
-    setConfirmando(true);
-    let rutasCreadas = 0;
-    let paradasOk = 0;
-    const errores: string[] = [];
-    for (const a of asignaciones) {
-      const visitasChofer = a.clusters.flatMap((c) => c.visitas);
-      if (visitasChofer.length === 0) continue;
-      let rutaId: string;
-      try {
-        const existentes = await api.get<Ruta[]>(`/api/rutas?fecha=${fecha}&chofer_id=${a.choferId}`).then((r) => r.data);
-        if (existentes[0]) {
-          rutaId = existentes[0].id;
-        } else {
-          const nueva = await api.post<Ruta>('/api/rutas', { fecha, chofer_id: a.choferId }).then((r) => r.data);
-          rutaId = nueva.id;
-          rutasCreadas++;
-        }
-      } catch (e: any) {
-        errores.push(`${a.choferNombre}: ${e.response?.data?.error ?? 'no se pudo crear la ruta'}`);
-        continue;
-      }
-      for (const v of visitasChofer) {
-        const viajeId = v.entrega?.id ?? v.retiro?.id;
-        if (!viajeId) continue;
-        try {
-          await api.post(`/api/rutas/${rutaId}/paradas`, { viaje_id: viajeId });
-          paradasOk++;
-        } catch (e: any) {
-          errores.push(`${a.choferNombre} · ${v.cliente_telefono ?? viajeId}: ${e.response?.data?.error ?? 'error'}`);
-        }
-      }
-    }
-    setConfirmando(false);
-    onConfirmado();
-    if (errores.length === 0) {
-      show('success', 'Rutas armadas', `${rutasCreadas} ruta(s) nueva(s), ${paradasOk} pedido(s) asignados — quedan sin confirmar, revisalas y confirmá cada una para avisar al chofer.`);
-      onClose();
-    } else {
-      show('error', `${paradasOk} asignados, ${errores.length} con error`, errores.slice(0, 3).join(' · '));
-    }
-  }
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '920px' }}>
-        <div className="modal-header">
-          <div className="section-title" style={{ margin: 0 }}>⚡ Auto-armar rutas · {formatearFecha(fecha)}</div>
-          <button className="modal-close" onClick={onClose}><X size={18} strokeWidth={2} /></button>
-        </div>
-
-        {visitasDelDia.length === 0 ? (
-          <div className="rc-empty" style={{ textAlign: 'center', padding: '24px 0' }}>No hay pedidos sin rutear para este día.</div>
-        ) : (
-          <>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-              {visitasDelDia.length} pedido(s) en {zonas} zona(s), repartidos en {asignaciones.length} chofer(es) — editá lo que haga falta antes de confirmar.
-              Esto solo arma el borrador: no reserva contenedores ni avisa a nadie todavía.
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
-              {asignaciones.map((a) => (
-                <div key={a.choferId} className="card" style={{ padding: '12px 14px', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <div style={{ fontWeight: 700, fontSize: '0.86rem' }}>
-                      {a.choferNombre} <span className="text-muted" style={{ fontWeight: 400 }}>· {cargaTotal(a)} pedido(s)</span>
-                    </div>
-                    {cargaTotal(a) > 0 && (
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => excluirChofer(a.choferId)} title="No vino hoy — reparte lo suyo entre el resto">
-                        No vino, reasignar
-                      </button>
-                    )}
-                  </div>
-                  {cargaTotal(a) === 0 ? (
-                    <div className="text-muted" style={{ fontSize: '0.78rem' }}>Sin pedidos asignados.</div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {a.clusters.map((c) => (
-                        <div key={c.id} style={{ background: 'var(--bg-subtle, var(--neutral-bg))', borderRadius: 'var(--radius-sm)', padding: '8px 10px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                            <div style={{ fontSize: '0.78rem', fontWeight: 600 }}>
-                              📍 {c.zona}{c.horario ? ` · ${c.horario}` : ''} <span className="text-muted" style={{ fontWeight: 400 }}>({c.visitas.length})</span>
-                            </div>
-                            <select
-                              className="form-select"
-                              style={{ fontSize: '0.74rem', padding: '2px 6px', width: 'auto' }}
-                              value={a.choferId}
-                              onChange={(e) => moverCluster(c.id, e.target.value)}
-                            >
-                              {choferes.map((ch) => <option key={ch.id} value={ch.id}>{ch.nombre}</option>)}
-                            </select>
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            {c.visitas.map((v) => (
-                              <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
-                                <span>{v.cliente_telefono ?? 'Sin teléfono'}{v.destino_direccion ? ` — ${v.destino_direccion}` : ''}</span>
-                                <button
-                                  type="button"
-                                  className="modal-close"
-                                  style={{ padding: '2px' }}
-                                  title="Sacar este pedido del borrador (queda en la bolsa)"
-                                  onClick={() => quitarVisita(c.id, v.id)}
-                                >
-                                  <X size={12} strokeWidth={2} />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
-              <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-              <button type="button" className="btn btn-primary" onClick={confirmarYArmar} disabled={confirmando || totalAsignado === 0}>
-                {confirmando ? 'Armando...' : `Confirmar y armar (${totalAsignado})`}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+/** Orden en que se agregan a la ruta los pedidos que le tocaron a un chofer: por franja horaria y, dentro de cada franja, agrupados por zona. */
+function ordenarParaRuta(visitas: VisitaPendiente[]): VisitaPendiente[] {
+  return [...visitas].sort(
+    (a, b) =>
+      rangoHorario(a.horario_preferido) - rangoHorario(b.horario_preferido) ||
+      (a.zona ?? '').localeCompare(b.zona ?? ''),
   );
+}
+
+/**
+ * Animación corta cuando las paradas de una ruta cambian de lugar (técnica
+ * FLIP): cada parada que se movió arranca desde su posición anterior y se
+ * desliza a la nueva, y las que recién aparecen entran con un fundido. Usa
+ * offsetTop (relativo a la lista) y no la posición en pantalla, así un
+ * scroll entre dos cambios no se toma como un movimiento. No anima al abrir
+ * otra ruta ni si el sistema pide reducir animaciones.
+ */
+function useAnimarReacomodo(ref: React.RefObject<HTMLDivElement>, rutaId: string, clave: string) {
+  const posiciones = useRef<Map<string, number>>(new Map());
+  const rutaAnterior = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const lista = ref.current;
+    if (!lista) return;
+    const animar =
+      rutaAnterior.current === rutaId &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const nuevas = new Map<string, number>();
+    for (const el of Array.from(lista.children) as HTMLElement[]) {
+      const k = el.dataset.flipKey;
+      if (!k) continue;
+      nuevas.set(k, el.offsetTop);
+      if (!animar) continue;
+      const antes = posiciones.current.get(k);
+      if (antes === undefined) {
+        el.animate([{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'ease-out' });
+      } else if (antes !== el.offsetTop) {
+        el.animate([{ transform: `translateY(${antes - el.offsetTop}px)` }, { transform: 'none' }], { duration: 260, easing: 'ease-out' });
+      }
+    }
+    posiciones.current = nuevas;
+    rutaAnterior.current = rutaId;
+  }, [ref, rutaId, clave]);
 }
 
 // ── Página principal: layout 2 columnas (Bolsa a la izquierda, Choferes a la derecha) ────
@@ -1140,7 +1008,15 @@ export function Rutas() {
   const [formViaje, setFormViaje] = useState(() => ({ ...formViajeInicial, fecha: paramFecha || hoyISO() }));
   const [mostrarFormViaje, setMostrarFormViaje] = useState(() => paramNuevo === '1');
   const [creandoViaje, setCreandoViaje] = useState(false);
-  const [mostrarAutoArmar, setMostrarAutoArmar] = useState(false);
+  const [autoArmando, setAutoArmando] = useState(false);
+  // Último auto-armado, para poder deshacerlo durante unos segundos.
+  const [ultimoAutoArmado, setUltimoAutoArmado] = useState<{
+    paradas: { rutaId: string; viajeId: string }[];
+    rutasCreadas: string[];
+    resumen: string;
+  } | null>(null);
+  // Choferes cuya tarjeta destella porque el auto-armado les sumó pedidos.
+  const [choferesDestello, setChoferesDestello] = useState<Set<string>>(new Set());
   // Un día sin rutas armadas muestra igual las tarjetas vacías de todos los
   // choferes — con una flota grande es puro ruido visual la mayoría de los días.
   const [ocultarSinRuta, setOcultarSinRuta] = useState(false);
@@ -1463,6 +1339,100 @@ export function Rutas() {
   }
 
   /**
+   * Auto-armado directo, sin ventana: reparte los pedidos del día que están
+   * en la bolsa entre todos los choferes activos (agrupados por zona y
+   * horario, cada grupo al que menos carga lleva — ver armarPropuesta) y los
+   * agrega al final de cada ruta, ordenados por franja y zona. Las paradas
+   * que ya estaban no se tocan. Queda sin confirmar, igual que armado a
+   * mano: nadie recibe aviso hasta tocar "Confirmar ruta". Se puede deshacer
+   * durante 15 segundos.
+   */
+  async function autoArmarRutas() {
+    const visitasDelDia = agruparPendientes(cola).filter((v) => v.fecha === fecha && (v.entrega?.id ?? v.retiro?.id));
+    if (visitasDelDia.length === 0) {
+      show('info', 'Nada para armar', 'No hay pedidos sin rutear para este día.');
+      return;
+    }
+    if (choferes.length === 0) {
+      show('error', 'No hay choferes activos', 'Cargá al menos un chofer para poder armar rutas.');
+      return;
+    }
+    setAutoArmando(true);
+    const paradas: { rutaId: string; viajeId: string }[] = [];
+    const rutasCreadas: string[] = [];
+    const choferesConCambios = new Set<string>();
+    const errores: string[] = [];
+    for (const a of armarPropuesta(visitasDelDia, choferes)) {
+      const visitasChofer = ordenarParaRuta(a.clusters.flatMap((c) => c.visitas));
+      if (visitasChofer.length === 0) continue;
+      let rutaId: string;
+      try {
+        const existentes = await api.get<Ruta[]>(`/api/rutas?fecha=${fecha}&chofer_id=${a.choferId}`).then((r) => r.data);
+        if (existentes[0]) {
+          rutaId = existentes[0].id;
+        } else {
+          const nueva = await api.post<Ruta>('/api/rutas', { fecha, chofer_id: a.choferId }).then((r) => r.data);
+          rutaId = nueva.id;
+          rutasCreadas.push(rutaId);
+          agregarRutaOptimista(nueva);
+        }
+      } catch (e: any) {
+        errores.push(`${a.choferNombre}: ${e.response?.data?.error ?? 'no se pudo crear la ruta'}`);
+        continue;
+      }
+      for (const v of visitasChofer) {
+        const viajeId = (v.entrega?.id ?? v.retiro?.id)!;
+        try {
+          await api.post(`/api/rutas/${rutaId}/paradas`, { viaje_id: viajeId });
+          paradas.push({ rutaId, viajeId });
+          choferesConCambios.add(a.choferId);
+        } catch (e: any) {
+          errores.push(`${a.choferNombre} · ${v.cliente_telefono ?? viajeId}: ${e.response?.data?.error ?? 'error'}`);
+        }
+      }
+      queryClient.invalidateQueries({ queryKey: ['rutas', rutaId] });
+    }
+    setAutoArmando(false);
+    recargarListas();
+
+    if (paradas.length > 0) {
+      // Si la ruta que estaba abierta no cambió, se abre la primera que sí, para ver cómo quedó.
+      if (!paradas.some((p) => p.rutaId === rutaSeleccionada)) setRutaSeleccionada(paradas[0].rutaId);
+      setChoferesDestello(choferesConCambios);
+      setTimeout(() => setChoferesDestello(new Set()), 1200);
+      const resumen = `${paradas.length} pedido(s) repartidos entre ${choferesConCambios.size} chofer(es) — quedan sin confirmar.`;
+      setUltimoAutoArmado({ paradas, rutasCreadas, resumen });
+      setTimeout(() => setUltimoAutoArmado((u) => (u?.resumen === resumen && u.paradas === paradas ? null : u)), 15000);
+    }
+    if (errores.length > 0) {
+      show('error', `${errores.length} pedido(s) no se pudieron asignar`, errores.slice(0, 3).join(' · '));
+    }
+  }
+
+  /** Vuelve a la bolsa todo lo que agregó el último auto-armado y borra las rutas que creó (si el rol lo permite). */
+  async function deshacerAutoArmado() {
+    const u = ultimoAutoArmado;
+    if (!u) return;
+    setUltimoAutoArmado(null);
+    let fallidas = 0;
+    for (const p of u.paradas) {
+      try {
+        await api.delete(`/api/rutas/${p.rutaId}/paradas/viaje/${p.viajeId}`);
+      } catch {
+        fallidas++;
+      }
+      queryClient.invalidateQueries({ queryKey: ['rutas', p.rutaId] });
+    }
+    // Borrar una ruta es solo para admin: para un operador, la ruta vacía queda y no molesta.
+    for (const rutaId of u.rutasCreadas) {
+      await api.delete(`/api/rutas/${rutaId}`).catch(() => {});
+    }
+    recargarListas();
+    if (fallidas === 0) show('info', 'Auto-armado deshecho', 'Los pedidos volvieron a la bolsa.');
+    else show('error', 'Se deshizo en parte', `${fallidas} pedido(s) no se pudieron sacar (por ejemplo, porque el chofer ya los empezó).`);
+  }
+
+  /**
    * Mueve una parada ya ruteada a la ruta de otro chofer — se dispara al
    * arrastrar una parada del detalle y soltarla sobre la tarjeta de ese
    * chofer. Mismo endpoint que el selector "Mover a..." del detalle (un
@@ -1548,23 +1518,26 @@ export function Rutas() {
             <button
               type="button"
               className="btn btn-primary btn-sm"
-              onClick={() => setMostrarAutoArmar(true)}
-              title="Arma un borrador de rutas agrupando la bolsa por zona y horario — lo revisás y confirmás antes de que se escriba nada"
+              onClick={autoArmarRutas}
+              disabled={autoArmando}
+              title="Reparte los pedidos de la bolsa entre los choferes (por zona y horario) y los agrega a cada ruta, ordenados. Quedan sin confirmar y se puede deshacer."
             >
-              ⚡ Auto-armar rutas del día
+              {autoArmando ? 'Armando rutas…' : '⚡ Auto-armar rutas del día'}
             </button>
           </RoleGate>
         </div>
       </div>
 
-      {mostrarAutoArmar && (
-        <AutoArmarModal
-          fecha={fecha}
-          cola={cola}
-          choferes={choferes}
-          onClose={() => setMostrarAutoArmar(false)}
-          onConfirmado={recargarListas}
-        />
+      {ultimoAutoArmado && (
+        <div
+          className="autoarmado-aviso"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', margin: '0 0 14px', padding: '10px 14px', background: 'var(--success-bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '0.84rem' }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <CheckCircle2 size={16} strokeWidth={2} style={{ color: 'var(--success)' }} /> {ultimoAutoArmado.resumen}
+          </span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={deshacerAutoArmado}>Deshacer</button>
+        </div>
       )}
 
       <RoleGate roles={['admin', 'operador']}>
@@ -1869,7 +1842,7 @@ export function Rutas() {
                   return (
                     <button
                       key={chofer.id}
-                      className={`route-card${dropChofer === chofer.id ? ' drop-activo' : ''}`}
+                      className={`route-card${dropChofer === chofer.id ? ' drop-activo' : ''}${choferesDestello.has(chofer.id) ? ' destello' : ''}`}
                       onClick={() => armarRuta(chofer.id)}
                       {...propsDropChofer(chofer.id)}
                     >
@@ -1891,7 +1864,7 @@ export function Rutas() {
                 return (
                   <button
                     key={chofer.id}
-                    className={`route-card${sel ? ' sel' : ''}${stats.warn ? ' warn' : ''}${dropChofer === chofer.id ? ' drop-activo' : ''}`}
+                    className={`route-card${sel ? ' sel' : ''}${stats.warn ? ' warn' : ''}${dropChofer === chofer.id ? ' drop-activo' : ''}${choferesDestello.has(chofer.id) ? ' destello' : ''}`}
                     onClick={() => setRutaSeleccionada(ruta.id)}
                     {...propsDropChofer(chofer.id)}
                   >

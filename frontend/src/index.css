@@ -1963,6 +1963,13 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 /* ===== RUTAS: drag & drop de la bolsa a las rutas ===== */
 .qrow.dragging { opacity: 0.4; }
 .route-card.drop-activo { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-tint); background: var(--accent-tint); }
+/* Destello corto en la tarjeta del chofer que recibió pedidos del auto-armado. */
+.route-card.destello { animation: rc-destello 1.1s ease-out; }
+@keyframes rc-destello {
+  0%   { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-tint); background: var(--accent-tint); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .route-card.destello { animation: none; } }
 .detalle-drop-activo { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: var(--radius-lg); }
 .bolsa-drop-activo { outline: 2px dashed var(--accent); outline-offset: -1px; background: var(--accent-tint) !important; }
 
