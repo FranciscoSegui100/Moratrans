@@ -22,7 +22,14 @@ const SESION_TTL_MIN = 10;
 export async function getSesion(telefono: string): Promise<Sesion> {
   const rows = await query<Sesion & { vencida: boolean }>(
     `SELECT telefono, flujo, paso, contexto,
-            (actualizado_en < now() - ($2 || ' minutes')::interval) AS vencida
+            (actualizado_en < now() - ($2 || ' minutes')::interval
+              -- Una charla tomada por un asesor no vence por inactividad: en
+              -- modo humano ni los mensajes del cliente ni los del operador
+              -- tocan actualizado_en, así que a los 10 min se borraba la
+              -- sesión, el bot volvía a contestar con el menú y el chat
+              -- desaparecía de "Necesitan asesor". Termina solo con "menú"
+              -- del cliente o cuando el operador la resuelve/libera.
+              AND (contexto->>'modoHumano') IS DISTINCT FROM 'true') AS vencida
        FROM sesiones_chat WHERE telefono = $1`,
     [telefono, String(SESION_TTL_MIN)],
   );

@@ -36,6 +36,7 @@ async function cerrarInactivos(): Promise<void> {
   const pendientes = await query<{ telefono: string }>(
     `SELECT telefono FROM sesiones_chat
       WHERE avisado_en IS NOT NULL
+        AND (contexto->>'modoHumano') IS DISTINCT FROM 'true'
         AND avisado_en < now() - ($1 || ' minutes')::interval`,
     [String(CIERRE_TRAS_MIN)],
   );
