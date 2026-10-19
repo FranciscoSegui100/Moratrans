@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown, ExternalLink } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { AlertTriangle, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -1538,27 +1538,6 @@ export function Rutas() {
           <h2>Rutas</h2>
           <p>Planificá el recorrido de cada chofer.</p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <Link
-            to={`/viajes?fecha=${fecha}`}
-            className="btn btn-ghost btn-sm"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}
-            title="Ver los viajes de este día en la tabla de Viajes"
-          >
-            <ExternalLink size={13} strokeWidth={2} /> Ver en Viajes
-          </Link>
-          <RoleGate roles={['admin', 'operador']}>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={autoArmarRutas}
-              disabled={autoArmando}
-              title="Reparte los pedidos de la bolsa entre los choferes (por zona y horario) y los agrega a cada ruta, ordenados. Quedan sin confirmar y se puede deshacer."
-            >
-              {autoArmando ? 'Armando rutas…' : '⚡ Auto-armar rutas del día'}
-            </button>
-          </RoleGate>
-        </div>
       </div>
 
       {ultimoAutoArmado && (
@@ -1744,6 +1723,17 @@ export function Rutas() {
                   setFormViaje((fv) => ({ ...fv, fecha: e.target.value }));
                 }} />
               </div>
+              <RoleGate roles={['admin', 'operador']}>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={autoArmarRutas}
+                  disabled={autoArmando}
+                  title="Reparte los pedidos de la bolsa entre los choferes (por zona y horario) y los agrega a cada ruta, ordenados. Quedan sin confirmar y se puede deshacer."
+                >
+                  {autoArmando ? 'Armando rutas…' : '⚡ Auto-armar rutas del día'}
+                </button>
+              </RoleGate>
             </div>
             <span className="badge programado" style={{ fontSize: '0.75rem' }} title={`Total acumulado sin rutear (todas las fechas): ${visitasPendientes.length}`}>{sinAsignarDelDia}</span>
           </div>
