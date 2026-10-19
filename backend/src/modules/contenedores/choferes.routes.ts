@@ -8,6 +8,16 @@ import { normalizarTelefonoAR } from '../../services/telefono.service';
 export const choferesRouter = Router();
 choferesRouter.use(requireAuth);
 
+/**
+ * Hoy en Mendoza (UTC-3, sin horario de verano) como YYYY-MM-DD, sin confiar
+ * en la zona horaria del proceso de Node ni en CURRENT_DATE de Postgres —
+ * ambos corren en UTC en este deploy, así que cualquiera de los dos daría
+ * "mañana" entre las ~21hs y medianoche hora local.
+ */
+function hoyMendozaISO(): string {
+  return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 // Presenta un chofer con los campos públicos.
 function presentar(row: any, rol: Rol) {
   return {
@@ -53,6 +63,9 @@ const patchSchema = z.object({
   telefono: z.string().min(6).optional(),
   patente: z.string().min(1).nullable().optional(),
   activo: z.boolean().optional(),
+  // Pisa la advertencia de abajo y desactiva igual (el operador ya confirmó
+  // en el panel que quiere hacerlo con paradas de hoy pendientes).
+  confirmar: z.boolean().optional(),
 });
 
 /** PATCH /api/choferes/:id — modificar un chofer (solo admin/operador). */
@@ -60,7 +73,29 @@ choferesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Reques
   const parsed = patchSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
 
-  const { ...resto } = parsed.data;
+  const { confirmar, ...resto } = parsed.data;
+
+  // Desactivar a alguien con una ruta de hoy ya confirmada (avisada al
+  // chofer) y sin completar lo deja huérfano: su tarjeta desaparece de la
+  // grilla de Rutas (que solo lista choferes activos) y la única forma de
+  // gestionar esa ruta pasa a ser reactivarlo primero. Se avisa y se deja
+  // confirmar igual, no se bloquea de forma permanente.
+  if (resto.activo === false && !confirmar) {
+    const [rowPendientes] = await query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM viajes
+        WHERE chofer_id = $1 AND fecha = $2
+          AND ruta_confirmada_en IS NOT NULL AND completada_en IS NULL`,
+      [req.params.id, hoyMendozaISO()],
+    );
+    const pendientes = rowPendientes?.n ?? 0;
+    if (pendientes > 0) {
+      return res.status(409).json({
+        error: `Tiene ${pendientes} parada${pendientes === 1 ? '' : 's'} de hoy ya confirmada${pendientes === 1 ? '' : 's'} sin completar. Reasigná esas paradas antes de desactivarlo, o confirmá igual.`,
+        requiereConfirmacion: true,
+      });
+    }
+  }
+
   const sets: string[] = [];
   const params: any[] = [];
 

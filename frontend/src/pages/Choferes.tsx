@@ -64,7 +64,21 @@ export function Choferes() {
     try {
       await api.patch(`/api/choferes/${c.id}`, { activo: !c.activo });
       cargar();
-    } catch {
+    } catch (err: any) {
+      // Desactivar con paradas de hoy ya confirmadas sin completar: el
+      // backend avisa en vez de bloquear directo (ver requiereConfirmacion
+      // en choferes.routes.ts) — se le pregunta al operador si igual quiere.
+      if (err.response?.status === 409 && err.response?.data?.requiereConfirmacion) {
+        if (confirm(`${err.response.data.error}\n\n¿Desactivar de todas formas?`)) {
+          try {
+            await api.patch(`/api/choferes/${c.id}`, { activo: !c.activo, confirmar: true });
+            cargar();
+          } catch {
+            show('error', 'No se pudo cambiar el estado');
+          }
+        }
+        return;
+      }
       show('error', 'No se pudo cambiar el estado');
     }
   }
