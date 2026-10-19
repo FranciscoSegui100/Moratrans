@@ -12,6 +12,10 @@ import { formatearFechaHora } from '../lib/fechas';
 function rutaAlerta(a: Alerta): { to: string; label: string } | null {
   switch (a.tipo) {
     case 'contenedor_por_vencer':
+      if (a.mensaje.includes('Rutas') || a.mensaje.includes('YA VENCIÓ')) {
+        return { to: '/rutas', label: 'Asignar en Rutas' };
+      }
+      return { to: '/contenedores', label: 'Ir a Contenedores' };
     case 'stock_bajo':
       return { to: '/contenedores', label: 'Ir a Contenedores' };
     case 'pago_vencido':
@@ -20,8 +24,9 @@ function rutaAlerta(a: Alerta): { to: string; label: string } | null {
     case 'solicita_asesor':
     case 'factura_solicitada':
       return { to: `/conversaciones?tel=${encodeURIComponent(a.referencia_id)}`, label: 'Ir a Conversaciones' };
-    case 'recambio_solicitado':
     case 'retiro_solicitado':
+    case 'recambio_solicitado':
+      return { to: '/rutas', label: 'Asignar en Rutas' };
     case 'entrega_solicitada':
       return { to: '/viajes', label: 'Ir a Viajes' };
     case 'chofer_no_reconocido':
@@ -133,7 +138,8 @@ export function Alertas() {
     // alertas.cron.ts) — distinguimos acá por el texto para que lo ya
     // vencido se note en rojo en vez de confundirse con el naranja de
     // "todavía falta".
-    const yaVencio = a.tipo === 'contenedor_por_vencer' && a.mensaje.includes('YA VENCIÓ');
+    const yaVencio = (a.tipo === 'contenedor_por_vencer' || a.tipo === 'retiro_solicitado') &&
+      (a.mensaje.includes('YA VENCIÓ') || a.mensaje.includes('venció'));
 
     return (
       <div
