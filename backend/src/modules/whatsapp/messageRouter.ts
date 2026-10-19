@@ -5,7 +5,7 @@ import { getSesion, clearSesion, setSesion } from './session.store';
 import { botEstaActivo } from '../../services/botConfig.service';
 import { MENSAJE_BOT_DESACTIVADO } from '../../config/bot.config';
 import { handleCotizacion, handlePedirNuevoContenedor } from './flows/cotizacion.flow';
-import { handlePago, pedidosAbiertos, opcionesMetodoPago, ofrecerPedidoPendiente } from './flows/pago.flow';
+import { handlePago, pedidosAbiertos, opcionesMetodoPago, ofrecerPedidoPendiente, avisarAdjuntoSinContexto } from './flows/pago.flow';
 import { handleChofer } from './flows/chofer.flow';
 import { handleAsesor, escalarAAsesor, resolverAsesor } from './flows/asesor.flow';
 import { handleRecambio } from './flows/recambio.flow';
@@ -185,7 +185,8 @@ function pideAsesor(m: MensajeEntrante): boolean {
  *  1.b. Bot desactivado a mano desde el panel -> mensaje fijo, corta acá.
  *  2. Comandos globales (menú / asesor) -> funcionan en cualquier momento,
  *     incluso en medio de otro flujo.
- *  3. Un comprobante (imagen/documento) -> siempre al flujo de pago.
+ *  3. Un comprobante (imagen/documento) -> al flujo de pago si el cliente
+ *     entró por "Enviar comprobante"; si no, se le pide que use ese botón.
  *  4. Si hay un flujo en curso en la sesión -> continúa ese flujo.
  *  5. Comandos de arranque -> inicia el flujo correspondiente.
  */
@@ -296,11 +297,22 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
   if ((m.tipo === 'image' || m.tipo === 'document') && sesion.flujo === 'pedido_catalogo' && sesion.paso === 'esperando_comprobante_catalogo') {
     return handlePedidoCatalogo(m, sesion);
   }
+  // Solo se toma como pago si el cliente entró por "Enviar comprobante" (la
+  // sesión ya está en el flujo de pago). Una foto suelta en cualquier otro
+  // momento recibe un aviso para que use el botón (ver avisarAdjuntoSinContexto).
   if (m.tipo === 'image' || m.tipo === 'document') {
-    return handlePago(m, sesion);
+    if (sesion.flujo === 'pago') return handlePago(m, sesion);
+    return avisarAdjuntoSinContexto(m, sesion);
   }
 
   if (enModoHumano) return; // el mensaje ya quedó logueado en mensajes_chat
+
+  // El botón "Enviar comprobante" (menú o aviso de foto sin contexto) arranca
+  // el pago aunque haya otro flujo a medias — si no, el flujo en curso de
+  // abajo se lo tragaba como respuesta inválida.
+  if (m.seleccionId === 'opt_pagar') {
+    return handlePago(m, { ...sesion, flujo: 'pago', paso: null, contexto: {} });
+  }
 
   // 4) Flujo en curso
   if (sesion.flujo === 'cotizacion') return handleCotizacion(m, sesion);

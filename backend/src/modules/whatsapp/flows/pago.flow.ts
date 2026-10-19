@@ -68,8 +68,11 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   // sin adjuntar nada aún: antes de pedirle el comprobante, preguntamos cómo
   // va a pagar — pero "Cuenta corriente" solo se ofrece a quien ya la tiene
   // *aprobada*; para el resto es directo por transferencia (la cuenta
-  // corriente se habilita aparte, no se autopide desde acá).
-  if (m.tipo === 'text') {
+  // corriente se habilita aparte, no se autopide desde acá). Incluye tocar
+  // "Enviar comprobante" en el menú (llega como interactive, no como text):
+  // antes caía al "necesito una imagen" de abajo sin dejar la sesión en el
+  // flujo de pago, y la foto siguiente llegaba sin contexto.
+  if (m.tipo === 'text' || m.tipo === 'interactive_list' || m.tipo === 'interactive_button') {
     await setSesion({ ...sesion, flujo: 'pago', paso: 'elegir_metodo_pago', contexto: {} });
     await sendButtons(to, '💳 ¿Cómo vas a pagar?', await opcionesMetodoPago(to));
     return;
@@ -86,7 +89,13 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
   // acumulado, no como el pago de una cotización específica — la mayoría de
   // esa deuda (retiros/entregas directas, alargues) ni siquiera tiene un
   // pedido asociado (ver itemsCuentaCorriente en reportes.service.ts).
-  if (sesion.paso !== 'esperando_comprobante' && (await tieneCuentaCorrienteAprobada(to))) {
+  // Como ahora una foto suelta ya no llega acá (ver avisarAdjuntoSinContexto),
+  // el abono también entra por "Enviar comprobante" -> "Transferencia" cuando
+  // no hay ningún pedido abierto al que atarlo.
+  if (
+    (await tieneCuentaCorrienteAprobada(to)) &&
+    (sesion.paso !== 'esperando_comprobante' || (await pedidosAbiertos(to)).length === 0)
+  ) {
     return registrarAbonoCuentaCorriente(m);
   }
 
@@ -183,6 +192,36 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     console.error('Error en flujo de pago:', err);
     await sendText(to, '⚠️ Tuvimos un problema al procesar el comprobante. Probá reenviarlo en unos minutos.');
   }
+}
+
+/**
+ * Foto o PDF que llega "de la nada", sin que el cliente haya tocado "Enviar
+ * comprobante" (ej. en medio de una cotización o de una charla cualquiera).
+ * No se la toma como pago: se le pide que entre por el botón, así queda claro
+ * qué está pagando y cómo. El archivo igual se guarda para que el operador lo
+ * vea en Conversaciones. En modo humano (un operador tomó la charla) el bot
+ * no contesta nada — es una foto de la conversación con el operador.
+ */
+export async function avisarAdjuntoSinContexto(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  try {
+    const { buffer, mime } = await downloadMedia(m.mediaId!);
+    const ext = detectarExtensionSegura(buffer, mime);
+    if (ext) {
+      const rutaStorage = `comprobantes/${to}_${Date.now()}.${ext}`;
+      await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
+      await adjuntarAUltimoMensaje(to, encrypt(rutaStorage));
+    }
+  } catch (err) {
+    console.error('Error guardando adjunto sin contexto:', err);
+  }
+
+  if (sesion.contexto?.modoHumano) return;
+  await sendButtons(
+    to,
+    '📎 Si querés mandarnos un comprobante de pago, por favor seleccioná *Enviar comprobante* y después mandá la foto o PDF.',
+    [{ id: 'opt_pagar', title: '💸 Enviar comprobante' }],
+  );
 }
 
 /**
