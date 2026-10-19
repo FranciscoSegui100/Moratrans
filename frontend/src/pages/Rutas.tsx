@@ -724,6 +724,9 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                           <span className="tag recambio"><RefreshCw size={11} strokeWidth={2} /> Recambio</span>
                         </div>
                         <div className="stop-sub">Lleno a retirar: {v.retiro.contenedor_numero}</div>
+                        {(v.retiro.cliente_telefono ?? v.entrega.cliente_telefono) && (
+                          <div className="stop-sub">📞 {v.retiro.cliente_telefono ?? v.entrega.cliente_telefono}</div>
+                        )}
                         {(v.retiro.horario_preferido ?? v.entrega.horario_preferido) && (
                           <div className="stop-sub">🕐 Pidió: {v.retiro.horario_preferido ?? v.entrega.horario_preferido}</div>
                         )}
@@ -754,6 +757,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                           </div>
                           <span className="tag entrega">Entrega</span>
                         </div>
+                        {v.entrega.cliente_telefono && <div className="stop-sub">📞 {v.entrega.cliente_telefono}</div>}
                         {v.entrega.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.entrega.horario_preferido}</div>}
                         <div className="sel-row">
                           <label>Contenedor:</label>
@@ -783,6 +787,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                           <span className="tag retiro">Retiro</span>
                         </div>
                         <div className="stop-sub">{v.retiro.contenedor_numero}</div>
+                        {v.retiro.cliente_telefono && <div className="stop-sub">📞 {v.retiro.cliente_telefono}</div>}
                         {v.retiro.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.retiro.horario_preferido}</div>}
                       </>
                     )}
@@ -1174,6 +1179,10 @@ export function Rutas() {
   const rutasAbiertasAnteriores = rutasConPendientes.filter((r) => r.fecha < fecha);
 
   const visitasPendientes = agruparPendientes(cola);
+  // "Sin asignar" mezclaba el backlog TOTAL (toda fecha) con lo específico de
+  // este día — al cambiar de fecha el número no se movía y confundía backlog
+  // viejo con lo de hoy. Se muestran separados.
+  const sinAsignarDelDia = visitasPendientes.filter((v) => v.fecha === fecha).length;
   const statsRutas = statsPorRuta(viajesDelDia);
   const visitasDelDia = agruparPendientes(viajesDelDia).length;
   const ruteados = agruparPendientes(viajesDelDia.filter((v) => v.ruta_id)).length;
@@ -1634,7 +1643,10 @@ export function Rutas() {
       <div className="stats">
         <div className="stat"><div className="l">Pedidos del día</div><div className="n">{visitasDelDia}</div></div>
         <div className="stat"><div className="l">Ruteados</div><div className="n">{ruteados}</div></div>
-        <div className="stat"><div className="l">Sin asignar</div><div className={`n${visitasPendientes.length ? ' warn' : ''}`}>{visitasPendientes.length}</div></div>
+        <div className="stat" title="Pedidos sin rutear de este día específico, sobre el total acumulado de todas las fechas">
+          <div className="l">Sin asignar (hoy / total)</div>
+          <div className={`n${sinAsignarDelDia ? ' warn' : ''}`}>{sinAsignarDelDia} <span style={{ fontSize: '0.5em', fontWeight: 500, color: 'var(--text-muted)' }}>/ {visitasPendientes.length}</span></div>
+        </div>
         <div className="stat"><div className="l">Choferes activos</div><div className="n">{choferes.length}</div></div>
       </div>
 
