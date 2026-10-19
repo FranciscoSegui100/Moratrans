@@ -687,7 +687,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                         setDragIdx(idx);
                       }}
                       onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
-                      title="Arrastrá para reordenar, o soltá en la bolsa para sacarla de la ruta"
+                      title="Arrastrá para reordenar, soltá sobre otro chofer para pasársela, o en la bolsa para sacarla de la ruta"
                     >
                       <GripVertical size={13} strokeWidth={2} />
                     </span>
@@ -1462,10 +1462,42 @@ export function Rutas() {
     }
   }
 
-  /** Handlers de drop reutilizados por las dos variantes de tarjeta de chofer (con y sin ruta armada). */
+  /**
+   * Mueve una parada ya ruteada a la ruta de otro chofer — se dispara al
+   * arrastrar una parada del detalle y soltarla sobre la tarjeta de ese
+   * chofer. Mismo endpoint que el selector "Mover a..." del detalle (un
+   * recambio mueve sus dos patas); si el chofer todavía no tiene ruta ese
+   * día, se la crea primero, igual que ahí.
+   */
+  async function moverParadaAChofer(p: { rutaId: string; tipoParada: 'viaje' | 'vaciado'; paradaId: string }, choferId: string) {
+    let rutaDestinoId = rutas.find((r) => r.chofer_id === choferId)?.id;
+    if (rutaDestinoId === p.rutaId) return; // soltada sobre su propio chofer
+    try {
+      if (!rutaDestinoId) {
+        const { data } = await api.post<Ruta>('/api/rutas', { fecha, chofer_id: choferId });
+        agregarRutaOptimista(data);
+        rutaDestinoId = data.id;
+      }
+      await api.post(`/api/rutas/${p.rutaId}/paradas/${p.tipoParada}/${p.paradaId}/mover`, { ruta_destino_id: rutaDestinoId });
+      const nombreChofer = choferes.find((c) => c.id === choferId)?.nombre ?? 'chofer';
+      show('success', 'Parada movida', `Se movió a la ruta de ${nombreChofer}.`);
+      queryClient.invalidateQueries({ queryKey: ['rutas', p.rutaId] });
+      queryClient.invalidateQueries({ queryKey: ['rutas', rutaDestinoId] });
+      recargarListas();
+    } catch (err: any) {
+      show('error', 'No se pudo mover la parada', err.response?.data?.error || 'Error desconocido');
+    }
+  }
+
+  /**
+   * Handlers de drop reutilizados por las dos variantes de tarjeta de chofer
+   * (con y sin ruta armada). Aceptan dos cosas: un pedido de la bolsa
+   * (`dragVisita`, lo asigna) o una parada arrastrada desde el detalle de
+   * otra ruta (payload 'application/x-mora-parada', la mueve de chofer).
+   */
   const propsDropChofer = (choferId: string) => ({
     onDragOver: (e: React.DragEvent) => {
-      if (!dragVisita) return;
+      if (!dragVisita && !e.dataTransfer.types.includes('application/x-mora-parada')) return;
       e.preventDefault();
       if (dropChofer !== choferId) setDropChofer(choferId);
     },
@@ -1475,9 +1507,18 @@ export function Rutas() {
       }
     },
     onDrop: (e: React.DragEvent) => {
-      if (!dragVisita) return;
+      if (dragVisita) {
+        e.preventDefault();
+        soltarEnChofer(choferId);
+        return;
+      }
+      const raw = e.dataTransfer.getData('application/x-mora-parada');
+      if (!raw) return;
       e.preventDefault();
-      soltarEnChofer(choferId);
+      setDropChofer(null);
+      try {
+        moverParadaAChofer(JSON.parse(raw), choferId);
+      } catch { /* payload inválido: ignorar */ }
     },
   });
 
