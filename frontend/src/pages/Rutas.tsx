@@ -764,6 +764,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                           </div>
                           <span className="tag recambio"><RefreshCw size={11} strokeWidth={2} /> Recambio</span>
                         </div>
+                        {(v.retiro.zona ?? v.entrega.zona) && <div className="stop-sub">📍 {v.retiro.zona ?? v.entrega.zona}</div>}
                         <div className="stop-sub">Lleno a retirar: {v.retiro.contenedor_numero}</div>
                         {(v.retiro.cliente_telefono ?? v.entrega.cliente_telefono) && (
                           <div className="stop-sub">📞 {v.retiro.cliente_telefono ?? v.entrega.cliente_telefono}</div>
@@ -798,6 +799,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                           </div>
                           <span className="tag entrega">Entrega</span>
                         </div>
+                        {v.entrega.zona && <div className="stop-sub">📍 {v.entrega.zona}</div>}
                         {v.entrega.cliente_telefono && <div className="stop-sub">📞 {v.entrega.cliente_telefono}</div>}
                         {v.entrega.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.entrega.horario_preferido}</div>}
                         <div className="sel-row">
@@ -827,6 +829,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                           </div>
                           <span className="tag retiro">Retiro</span>
                         </div>
+                        {v.retiro.zona && <div className="stop-sub">📍 {v.retiro.zona}</div>}
                         <div className="stop-sub">{v.retiro.contenedor_numero}</div>
                         {v.retiro.cliente_telefono && <div className="stop-sub">📞 {v.retiro.cliente_telefono}</div>}
                         {v.retiro.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.retiro.horario_preferido}</div>}
