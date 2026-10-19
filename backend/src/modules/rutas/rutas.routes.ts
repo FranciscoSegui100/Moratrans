@@ -515,6 +515,11 @@ rutasRouter.post('/:id/paradas', requireRol('admin', 'operador'), async (req: Re
         await resolverVaciadosAutomaticos(c, rutaId);
       }
 
+      // Mismo lock optimista que ya usa PATCH /:id/orden: agregar una parada
+      // también cambia la composición de la ruta, así que un reorder basado
+      // en una `version` anterior a esto tiene que detectarse como stale.
+      await c.query(`UPDATE rutas SET version = version + 1 WHERE id = $1`, [rutaId]);
+
       return { orden: nuevoOrden };
     });
     emitRecursoActualizado('viajes');
@@ -565,6 +570,7 @@ rutasRouter.post('/:id/paradas/vaciado', requireRol('admin', 'operador'), async 
         `INSERT INTO ruta_vaciados (ruta_id, orden, ubicacion_id, notas) VALUES ($1,$2,$3,$4) RETURNING *`,
         [rutaId, nuevoOrden, ubicacion?.id ?? null, notas ?? null],
       );
+      await c.query(`UPDATE rutas SET version = version + 1 WHERE id = $1`, [rutaId]);
       return rows[0];
     });
     res.status(201).json(resultado);
@@ -599,6 +605,7 @@ rutasRouter.delete('/:id/paradas/:tipo/:paradaId', requireRol('admin', 'operador
       if (tipo === 'vaciado') {
         const { rows } = await c.query(`DELETE FROM ruta_vaciados WHERE id = $1 AND ruta_id = $2 RETURNING id`, [paradaId, rutaId]);
         if (rows.length === 0) fail('Parada no encontrada.', 404);
+        await c.query(`UPDATE rutas SET version = version + 1 WHERE id = $1`, [rutaId]);
         return;
       }
 
@@ -626,6 +633,7 @@ rutasRouter.delete('/:id/paradas/:tipo/:paradaId', requireRol('admin', 'operador
           await liberarReservaEntrega(c, pareja.contenedor_numero, actualizadoPor);
         }
       }
+      await c.query(`UPDATE rutas SET version = version + 1 WHERE id = $1`, [rutaId]);
     });
     emitRecursoActualizado('viajes');
     emitRecursoActualizado('contenedores');
@@ -692,6 +700,7 @@ rutasRouter.post('/:id/paradas/:tipo/:paradaId/mover', requireRol('admin', 'oper
           [rutaDestinoId, nuevoOrden, paradaId, rutaOrigenId],
         );
         if (!rows[0]) fail('Parada no encontrada en la ruta de origen.', 404);
+        await c.query(`UPDATE rutas SET version = version + 1 WHERE id = ANY($1)`, [[rutaOrigenId, rutaDestinoId]]);
         const { advertencias } = await calcularDisponibilidadRuta(rutaDestinoId, ejecutar);
         return { orden: nuevoOrden, advertencias };
       }
@@ -724,6 +733,7 @@ rutasRouter.post('/:id/paradas/:tipo/:paradaId/mover', requireRol('admin', 'oper
         await resolverVaciadosAutomaticos(c, rutaDestinoId);
       }
 
+      await c.query(`UPDATE rutas SET version = version + 1 WHERE id = ANY($1)`, [[rutaOrigenId, rutaDestinoId]]);
       const { advertencias } = await calcularDisponibilidadRuta(rutaDestinoId, ejecutar);
       return { orden: nuevoOrden, advertencias };
     });
