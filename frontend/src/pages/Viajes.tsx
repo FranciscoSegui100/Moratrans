@@ -70,6 +70,18 @@ type PresetRango = 'hoy' | 'manana' | 'semana' | 'todo' | 'custom';
 /** Un recambio son dos filas con grupo_id: para el filtro de tipo cuenta como su propia categoría. */
 const categoriaTipo = (v: Viaje): 'entrega' | 'retiro' | 'recambio' => (v.grupo_id ? 'recambio' : v.tipo);
 
+/** Mismo criterio que el badge de la columna "Ruta" — para poder filtrar por lo mismo que ya se ve. */
+type EstadoRuteo = 'bolsa' | 'planificada' | 'confirmada' | 'en_ruta';
+function estadoRuteo(v: Viaje): EstadoRuteo {
+  if (!v.ruta_id) return 'bolsa';
+  if (v.completada_en) return 'en_ruta';
+  if (v.ruta_confirmada_en) return 'confirmada';
+  return 'planificada';
+}
+const ETIQUETAS_ESTADO_RUTEO: Record<EstadoRuteo, string> = {
+  bolsa: 'Bolsa (sin rutear)', planificada: 'Planificada', confirmada: 'Confirmada', en_ruta: '✓ En ruta',
+};
+
 const PRESETS: { id: PresetRango; label: string }[] = [
   { id: 'hoy', label: 'Hoy' },
   { id: 'manana', label: 'Mañana' },
@@ -94,6 +106,11 @@ export function Viajes() {
   const [customHasta, setCustomHasta] = useState(() => fechaUrl || sumarDias(hoyISO(), 6));
   const [filtroZona, setFiltroZona] = useState('');
   const [filtroTipo, setFiltroTipo] = useState<'' | 'entrega' | 'retiro' | 'recambio'>('');
+  const [filtroChofer, setFiltroChofer] = useState('');
+  const [filtroRuteo, setFiltroRuteo] = useState<'' | EstadoRuteo>('');
+  const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set());
+  const [choferMasivo, setChoferMasivo] = useState('');
+  const [reasignandoMasivo, setReasignandoMasivo] = useState(false);
 
   useEffect(() => {
     if (fechaUrl) {
@@ -145,9 +162,11 @@ export function Viajes() {
     () => viajes.filter((v) =>
       fechaEnRango(v.fecha, desde, hasta)
       && (!filtroZona || v.zona === filtroZona)
-      && (!filtroTipo || categoriaTipo(v) === filtroTipo),
+      && (!filtroTipo || categoriaTipo(v) === filtroTipo)
+      && (!filtroChofer || v.chofer_id === filtroChofer)
+      && (!filtroRuteo || estadoRuteo(v) === filtroRuteo),
     ),
-    [viajes, desde, hasta, filtroZona, filtroTipo],
+    [viajes, desde, hasta, filtroZona, filtroTipo, filtroChofer, filtroRuteo],
   );
 
   /** Completa la fila 'entrega' de un recambio (se crea sin contenedor, ver recambio.flow.ts). */
@@ -181,6 +200,43 @@ export function Viajes() {
     } catch (err: any) {
       show('error', 'No se pudo reasignar', err.response?.data?.error);
     }
+  }
+
+  /**
+   * Reasignar uno por uno a mano es el peor caso justo cuando más presión hay
+   * (un chofer que no vino y hay que repartir todo lo suyo) — filtrás por ese
+   * chofer y reasignás todo lo que ves de una. Usa el mismo PATCH que la
+   * reasignación individual, en bucle (no hay endpoint masivo en el backend).
+   */
+  async function reasignarSeleccionados() {
+    if (seleccionados.size === 0) return;
+    setReasignandoMasivo(true);
+    let ok = 0;
+    const errores: string[] = [];
+    for (const id of seleccionados) {
+      try {
+        await api.patch(`/api/viajes/${id}`, { chofer_id: choferMasivo || null });
+        ok++;
+      } catch (err: any) {
+        errores.push(err.response?.data?.error ?? id);
+      }
+    }
+    setReasignandoMasivo(false);
+    setSeleccionados(new Set());
+    cargar();
+    if (errores.length === 0) {
+      show('success', `${ok} viaje(s) reasignado(s)`);
+    } else {
+      show('error', `${ok} reasignados, ${errores.length} con error`, errores.slice(0, 3).join(' · '));
+    }
+  }
+
+  function toggleSeleccion(id: string) {
+    setSeleccionados((prev) => {
+      const copia = new Set(prev);
+      if (copia.has(id)) copia.delete(id); else copia.add(id);
+      return copia;
+    });
   }
 
   async function cambiarRemito(id: string, remito: string) {
@@ -273,8 +329,35 @@ export function Viajes() {
             <option value="retiro">Retiros</option>
             <option value="recambio">Recambios</option>
           </select>
+          <select className="form-select" style={{ width: 'auto' }} value={filtroChofer} onChange={(e) => setFiltroChofer(e.target.value)}>
+            <option value="">Todos los choferes</option>
+            {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+          </select>
+          <select className="form-select" style={{ width: 'auto' }} value={filtroRuteo} onChange={(e) => setFiltroRuteo(e.target.value as any)}>
+            <option value="">Cualquier estado de ruteo</option>
+            {(Object.keys(ETIQUETAS_ESTADO_RUTEO) as EstadoRuteo[]).map((k) => <option key={k} value={k}>{ETIQUETAS_ESTADO_RUTEO[k]}</option>)}
+          </select>
         </div>
       </div>
+
+      {seleccionados.size > 0 && (
+        <RoleGate roles={['admin', 'operador']}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--accent-tint)',
+            border: '1px solid var(--accent)', borderRadius: 'var(--radius)', padding: '10px 14px', marginBottom: '12px', fontSize: '0.85rem',
+          }}>
+            <span><strong>{seleccionados.size}</strong> viaje(s) seleccionado(s)</span>
+            <select className="form-select" style={{ width: 'auto' }} value={choferMasivo} onChange={(e) => setChoferMasivo(e.target.value)}>
+              <option value="">— Sin asignar —</option>
+              {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+            <button className="btn btn-primary btn-sm" onClick={reasignarSeleccionados} disabled={reasignandoMasivo}>
+              {reasignandoMasivo ? 'Reasignando...' : 'Reasignar seleccionados'}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setSeleccionados(new Set())}>Cancelar selección</button>
+          </div>
+        </RoleGate>
+      )}
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
         <button
@@ -295,6 +378,16 @@ export function Viajes() {
         <table className="data-table">
           <thead>
             <tr>
+              <RoleGate roles={['admin', 'operador']}>
+                <th style={{ width: '32px' }}>
+                  <input
+                    type="checkbox"
+                    checked={viajesAMostrar.length > 0 && viajesAMostrar.every((v) => seleccionados.has(v.id))}
+                    onChange={(e) => setSeleccionados(e.target.checked ? new Set(viajesAMostrar.map((v) => v.id)) : new Set())}
+                    title="Seleccionar todos los viajes visibles"
+                  />
+                </th>
+              </RoleGate>
               <th>Fecha</th>
               <th>Horario sugerido</th>
               <th>Tipo</th>
@@ -315,6 +408,11 @@ export function Viajes() {
           <tbody>
             {viajesAMostrar.map((v) => (
               <tr key={v.id}>
+                <RoleGate roles={['admin', 'operador']}>
+                  <td>
+                    <input type="checkbox" checked={seleccionados.has(v.id)} onChange={() => toggleSeleccion(v.id)} />
+                  </td>
+                </RoleGate>
                 <td className="strong" style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {v.horario_preferido ? (
@@ -515,7 +613,7 @@ export function Viajes() {
             ))}
             {viajesAMostrar.length === 0 && (
               <tr>
-                <td colSpan={15} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={16} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   {pestana === 'activos' ? 'No hay viajes activos o programados en el rango' : 'No hay viajes en el historial para el rango'}
                 </td>
               </tr>
