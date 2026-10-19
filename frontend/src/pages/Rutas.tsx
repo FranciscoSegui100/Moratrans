@@ -434,7 +434,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     }
   }
 
-  async function reordenar(nuevasVisitas: Visita[]) {
+  async function reordenar(nuevasVisitas: Visita[], gesto?: { visitaId: string; direccion: -1 | 1 }, esReintento = false, versionOverride?: number) {
     // Evita que varios clicks seguidos en ↑/↓ (más rápido de lo que tarda la
     // ida y vuelta) disparen reordenamientos en paralelo con el mismo
     // `ruta.version` viejo: el primero pasa, todos los demás chocan con el
@@ -461,7 +461,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     try {
       await api.patch(`/api/rutas/${rutaId}/orden`, {
         secuencia: nuevasVisitas.map((v) => ({ tipo: v.tipoParada, id: v.id })),
-        version: ruta?.version,
+        version: versionOverride ?? ruta?.version,
       });
       // Esperamos a que la caché tenga el version nuevo antes de soltar el
       // candado — si no, el próximo click todavía leería el version viejo.
@@ -470,9 +470,31 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     } catch (err: any) {
       if (previo) queryClient.setQueryData(['rutas', rutaId], previo);
       if (err.response?.status === 409) {
-        show('error', 'Esta ruta cambió', 'Otro usuario la modificó mientras tanto — se recargó con los cambios de él.');
         await queryClient.invalidateQueries({ queryKey: ['rutas', rutaId] });
         onCambio();
+        // Perder el lock no tiene por qué perder el gesto del operador: se
+        // reintenta UNA vez el mismo movimiento (misma parada, misma
+        // dirección) sobre los datos frescos que se acaban de traer, en vez
+        // de solo recargar y obligarlo a repetirlo a mano.
+        if (gesto && !esReintento) {
+          const fresca = await queryClient.fetchQuery<RutaData>({ queryKey: ['rutas', rutaId] });
+          const visitasFrescas = agruparVisitas(fresca.paradas);
+          const idx = visitasFrescas.findIndex((v) => v.id === gesto.visitaId);
+          const j = idx + gesto.direccion;
+          const puede = idx !== -1 && j >= 0 && j < visitasFrescas.length
+            && !visitaFinalizada(visitasFrescas[idx]) && !visitaFinalizada(visitasFrescas[j])
+            && !esVisitaEnCurso(visitasFrescas[idx], visitasFrescas) && !esVisitaEnCurso(visitasFrescas[j], visitasFrescas);
+          if (puede) {
+            const reintentada = [...visitasFrescas];
+            const [item] = reintentada.splice(idx, 1);
+            reintentada.splice(j, 0, item);
+            setReordenando(false);
+            return reordenar(reintentada, gesto, true, fresca.version);
+          }
+          show('error', 'Esta ruta cambió', 'Otro usuario la modificó mientras tanto — se recargó con los cambios de él.');
+        } else {
+          show('error', 'Esta ruta cambió', 'Otro usuario la modificó mientras tanto — se recargó con los cambios de él.');
+        }
         setReordenando(false);
         return;
       }
@@ -494,7 +516,12 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     const nuevo = [...visitas];
     const [item] = nuevo.splice(from, 1);
     nuevo.splice(to, 0, item);
-    reordenar(nuevo);
+    // El gesto solo se puede reintentar sobre datos frescos cuando es un paso
+    // simple (±1, el caso de las flechas y la mayoría de los drags) — un
+    // movimiento de varias posiciones de una no tiene una "misma dirección"
+    // clara para reaplicar, así que esos vuelven al comportamiento de antes.
+    const gesto = Math.abs(to - from) === 1 ? { visitaId: item.id, direccion: (to > from ? 1 : -1) as -1 | 1 } : undefined;
+    reordenar(nuevo, gesto);
   }
 
   function mover(idx: number, direccion: -1 | 1) {
