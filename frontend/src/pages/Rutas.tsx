@@ -1011,7 +1011,7 @@ function useAnimarReacomodo(ref: React.RefObject<HTMLDivElement>, rutaId: string
   }, [ref, rutaId, clave]);
 }
 
-// ── Página principal: layout 2 columnas (Bolsa a la izquierda, Choferes a la derecha) ────
+// ── Página principal: layout apilado (Bolsa arriba, Choferes y Detalle abajo) ────
 
 export function Rutas() {
   const queryClient = useQueryClient();
@@ -1117,7 +1117,9 @@ export function Rutas() {
   // fecha a propósito, para no perder pedidos viejos de vista, así que hay
   // que ordenar para no perderlos.
   const bolsaAgrupada = (() => {
-    const ordenadas = [...visitasPendientes].sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const ordenadas = [...visitasPendientes]
+      .filter((v) => v.fecha === fecha)
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
     const porFecha = new Map<string, Map<string, VisitaPendiente[]>>();
     for (const v of ordenadas) {
       const zona = v.zona ?? (v.destino_direccion ? v.destino_direccion.split(',')[0] : 'Sin zona');
@@ -1537,12 +1539,6 @@ export function Rutas() {
           <p>Planificá el recorrido de cada chofer.</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div className="date-pick">
-            Día: <input type="date" value={fecha} onChange={(e) => {
-              setFecha(e.target.value);
-              setFormViaje((fv) => ({ ...fv, fecha: e.target.value }));
-            }} />
-          </div>
           <Link
             to={`/viajes?fecha=${fecha}`}
             className="btn btn-ghost btn-sm"
@@ -1739,19 +1735,25 @@ export function Rutas() {
             } catch { /* payload inválido: ignorar */ }
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid var(--border)', paddingBottom: '10px' }}>
-            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid var(--border)', paddingBottom: '10px', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <span>📦 Pedidos sin rutear</span>
+              <div className="date-pick" style={{ fontWeight: 500, fontSize: '0.78rem' }}>
+                <input type="date" value={fecha} onChange={(e) => {
+                  setFecha(e.target.value);
+                  setFormViaje((fv) => ({ ...fv, fecha: e.target.value }));
+                }} />
+              </div>
             </div>
-            <span className="badge programado" style={{ fontSize: '0.75rem' }}>{visitasPendientes.length}</span>
+            <span className="badge programado" style={{ fontSize: '0.75rem' }} title={`Total acumulado sin rutear (todas las fechas): ${visitasPendientes.length}`}>{sinAsignarDelDia}</span>
           </div>
 
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
-            Tocá un pedido para ver el detalle. Arrastralo sobre un chofer (abajo) para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
+            Mostrando solo los pedidos de este día. Tocá un pedido para ver el detalle. Arrastralo sobre un chofer (abajo) para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
           </div>
 
-          {visitasPendientes.length === 0 ? (
-            <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes en la bolsa.</div>
+          {sinAsignarDelDia === 0 ? (
+            <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes para este día.</div>
           ) : (
             // Se ven ~2 filas de tarjetas; si hay más, scroll vertical acá adentro
             // en vez de alargar toda la página.
@@ -1973,7 +1975,7 @@ export function Rutas() {
           ) : (
             <div className="card empty-state" style={{ padding: '40px 20px' }}>
               <div className="empty-state-title">Ninguna ruta seleccionada</div>
-              <div className="empty-state-text">Hacé clic en un chofer arriba para ver y armar su ruta, o asignale pedidos directamente desde la bolsa a la izquierda.</div>
+              <div className="empty-state-text">Hacé clic en un chofer arriba para ver y armar su ruta, o asignale pedidos directamente desde la bolsa de arriba.</div>
             </div>
           )}
         </div>
