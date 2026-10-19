@@ -77,12 +77,20 @@ export function simularDisponibilidad(
   const porOrden = new Map<number, string[]>();
   const advertencias: AdvertenciaCapacidad[] = [];
 
+  // Vacíos físicamente a bordo de ESTE camión para ESTA ruta — no confundir
+  // con `disponibles`, que es el stock del depósito ofrecido como candidato
+  // en cada parada de entrega (puede incluir contenedores que nunca suben a
+  // este camión). Arranca en la cantidad de entregas de la ruta (cada una
+  // necesita cargar un vacío de salida) y se repone con lo que se vacía en
+  // una parada de vaciado; una entrega lo baja al dejarlo en destino.
+  let vaciosABordo = ordenadas.filter((p) => p.tipoParada === 'viaje' && p.viajeTipo !== 'retiro').length;
+
   const chequearVacios = (orden: number) => {
-    if (disponibles.size > capacidad.vacios) {
+    if (vaciosABordo > capacidad.vacios) {
       advertencias.push({
         orden,
         tipo: 'vacios_exceso',
-        mensaje: `Hay ${disponibles.size} contenedores vacíos a bordo, por encima de la capacidad del camión (${capacidad.vacios}).`,
+        mensaje: `Hay ${vaciosABordo} contenedores vacíos a bordo, por encima de la capacidad del camión (${capacidad.vacios}).`,
       });
     }
   };
@@ -93,6 +101,7 @@ export function simularDisponibilidad(
       // Libera TODO el set pendiente acumulado hasta acá — no un
       // contenedor puntual, tal como pide la regla de negocio.
       for (const numero of pendientesDeVaciar) disponibles.add(numero);
+      vaciosABordo += pendientesDeVaciar.size;
       pendientesDeVaciar.clear();
       chequearVacios(parada.orden);
       continue;
@@ -128,6 +137,7 @@ export function simularDisponibilidad(
       [...disponibles].filter((n) => n === parada.contenedorNumero || !asignadosAEntrega.has(n)),
     );
     if (parada.contenedorNumero) disponibles.delete(parada.contenedorNumero);
+    vaciosABordo -= 1; // nunca puede superar la capacidad acá: solo baja hasta el próximo vaciado
   }
 
   return { porOrden, liberadosPor, advertencias };

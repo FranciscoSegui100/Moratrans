@@ -111,20 +111,38 @@ describe('simularDisponibilidad', () => {
       expect(advertencias).toHaveLength(0);
     });
 
-    it('advierte "vacios_exceso" al superar la capacidad del camión', () => {
+    it('el stock del depósito NO cuenta como "a bordo": una ruta sin entregas no advierte aunque haya mucho stock disponible', () => {
+      // Bug real confirmado en producción: una ruta de una sola parada mostraba
+      // "70 vacíos a bordo" porque se comparaba contra el stock TOTAL del
+      // depósito, no contra lo que esa ruta puntual carga.
       const { advertencias } = simularDisponibilidad([], ['A', 'B', 'C', 'D', 'E', 'F', 'G']);
-      expect(advertencias).toHaveLength(1);
+      expect(advertencias.filter((a) => a.tipo === 'vacios_exceso')).toHaveLength(0);
+    });
+
+    it('advierte "vacios_exceso" cuando la ruta tiene más entregas que la capacidad del camión', () => {
+      const paradas: ParadaSimulada[] = Array.from({ length: 7 }, (_, i) => ({
+        orden: i + 1,
+        tipoParada: 'viaje' as const,
+        viajeTipo: 'entrega' as const,
+        contenedorNumero: null,
+      }));
+      const { advertencias } = simularDisponibilidad(paradas, ['A', 'B', 'C', 'D', 'E', 'F', 'G']);
       expect(advertencias[0]).toMatchObject({ orden: 0, tipo: 'vacios_exceso' });
       expect(advertencias[0].mensaje).toMatch(/por encima/);
     });
 
-    it('un vaciado que suma vacíos a bordo por encima de la capacidad también advierte', () => {
+    it('un vaciado que repone vacíos por encima de la capacidad también advierte', () => {
       const paradas: ParadaSimulada[] = [
-        { orden: 1, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'A' },
-        { orden: 2, tipoParada: 'vaciado' },
+        ...Array.from({ length: 7 }, (_, i) => ({
+          orden: i + 1,
+          tipoParada: 'viaje' as const,
+          viajeTipo: 'retiro' as const,
+          contenedorNumero: String.fromCharCode(65 + i),
+        })),
+        { orden: 8, tipoParada: 'vaciado' as const },
       ];
-      const { advertencias } = simularDisponibilidad(paradas, ['X', 'Y', 'Z', 'W', 'Q', 'R']);
-      expect(advertencias.some((a) => a.orden === 2 && a.tipo === 'vacios_exceso')).toBe(true);
+      const { advertencias } = simularDisponibilidad(paradas, []);
+      expect(advertencias.some((a) => a.orden === 8 && a.tipo === 'vacios_exceso')).toBe(true);
     });
   });
 });
