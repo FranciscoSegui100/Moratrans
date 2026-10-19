@@ -2,9 +2,15 @@
  * Helpers de fechas de viajes compartidos por el panel.
  */
 
-/** Hoy en formato YYYY-MM-DD (mismo criterio de zona horaria que Rutas.tsx). */
+/**
+ * Hoy en formato YYYY-MM-DD, en hora local (NO toISOString(): eso da la fecha
+ * en UTC, y entre ~21hs y medianoche hora Mendoza ya "es mañana" en UTC).
+ */
 export function hoyISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  const hoy = new Date();
+  const mm = String(hoy.getMonth() + 1).padStart(2, '0');
+  const dd = String(hoy.getDate()).padStart(2, '0');
+  return `${hoy.getFullYear()}-${mm}-${dd}`;
 }
 
 /** Suma (o resta, con negativo) días a una fecha YYYY-MM-DD y la devuelve YYYY-MM-DD. */

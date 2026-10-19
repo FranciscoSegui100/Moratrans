@@ -9,6 +9,7 @@ import { DireccionMaps } from '../components/DireccionMaps';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
 import { useAuth, tieneRol } from '../context/AuthContext';
 import { formatearFecha } from '../lib/fechas';
+import { hoyISO } from '../lib/viajes';
 
 interface Comprobante {
   id: string;
@@ -133,7 +134,7 @@ interface ViajeManualForm {
 function formularioViajeVacio(): ViajeManualForm {
   return {
     tipo: 'entrega',
-    fecha: new Date().toISOString().slice(0, 10),
+    fecha: hoyISO(),
     contenedor_numero: '',
     contenedor_numero_entrega: '',
     importe: '',

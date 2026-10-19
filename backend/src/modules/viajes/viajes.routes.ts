@@ -603,17 +603,27 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
       const { rows: viajeRows } = await c.query<{
         tipo: string; fecha: string; ruta_id: string | null; orden: number | null;
         completada_en: string | null; ruta_confirmada_en: string | null; estado: string;
+        chofer_id: string | null; contenedor_numero: string | null;
       }>(
-        'SELECT tipo, fecha, ruta_id, orden, completada_en, ruta_confirmada_en, estado FROM viajes WHERE id = $1 FOR UPDATE',
+        'SELECT tipo, fecha, ruta_id, orden, completada_en, ruta_confirmada_en, estado, chofer_id, contenedor_numero FROM viajes WHERE id = $1 FOR UPDATE',
         [req.params.id],
       );
       if (!viajeRows[0]) return null;
       const viajeActual = viajeRows[0];
 
-      // Si se intenta cancelar un viaje que ya está terminado o en camino:
-      if (parsed.data.estado === 'cancelado') {
+      // Reasignar chofer o contenedor es tan delicado como cancelar: cambiarle
+      // a mitad de camino quién la maneja, o qué contenedor es, sobre una
+      // parada que el chofer ya completó o a la que ya está yendo ahora mismo,
+      // deja el viaje y la ruta con datos que no coinciden con la realidad. Si
+      // el valor estaba vacío (recambio sin contenedor asignado todavía,
+      // viaje sin chofer en la bolsa) completarlo no cuenta como reasignar.
+      const reasignaChofer = 'chofer_id' in parsed.data && viajeActual.chofer_id != null && parsed.data.chofer_id !== viajeActual.chofer_id;
+      const reasignaContenedor =
+        'contenedor_numero' in parsed.data && viajeActual.contenedor_numero != null && parsed.data.contenedor_numero !== viajeActual.contenedor_numero;
+      if (parsed.data.estado === 'cancelado' || reasignaChofer || reasignaContenedor) {
+        const accion = parsed.data.estado === 'cancelado' ? 'cancelar' : 'reasignar';
         if (viajeActual.completada_en != null) {
-          return fail('No se puede cancelar: el chofer ya completó esta parada.', 409);
+          return fail(`No se puede ${accion}: el chofer ya completó esta parada.`, 409);
         }
         if (viajeActual.ruta_id != null && viajeActual.orden != null && viajeActual.ruta_confirmada_en != null) {
           const { rows: anterioresPendientes } = await c.query<{ id: string }>(
@@ -623,7 +633,7 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
             [viajeActual.ruta_id, viajeActual.orden],
           );
           if (anterioresPendientes.length === 0) {
-            return fail('No se puede cancelar: el chofer ya está yendo a entregar o retirar este pedido.', 409);
+            return fail(`No se puede ${accion}: el chofer ya está yendo a entregar o retirar este pedido.`, 409);
           }
         }
       }

@@ -8,6 +8,7 @@ import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
 import { PedidoDetalleModal } from '../components/PedidoDetalleModal';
 import { formatearFecha } from '../lib/fechas';
+import { hoyISO } from '../lib/viajes';
 
 interface Ruta {
   id: string;
@@ -843,7 +844,7 @@ export function Rutas() {
   const paramFecha = searchParams.get('fecha');
   const paramNuevo = searchParams.get('nuevo');
 
-  const [fecha, setFecha] = useState(() => paramFecha || new Date().toISOString().slice(0, 10));
+  const [fecha, setFecha] = useState(() => paramFecha || hoyISO());
   const [rutaSeleccionada, setRutaSeleccionada] = useState<string | null>(null);
 
   // Sincronizar fecha si cambia en la URL
@@ -866,7 +867,7 @@ export function Rutas() {
   const [pedidoDetalle, setPedidoDetalle] = useState<VisitaPendiente | null>(null);
 
   // Form "Programar nuevo viaje" (antes vivía en Viajes.tsx).
-  const [formViaje, setFormViaje] = useState(() => ({ ...formViajeInicial, fecha: paramFecha || new Date().toISOString().slice(0, 10) }));
+  const [formViaje, setFormViaje] = useState(() => ({ ...formViajeInicial, fecha: paramFecha || hoyISO() }));
   const [mostrarFormViaje, setMostrarFormViaje] = useState(() => paramNuevo === '1');
   const [creandoViaje, setCreandoViaje] = useState(false);
 
