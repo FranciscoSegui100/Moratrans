@@ -1,4 +1,4 @@
-import { CANTIDAD_DIAS_HABILES_A_OFRECER } from '../config/bot.config';
+import { CANTIDAD_DIAS_HABILES_A_OFRECER, HORA_LIMITE_PEDIDO_MISMO_DIA } from '../config/bot.config';
 
 const DIAS_SEMANA = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 const MESES = [
@@ -15,28 +15,40 @@ export interface DiaHabil {
 
 /**
  * Próximos días hábiles (lunes a viernes — no se trabaja sábado ni domingo)
- * a partir de mañana. No hay
- * feriados cargados todavía: si hace falta excluirlos más adelante, este es
- * el único lugar que hay que tocar.
+ * a partir de mañana. Con `incluirHoy`, si hoy es hábil y todavía no son las
+ * HORA_LIMITE_PEDIDO_MISMO_DIA en Mendoza, arranca desde hoy (pedidos del
+ * mismo día). No hay feriados cargados todavía: si hace falta excluirlos más
+ * adelante, este es el único lugar que hay que tocar.
+ *
+ * Todo se calcula en hora de Mendoza (UTC-3, sin horario de verano) leyendo
+ * con getters UTC sobre el instante corrido 3hs — el proceso de Node corre en
+ * UTC en el deploy (ver fechas.service.ts), y con la hora local del server
+ * entre las 21hs y medianoche "mañana" ya era pasado mañana.
  */
-export function proximosDiasHabiles(cantidad: number = CANTIDAD_DIAS_HABILES_A_OFRECER): DiaHabil[] {
+export function proximosDiasHabiles(
+  cantidad: number = CANTIDAD_DIAS_HABILES_A_OFRECER,
+  opciones: { incluirHoy?: boolean } = {},
+): DiaHabil[] {
   const resultado: DiaHabil[] = [];
-  const cursor = new Date();
-  cursor.setHours(0, 0, 0, 0);
-  cursor.setDate(cursor.getDate() + 1); // arranca mañana, no hoy
+  const ahoraMendoza = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  const cursor = new Date(Date.UTC(ahoraMendoza.getUTCFullYear(), ahoraMendoza.getUTCMonth(), ahoraMendoza.getUTCDate()));
+  const hoyDisponible = !!opciones.incluirHoy && ahoraMendoza.getUTCHours() < HORA_LIMITE_PEDIDO_MISMO_DIA;
+  if (!hoyDisponible) cursor.setUTCDate(cursor.getUTCDate() + 1);
+  const fechaHoy = !hoyDisponible ? null : cursor.toISOString().slice(0, 10);
 
   while (resultado.length < cantidad) {
-    const dia = cursor.getDay();
+    const dia = cursor.getUTCDay();
     if (dia !== 0 && dia !== 6) {
-      const yyyy = cursor.getFullYear();
-      const mm = String(cursor.getMonth() + 1).padStart(2, '0');
-      const dd = String(cursor.getDate()).padStart(2, '0');
+      const yyyy = cursor.getUTCFullYear();
+      const mm = String(cursor.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(cursor.getUTCDate()).padStart(2, '0');
+      const fecha = `${yyyy}-${mm}-${dd}`;
       resultado.push({
-        fecha: `${yyyy}-${mm}-${dd}`,
-        etiqueta: `${DIAS_SEMANA[cursor.getDay()]} ${dd}/${mm}`,
+        fecha,
+        etiqueta: `${fecha === fechaHoy ? 'Hoy, ' : ''}${DIAS_SEMANA[dia]} ${dd}/${mm}`,
       });
     }
-    cursor.setDate(cursor.getDate() + 1);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   return resultado;
 }
