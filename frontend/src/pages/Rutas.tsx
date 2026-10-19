@@ -1009,7 +1009,7 @@ export function Rutas() {
   const [mostrarFormViaje, setMostrarFormViaje] = useState(() => paramNuevo === '1');
   const [creandoViaje, setCreandoViaje] = useState(false);
   const [autoArmando, setAutoArmando] = useState(false);
-  // Último auto-armado, para poder deshacerlo durante unos segundos.
+  // Último auto-armado, para poder deshacerlo: el aviso queda fijo hasta cerrarlo o volver a auto-armar.
   const [ultimoAutoArmado, setUltimoAutoArmado] = useState<{
     paradas: { rutaId: string; viajeId: string }[];
     rutasCreadas: string[];
@@ -1345,7 +1345,7 @@ export function Rutas() {
    * agrega al final de cada ruta, ordenados por franja y zona. Las paradas
    * que ya estaban no se tocan. Queda sin confirmar, igual que armado a
    * mano: nadie recibe aviso hasta tocar "Confirmar ruta". Se puede deshacer
-   * durante 15 segundos.
+   * hasta que se cierre el aviso o se vuelva a auto-armar.
    */
   async function autoArmarRutas() {
     const visitasDelDia = agruparPendientes(cola).filter((v) => v.fecha === fecha && (v.entrega?.id ?? v.retiro?.id));
@@ -1402,7 +1402,6 @@ export function Rutas() {
       setTimeout(() => setChoferesDestello(new Set()), 1200);
       const resumen = `${paradas.length} pedido(s) repartidos entre ${choferesConCambios.size} chofer(es) — quedan sin confirmar.`;
       setUltimoAutoArmado({ paradas, rutasCreadas, resumen });
-      setTimeout(() => setUltimoAutoArmado((u) => (u?.resumen === resumen && u.paradas === paradas ? null : u)), 15000);
     }
     if (errores.length > 0) {
       show('error', `${errores.length} pedido(s) no se pudieron asignar`, errores.slice(0, 3).join(' · '));
@@ -1531,12 +1530,16 @@ export function Rutas() {
       {ultimoAutoArmado && (
         <div
           className="autoarmado-aviso"
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', margin: '0 0 14px', padding: '10px 14px', background: 'var(--success-bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '0.84rem' }}
+          // Fijo abajo al centro de la pantalla: sigue a la vista aunque se haga scroll por las rutas.
+          style={{ position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 95, maxWidth: 'calc(100vw - 32px)', display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 10px 10px 14px', background: 'var(--success-bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: '0 6px 20px rgba(0,0,0,0.18)', fontSize: '0.84rem' }}
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <CheckCircle2 size={16} strokeWidth={2} style={{ color: 'var(--success)' }} /> {ultimoAutoArmado.resumen}
           </span>
           <button type="button" className="btn btn-ghost btn-sm" onClick={deshacerAutoArmado}>Deshacer</button>
+          <button type="button" className="modal-close" onClick={() => setUltimoAutoArmado(null)} title="Cerrar (ya no se podrá deshacer)">
+            <X size={16} strokeWidth={2} />
+          </button>
         </div>
       )}
 
