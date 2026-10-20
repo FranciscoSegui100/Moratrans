@@ -31,6 +31,13 @@ contenedoresRouter.get('/', async (_req: Request, res: Response) => {
               ) THEN 'para_retirar'
               WHEN c.estado = 'entregado' AND c.vence_en IS NOT NULL AND c.vence_en < now() THEN 'vencido'
               WHEN c.estado = 'entregado' THEN 'alquilado'
+              -- Técnicamente 'disponible' (en depósito, nadie lo tiene) pero
+              -- ya elegido para una entrega de OTRA ruta que todavía no se
+              -- confirmó — por eso no aparece como opción al armar cualquier
+              -- otra ruta (ver disponiblesRows en rutas.routes.ts), aunque acá
+              -- siga figurando "disponible" y confundía al operador. "va" ya
+              -- trae el viaje activo más reciente de este contenedor.
+              WHEN c.estado = 'disponible' AND va.tipo = 'entrega' THEN 'preasignado'
               ELSE c.estado::text
             END AS estado_contrato,
             CASE

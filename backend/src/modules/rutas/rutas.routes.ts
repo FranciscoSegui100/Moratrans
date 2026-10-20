@@ -427,13 +427,32 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
   // vaciado" del chofer en WhatsApp. Independiente de si ya tienen o no una
   // parada de vaciado linkeada en esta ruta: sirve para el selector del
   // formulario manual "Agregar vaciado" (ver POST .../paradas/vaciado).
-  const pendientesDeVaciar = (ruta as any).chofer_id
-    ? await query<{ contenedor_numero: string }>(
-        `SELECT DISTINCT contenedor_numero FROM viajes
-          WHERE chofer_id = $1 AND tipo = 'retiro' AND estado = 'en_curso' AND contenedor_numero IS NOT NULL`,
-        [(ruta as any).chofer_id],
-      )
-    : [];
+  // Contenedores 'disponible' que no entran en el stock de ESTA ruta porque
+  // ya están elegidos en una entrega activa de OTRA ruta (o sin rutear)
+  // todavía sin confirmar — para que el panel pueda explicar el motivo en
+  // vez de un "sin stock" genérico cuando el operador esperaba verlos (la
+  // pantalla de Contenedores los sigue mostrando "disponible" sin ninguna
+  // pista de por qué no aparecen acá).
+  const [pendientesDeVaciar, comprometidosOtraRuta] = await Promise.all([
+    (ruta as any).chofer_id
+      ? query<{ contenedor_numero: string }>(
+          `SELECT DISTINCT contenedor_numero FROM viajes
+            WHERE chofer_id = $1 AND tipo = 'retiro' AND estado = 'en_curso' AND contenedor_numero IS NOT NULL`,
+          [(ruta as any).chofer_id],
+        )
+      : Promise.resolve([]),
+    query<{ numero: string; chofer_nombre: string | null }>(
+      `SELECT DISTINCT c.numero, ch.nombre AS chofer_nombre
+         FROM contenedores c
+         JOIN viajes v ON v.contenedor_numero = c.numero
+         LEFT JOIN choferes ch ON ch.id = v.chofer_id
+        WHERE c.estado = 'disponible'
+          AND v.tipo = 'entrega'
+          AND v.estado IN ('programado', 'en_curso')
+          AND (v.ruta_id IS NULL OR v.ruta_id <> $1)`,
+      [id],
+    ),
+  ]);
 
   const { viajes, vaciados, porOrden, advertencias, disponiblesAlInicio } = disponibilidad;
 
@@ -485,6 +504,7 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
   res.json({
     ...ruta, paradas, advertencias, stock_deposito: disponiblesAlInicio,
     contenedores_pendientes_vaciar: pendientesDeVaciar.map((p) => p.contenedor_numero),
+    contenedores_comprometidos_otra_ruta: comprometidosOtraRuta,
   });
 });
 

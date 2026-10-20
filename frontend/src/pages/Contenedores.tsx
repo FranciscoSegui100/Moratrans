@@ -48,6 +48,9 @@ const ETIQUETAS_ESTADO: Record<string, string> = {
   mantenimiento: 'En mantenimiento',
   reservado: 'Reservado',
   retirado: 'Retirado (sin vaciar)',
+  // Disponible en depósito, pero ya elegido para una entrega de otra ruta
+  // sin confirmar todavía — por eso no se puede elegir en ningún otro lado.
+  preasignado: 'Disponible · sin confirmar',
 };
 
 /** Nombre del cliente para mostrar, o el teléfono si todavía no tiene nombre cargado. */
@@ -343,7 +346,10 @@ export function Contenedores() {
                 </td>
                 <td>{c.tamano ? `${c.tamano} m³` : <span className="text-muted">—</span>}</td>
                 <td>
-                  <span className={`badge ${c.estado_contrato}`}>
+                  <span
+                    className={`badge ${c.estado_contrato}`}
+                    title={c.estado_contrato === 'preasignado' ? 'Está en el depósito, pero ya elegido para una entrega de otra ruta que todavía no se confirmó — por eso no aparece como opción en ningún otro pedido.' : undefined}
+                  >
                     {ETIQUETAS_ESTADO[c.estado_contrato] ?? c.estado_contrato.replace('_', ' ')}
                   </span>
                 </td>

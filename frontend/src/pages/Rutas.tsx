@@ -262,6 +262,8 @@ interface RutaData extends Ruta {
   stock_deposito: string[];
   /** Contenedores que este chofer ya tiene retirados (lleno) y sin vaciar todavía — para el selector de "Agregar vaciado" a mano. */
   contenedores_pendientes_vaciar: string[];
+  /** Contenedores 'disponible' que no entran en el stock de ESTA ruta porque ya están elegidos en una entrega activa de otra ruta sin confirmar todavía. */
+  contenedores_comprometidos_otra_ruta: { numero: string; chofer_nombre: string | null }[];
 }
 
 /** Agrupa las paradas (ya ordenadas por el backend) en "visitas": un recambio son dos filas de `viajes` que comparten `orden` y se muestran como una sola. */
@@ -361,6 +363,14 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     onCambio();
   };
 
+  // En vez de un "sin stock" genérico cuando el operador esperaba ver algo:
+  // si lo que falta son contenedores que SÍ están en el depósito pero ya
+  // elegidos para una entrega de otra ruta sin confirmar, lo dice — así no
+  // parece que falta stock cuando en realidad está "pisado" en otro lado.
+  const comprometidosOtraRuta = ruta?.contenedores_comprometidos_otra_ruta ?? [];
+  const motivoSinStock = comprometidosOtraRuta.length === 0
+    ? 'sin stock a bordo'
+    : `sin stock — ${comprometidosOtraRuta.map((c) => `${c.numero} está con ${c.chofer_nombre ?? 'otro chofer'} (sin confirmar)`).join(', ')}`;
   const visitas = ruta ? agruparVisitas(ruta.paradas) : [];
   // Para el selector de "Agregar vaciado" a mano: contenedores que este
   // chofer tiene retirados y sin vaciar, salvo los que ya tienen una parada
@@ -846,7 +856,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                           ) : (
                             <span className="mono">{v.entrega.contenedor_numero ?? '—'}</span>
                           )}
-                          {sinAsignar && disponibles.length === 0 && <span className="sel-warn">sin stock a bordo</span>}
+                          {sinAsignar && disponibles.length === 0 && <span className="sel-warn">{motivoSinStock}</span>}
                         </div>
                       </>
                     )}
@@ -876,7 +886,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                           ) : (
                             <span className="mono">{v.entrega.contenedor_numero ?? '—'}</span>
                           )}
-                          {sinAsignar && disponibles.length === 0 && <span className="sel-warn">sin stock a bordo</span>}
+                          {sinAsignar && disponibles.length === 0 && <span className="sel-warn">{motivoSinStock}</span>}
                         </div>
                       </>
                     )}

@@ -922,6 +922,7 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .badge.mantenimiento { background: var(--danger-bg); color: var(--danger); }
 .badge.alquilado   { background: var(--purple-bg); color: var(--purple); }
 .badge.para_retirar { background: var(--warning-bg); color: var(--warning); }
+.badge.preasignado { background: var(--warning-bg); color: var(--warning); }
 .badge.vencido     { background: var(--danger-bg); color: var(--danger); }
 .badge.pendiente   { background: var(--warning-bg); color: var(--warning); }
 .badge.validado    { background: var(--success-bg); color: var(--success); }
