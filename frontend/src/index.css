@@ -452,9 +452,10 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 
 /* ===== TOPBAR ===== */
 .topbar {
-  position: sticky;
-  top: 0;
-  z-index: 90;
+  /* En flujo normal, no sticky: los botones quedan arriba de la página y se
+     van con el scroll. Siendo sticky y sin franja opaca que los separe,
+     terminaban flotando encima de las filas de cualquier tabla larga y
+     tapando lo que había debajo. */
   display: flex;
   align-items: center;
   gap: 16px;
