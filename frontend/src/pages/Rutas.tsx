@@ -702,12 +702,22 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
               // flechas, sin "mover a", sin quitar, contenedor de solo lectura).
               const finalizada = visitaFinalizada(v);
               const enCurso = esVisitaEnCurso(v, visitas);
-              const bloqueada = finalizada || enCurso;
+              // Un vaciado ya confirmado (por el chofer por WhatsApp o desde acá con
+              // "Marcar vaciado") queda igual de intocable que una entrega/retiro
+              // finalizada — no tendría sentido poder arrastrarlo o sacarlo de la
+              // ruta después de que el contenedor ya salió de 'retirado'.
+              const vaciadoResuelto = !!(
+                v.vaciado?.contenedor_numero &&
+                v.vaciado.contenedor_estado &&
+                v.vaciado.contenedor_estado !== 'retirado' &&
+                v.vaciado.contenedor_estado !== 'entregado'
+              );
+              const bloqueada = finalizada || enCurso || vaciadoResuelto;
               return (
                 <div
                   key={`${v.tipoParada}-${v.id}`}
                   data-flip-key={`${v.tipoParada}-${v.id}`}
-                  className={`stop${finalizada ? ' finalizada' : ''}${enCurso ? ' en-curso-bloqueada' : ''}${dragIdx === idx ? ' dragging' : ''}${overIdx === idx && dragIdx !== null && dragIdx !== idx ? ' drop-target' : ''}${insertIdx === idx ? ' insert-antes' : ''}`}
+                  className={`stop${finalizada || vaciadoResuelto ? ' finalizada' : ''}${enCurso ? ' en-curso-bloqueada' : ''}${dragIdx === idx ? ' dragging' : ''}${overIdx === idx && dragIdx !== null && dragIdx !== idx ? ' drop-target' : ''}${insertIdx === idx ? ' insert-antes' : ''}`}
                   onDragOver={(e) => {
                     if (dragIdx !== null) {
                       e.preventDefault();
