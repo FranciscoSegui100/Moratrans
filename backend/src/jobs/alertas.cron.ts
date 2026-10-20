@@ -58,7 +58,11 @@ async function generarAlertas(): Promise<void> {
             SELECT 1 FROM mensajes_chat m
              WHERE m.telefono = ultima.cliente_telefono
                AND m.origen = 'bot'
-               AND m.texto LIKE '%Contenedor ' || c.numero || '%'
+               -- Tiene que coincidir con el texto que se manda abajo ("del
+               -- contenedor *X* vence"): antes buscaba "Contenedor X" (con
+               -- mayúscula y sin asteriscos), nunca encontraba el aviso ya
+               -- enviado y lo repetía en cada corrida del cron (cada 15 min).
+               AND m.texto LIKE '%contenedor *' || c.numero || '* vence%'
                AND m.creado_en > now() - interval '24 hours'
           )`,
     );
