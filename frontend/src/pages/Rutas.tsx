@@ -244,6 +244,10 @@ interface ParadaVaciado {
   ubicacion_id: string | null;
   ubicacion_nombre: string | null;
   notas: string | null;
+  /** Qué contenedor se vacía acá — null en paradas viejas o agregadas sin elegir uno. */
+  contenedor_numero: string | null;
+  /** Estado REAL y en vivo de ese contenedor (contenedores.estado). 'retirado' = todavía lleno, esperando vaciarse. */
+  contenedor_estado: string | null;
 }
 type Parada = ParadaViaje | ParadaVaciado;
 
@@ -256,6 +260,8 @@ interface RutaData extends Ruta {
    * 'disponible' NO comprometidos con ningún viaje activo ajeno a esta ruta.
    * Es la misma lista contra la que se validan los selects de cada parada. */
   stock_deposito: string[];
+  /** Contenedores que este chofer ya tiene retirados (lleno) y sin vaciar todavía — para el selector de "Agregar vaciado" a mano. */
+  contenedores_pendientes_vaciar: string[];
 }
 
 /** Agrupa las paradas (ya ordenadas por el backend) en "visitas": un recambio son dos filas de `viajes` que comparten `orden` y se muestran como una sola. */
@@ -332,6 +338,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   const queryClient = useQueryClient();
   const [agregandoVaciado, setAgregandoVaciado] = useState(false);
   const [vaciadoNotas, setVaciadoNotas] = useState('');
+  const [vaciadoContenedor, setVaciadoContenedor] = useState('');
   const [confirmando, setConfirmando] = useState(false);
   const [reordenando, setReordenando] = useState(false);
   // Índice de la parada sobre cuyo borde superior caería un pedido arrastrado desde la bolsa.
@@ -355,6 +362,14 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   };
 
   const visitas = ruta ? agruparVisitas(ruta.paradas) : [];
+  // Para el selector de "Agregar vaciado" a mano: contenedores que este
+  // chofer tiene retirados y sin vaciar, salvo los que ya tienen una parada
+  // de vaciado propia en esta ruta (no tendría sentido ofrecerlos de nuevo).
+  const contenedoresYaLinkeados = new Set(
+    visitas.filter((v) => v.vaciado?.contenedor_numero).map((v) => v.vaciado!.contenedor_numero!),
+  );
+  const contenedoresPendientesSinLinkear = (ruta?.contenedores_pendientes_vaciar ?? [])
+    .filter((n) => !contenedoresYaLinkeados.has(n));
   const listaParadasRef = useRef<HTMLDivElement>(null);
   useAnimarReacomodo(listaParadasRef, rutaId, visitas.map((v) => `${v.tipoParada}-${v.id}`).join('|'));
   // La ruta siempre está abierta ("ruta viva"): lo único que no se toca es una
@@ -376,14 +391,27 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     e.preventDefault();
     try {
       await api.post(`/api/rutas/${rutaId}/paradas/vaciado`, {
+        contenedor_numero: vaciadoContenedor || undefined,
         notas: vaciadoNotas || undefined,
       });
       setAgregandoVaciado(false);
       setVaciadoNotas('');
+      setVaciadoContenedor('');
       cargar();
       show('success', 'Vaciado agregado a la ruta');
     } catch (err: any) {
       show('error', 'No se pudo agregar el vaciado', err.response?.data?.error);
+    }
+  }
+
+  /** Confirma desde el panel que el contenedor de esta parada ya se vació — mismo efecto que el chofer confirmando "🗑️ Ya vacié" por WhatsApp. */
+  async function confirmarVaciado(paradaId: string, numero: string) {
+    try {
+      await api.post(`/api/rutas/${rutaId}/paradas/vaciado/${paradaId}/confirmar`);
+      cargar();
+      show('success', `Contenedor ${numero} marcado como vacío`);
+    } catch (err: any) {
+      show('error', 'No se pudo confirmar el vaciado', err.response?.data?.error);
     }
   }
 
@@ -739,9 +767,34 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                     {v.vaciado && (
                       <>
                         <div className="stop-top">
-                          <div className="stop-cli">{v.vaciado.ubicacion_nombre ?? 'Depósito / vaciadero'}</div>
+                          <div className="stop-cli">
+                            {v.vaciado.contenedor_numero
+                              ? `Vaciar contenedor ${v.vaciado.contenedor_numero}`
+                              : v.vaciado.ubicacion_nombre ?? 'Depósito / vaciadero'}
+                          </div>
                           <span className="tag vaciado">Vaciado</span>
                         </div>
+                        {v.vaciado.contenedor_numero && (
+                          <div className="sel-row" style={{ alignItems: 'center' }}>
+                            {v.vaciado.contenedor_estado === 'retirado' ? (
+                              <>
+                                <span className="sel-warn">🔴 Lleno, todavía sin vaciar</span>
+                                <button
+                                  type="button"
+                                  className="btn btn-success btn-sm"
+                                  onClick={() => confirmarVaciado(v.vaciado!.id, v.vaciado!.contenedor_numero!)}
+                                  title="Marca el contenedor como vacío — lo mismo que hace el chofer confirmando por WhatsApp"
+                                >
+                                  ✅ Marcar vaciado
+                                </button>
+                              </>
+                            ) : v.vaciado.contenedor_estado === 'entregado' ? (
+                              <span style={{ color: 'var(--text-muted)' }}>⏳ Esperando que el chofer lo retire del cliente</span>
+                            ) : (
+                              <span style={{ color: 'var(--success)', fontWeight: 600 }}>✅ Ya está vacío</span>
+                            )}
+                          </div>
+                        )}
                         {v.vaciado.notas && <div className="stop-sub">{v.vaciado.notas}</div>}
                       </>
                     )}
@@ -872,17 +925,28 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
             {agregandoVaciado ? (
               <form onSubmit={agregarVaciado} className="form-row">
                 <div className="form-group">
+                  <label className="form-label">Contenedor (opcional)</label>
+                  <select
+                    className="form-select"
+                    value={vaciadoContenedor}
+                    onChange={(e) => setVaciadoContenedor(e.target.value)}
+                    autoFocus
+                  >
+                    <option value="">— Sin elegir —</option>
+                    {contenedoresPendientesSinLinkear.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+                <div className="form-group">
                   <label className="form-label">Notas (opcional)</label>
                   <input
                     className="form-input"
-                    placeholder="Ej: contenedor CAFE123"
+                    placeholder="Ej: lo vació el chofer al volver"
                     value={vaciadoNotas}
                     onChange={(e) => setVaciadoNotas(e.target.value)}
-                    autoFocus
                   />
                 </div>
                 <button type="submit" className="btn btn-primary btn-sm">Agregar</button>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setAgregandoVaciado(false); setVaciadoNotas(''); }}>Cancelar</button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setAgregandoVaciado(false); setVaciadoNotas(''); setVaciadoContenedor(''); }}>Cancelar</button>
               </form>
             ) : (
               <button className="btn btn-ghost" onClick={() => setAgregandoVaciado(true)} title="Vaciado manual del contenedor que ya tiene el chofer (no hace falta elegir vaciadero)">

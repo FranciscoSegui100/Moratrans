@@ -387,12 +387,19 @@ CREATE INDEX idx_rutas_fecha_chofer ON rutas(fecha, chofer_id);
 CREATE UNIQUE INDEX ux_rutas_chofer_fecha ON rutas(chofer_id, fecha);
 
 CREATE TABLE ruta_vaciados (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  ruta_id      UUID NOT NULL REFERENCES rutas(id) ON DELETE CASCADE,
-  orden        INT  NOT NULL,
-  ubicacion_id UUID REFERENCES ubicaciones(id) ON DELETE SET NULL, -- vaciadero
-  notas        TEXT,
-  creado_en    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ruta_id           UUID NOT NULL REFERENCES rutas(id) ON DELETE CASCADE,
+  orden             INT  NOT NULL,
+  ubicacion_id      UUID REFERENCES ubicaciones(id) ON DELETE SET NULL, -- vaciadero
+  -- Qué contenedor se vacía acá: el que se acaba de retirar (ver
+  -- insertarVaciadoAutomatico) o el que eligió el operador al agregarlo a
+  -- mano. Permite mostrar su estado real (lleno/vacío) y confirmar el
+  -- vaciado desde el panel con la misma lógica que ya usa el chofer por
+  -- WhatsApp (finalizarRetiro) — antes esta fila era un cartel sin ningún
+  -- link al contenedor real.
+  contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
+  notas             TEXT,
+  creado_en         TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (ruta_id, orden)
 );
 
