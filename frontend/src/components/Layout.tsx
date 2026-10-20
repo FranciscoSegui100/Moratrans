@@ -30,6 +30,8 @@ import { armarSonidoAlerta, playAlertSound } from '../lib/notificationSound';
 import { useTheme } from '../hooks/useTheme';
 
 interface AlertaSocket { tipo: string; mensaje: string; cliente_telefono?: string | null }
+interface ConversacionActualizadaSocket { telefono: string; modo_humano?: boolean }
+interface MensajeChatSocket { telefono: string; texto: string; origen: 'cliente' | 'bot' | 'operador' }
 
 type NavItem = { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] };
 
@@ -85,6 +87,10 @@ export function Layout({ children }: { children: ReactNode }) {
   const [conectado, setConectado] = useState(true);
   const [menuAbierto, setMenuAbierto] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  // Qué teléfonos están en modo asesor ahora mismo, para filtrar el aviso
+  // global de mensaje nuevo de abajo (ver ese efecto). Ref porque solo lo lee
+  // un handler de socket, no hace falta re-renderizar al cambiar.
+  const telefonosEnAsesorRef = useRef<Set<string>>(new Set());
   // Ocultar la barra lateral para que las tablas anchas (Viajes, Contenedores…)
   // usen todo el ancho. Se recuerda por navegador.
   const [sidebarOculta, setSidebarOculta] = useState(() => {
@@ -167,6 +173,41 @@ export function Layout({ children }: { children: ReactNode }) {
       // de 'nueva_alerta' sobre el mismo socket compartido, y off(evento) sin
       // handler borra TODOS los listeners de ese evento, no solo el propio.
       socket.off('nueva_alerta', onNuevaAlerta);
+    };
+  }, []);
+
+  // Aviso global de "el cliente te sigue escribiendo": una vez que una
+  // conversación pasa a modo asesor, los mensajes que manda el cliente
+  // DESPUÉS del primer pedido no generan una alerta nueva (son el mismo
+  // hilo) — antes, si el operador se iba de Conversaciones a otra pantalla,
+  // no había ninguna forma de notar que seguían llegando. Esto escucha
+  // 'nuevo_mensaje_chat' (que ya emite el backend por cada mensaje) en
+  // cualquier pantalla del panel y avisa solo cuando es del cliente y esa
+  // conversación está en modo asesor — si no, sonaría en cada mensaje que
+  // contesta el bot solo, para TODAS las conversaciones.
+  useEffect(() => {
+    api.get<{ telefono: string; modo_humano: boolean }[]>('/api/chat')
+      .then((r) => {
+        telefonosEnAsesorRef.current = new Set(r.data.filter((c) => c.modo_humano).map((c) => c.telefono));
+      })
+      .catch(() => {});
+
+    const socket = conectarSocket();
+    const onConversacionActualizada = (p: ConversacionActualizadaSocket) => {
+      if (p.modo_humano === true) telefonosEnAsesorRef.current.add(p.telefono);
+      else if (p.modo_humano === false) telefonosEnAsesorRef.current.delete(p.telefono);
+    };
+    const onNuevoMensajeChat = (m: MensajeChatSocket) => {
+      if (m.origen !== 'cliente' || !telefonosEnAsesorRef.current.has(m.telefono)) return;
+      setConversacionesCount((c) => c + 1);
+      show('info', '💬 El cliente te sigue escribiendo', `${m.telefono}: ${m.texto}`);
+      playAlertSound();
+    };
+    socket.on('conversacion_actualizada', onConversacionActualizada);
+    socket.on('nuevo_mensaje_chat', onNuevoMensajeChat);
+    return () => {
+      socket.off('conversacion_actualizada', onConversacionActualizada);
+      socket.off('nuevo_mensaje_chat', onNuevoMensajeChat);
     };
   }, []);
 
