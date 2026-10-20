@@ -1,8 +1,10 @@
 import cron from 'node-cron';
 import { query } from '../config/db';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../config/socket';
-import { sendButtons, sendText } from '../modules/whatsapp/graphApi';
-import { proximosDiasHabiles, formatearFechaLarga } from '../services/diasHabiles.service';
+import { sendButtons } from '../modules/whatsapp/graphApi';
+import { formatearFechaLarga, diaHabilAnterior, diaHabilDesde, sumarDias } from '../services/diasHabiles.service';
+import { hoyMendozaISO } from '../services/fechas.service';
+import { NOTA_RETIRO_AUTOMATICO } from '../services/retiroAutomatico.service';
 import { resolverUbicacion } from '../services/ubicaciones.service';
 
 /**
@@ -78,27 +80,35 @@ async function generarAlertas(): Promise<void> {
     console.error('[cron] Error procesando avisos de vencimiento por WhatsApp a clientes:', err.message);
   }
 
-  // 1.c) Contenedores vencidos (vence_en < now() y estado = 'entregado'):
-  // Si el cliente no pidió retiro ni extensión y el plazo finalizó:
-  // - Se crea automáticamente el viaje de retiro para el próximo día hábil (entrando en la Bolsa de Rutas).
-  // - Se resuelve cualquier alerta previa de 'contenedor_por_vencer'.
-  // - Se inserta y emite la alerta 'retiro_solicitado' para notificar al operador en vivo con sonido y toast ("Listo en Rutas").
-  // - Se notifica al cliente por WhatsApp que el retiro quedó programado.
+  // 1.c) Retiro automático el día hábil ANTERIOR al vencimiento:
+  // si el cliente no pidió el retiro (ni lo extendió) y ya llegamos a ese día,
+  // el retiro entra solo a la Bolsa de Rutas con fecha = día del vencimiento
+  // (o el lunes, si vence en fin de semana), así se puede planificar con un
+  // día de anticipación. Vence un lunes -> se agrega el viernes.
+  // - Si ya está vencido sin retiro (ej. el server estuvo caído), se crea
+  //   igual para el próximo día hábil.
+  // - Se resuelve la alerta 'contenedor_por_vencer' y se avisa al operador
+  //   con 'retiro_solicitado'. Al cliente NO se le manda nada (ya recibe el
+  //   recordatorio de 24-48hs con los botones de extender / pedir retiro).
+  // - Si después el cliente extiende, ese retiro se cancela solo (ver
+  //   cancelarRetiroAutomatico) y vuelve a crearse acá para la nueva fecha.
   try {
-    const vencidosSinRetiro = await query<{
+    const candidatos = await query<{
       numero: string;
-      vence_en: string;
+      vence_fecha: string;
       cliente_telefono: string | null;
-      cliente_nombre: string | null;
       zona: string | null;
       destino_direccion: string | null;
       destino_lat: number | null;
       destino_lng: number | null;
     }>(
-      `SELECT c.numero, to_char(c.vence_en, 'DD/MM HH24:MI') AS vence_en,
+      // vence_fecha en hora Mendoza (UTC-3, sin horario de verano): mismo
+      // criterio que hoyMendozaISO, sin depender de la zona del server ni de
+      // la de Postgres.
+      `SELECT c.numero,
+              to_char((c.vence_en - interval '3 hours') AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS vence_fecha,
               ultima.cliente_telefono, ultima.zona, ultima.destino_direccion,
-              ultima.destino_lat, ultima.destino_lng,
-              cl.nombre AS cliente_nombre
+              ultima.destino_lat, ultima.destino_lng
          FROM contenedores c
          LEFT JOIN LATERAL (
            SELECT v.cliente_telefono, v.zona, v.destino_direccion, v.destino_lat, v.destino_lng
@@ -106,10 +116,11 @@ async function generarAlertas(): Promise<void> {
             WHERE v.contenedor_numero = c.numero AND v.tipo = 'entrega' AND v.estado <> 'cancelado'
             ORDER BY v.creado_en DESC LIMIT 1
          ) ultima ON true
-         LEFT JOIN clientes cl ON cl.telefono = ultima.cliente_telefono
         WHERE c.estado = 'entregado'
           AND c.vence_en IS NOT NULL
-          AND c.vence_en < now()
+          -- Margen de sobra para cubrir el fin de semana (vence lunes -> viernes);
+          -- el corte fino por día hábil se hace abajo, en TS.
+          AND c.vence_en < now() + interval '5 days'
           -- Evita duplicar si ya existe un retiro activo (programado o en curso):
           AND NOT EXISTS (
             SELECT 1 FROM viajes v2
@@ -119,14 +130,19 @@ async function generarAlertas(): Promise<void> {
           )`,
     );
 
-    if (vencidosSinRetiro.length > 0) {
-      const dias = proximosDiasHabiles(1);
-      const fechaRetiro = dias[0]?.fecha ?? new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-      const fechaRetiroEtiqueta = dias[0]?.etiqueta ?? fechaRetiro;
+    const hoy = hoyMendozaISO();
+    const aCrear = candidatos
+      .filter((cv) => hoy >= diaHabilAnterior(cv.vence_fecha))
+      .map((cv) => ({
+        ...cv,
+        fechaRetiro: cv.vence_fecha >= hoy ? diaHabilDesde(cv.vence_fecha) : diaHabilDesde(sumarDias(hoy, 1)),
+      }));
+
+    if (aCrear.length > 0) {
       const vaciadero = await resolverUbicacion('vaciadero');
 
-      for (const cv of vencidosSinRetiro) {
-        // 1) Crear el viaje de retiro en la tabla viajes (ruta_id = null -> entra directo a la Bolsa de Rutas)
+      for (const cv of aCrear) {
+        // 1) Crear el viaje de retiro (ruta_id = null -> entra directo a la Bolsa de Rutas)
         await query(
           `INSERT INTO viajes (
              tipo, fecha, contenedor_numero, cliente_telefono,
@@ -135,10 +151,10 @@ async function generarAlertas(): Promise<void> {
            ) VALUES (
              'retiro', $1, $2, $3,
              $4, $5, $6, $7,
-             'Retiro automático por vencimiento de plazo', $8, $9
+             $10, $8, $9
            )`,
           [
-            fechaRetiro,
+            cv.fechaRetiro,
             cv.numero,
             cv.cliente_telefono,
             cv.zona,
@@ -147,6 +163,7 @@ async function generarAlertas(): Promise<void> {
             cv.destino_lng,
             vaciadero?.id ?? null,
             vaciadero?.direccion ?? null,
+            NOTA_RETIRO_AUTOMATICO,
           ],
         );
 
@@ -157,8 +174,11 @@ async function generarAlertas(): Promise<void> {
         );
         emitAlertaActualizada({ tipo: 'contenedor_por_vencer', referencia_id: cv.numero, estado: 'resuelta' });
 
-        // 3) Insertar alerta 'retiro_solicitado' para notificar al operador en vivo
-        const mensajeAlerta = `Contenedor ${cv.numero} YA VENCIÓ — Ticket de retiro creado para el ${fechaRetiroEtiqueta} (Listo en Rutas)`;
+        // 3) Alerta 'retiro_solicitado' para el operador en vivo
+        const yaVencido = cv.vence_fecha < hoy;
+        const mensajeAlerta = yaVencido
+          ? `Contenedor ${cv.numero} YA VENCIÓ — retiro agregado a la bolsa para el ${formatearFechaLarga(cv.fechaRetiro)} (Listo en Rutas)`
+          : `Contenedor ${cv.numero} vence el ${formatearFechaLarga(cv.vence_fecha)} — retiro agregado a la bolsa para el ${formatearFechaLarga(cv.fechaRetiro)} (Listo en Rutas)`;
         const [alertaRetiro] = await query<{ id: string; tipo: string; referencia_id: string; mensaje: string; creado_en: string }>(
           `INSERT INTO alertas (tipo, referencia_id, mensaje)
            VALUES ('retiro_solicitado', $1, $2)
@@ -167,34 +187,15 @@ async function generarAlertas(): Promise<void> {
            RETURNING id, tipo, referencia_id, mensaje, creado_en`,
           [cv.numero, mensajeAlerta],
         );
-
         if (alertaRetiro) {
           emitAlerta({ ...alertaRetiro, cliente_telefono: cv.cliente_telefono });
         }
-
-        // 4) Aviso de cortesía al cliente por WhatsApp
-        if (cv.cliente_telefono) {
-          const nombre = cv.cliente_nombre && cv.cliente_nombre !== 'Sin nombre' ? ` ${cv.cliente_nombre}` : '';
-          const cuerpoWa =
-            `Hola${nombre} 👋 Te informamos que el plazo de alquiler del contenedor *${cv.numero}* ha finalizado.\n\n` +
-            `Programamos su retiro para el *${formatearFechaLarga(fechaRetiro)}*.\n` +
-            `Si aún lo estás utilizando o necesitás coordinar una extensión de días, respondé este mensaje o escribí *asesor*.`;
-
-          sendText(cv.cliente_telefono, cuerpoWa).catch((e) =>
-            console.error(`[cron] Error enviando aviso de retiro programado a ${cv.cliente_telefono}:`, e.message),
-          );
-
-          await query(
-            `INSERT INTO mensajes_chat (telefono, origen, texto) VALUES ($1, 'bot', $2)`,
-            [cv.cliente_telefono, cuerpoWa],
-          ).catch(() => { });
-        }
       }
 
-      // 5) Notificar actualización de viajes y contenedores a las pantallas del panel
+      // 4) Notificar actualización de viajes y contenedores a las pantallas del panel
       emitRecursoActualizado('viajes');
       emitRecursoActualizado('contenedores');
-      console.log(`[cron] ${vencidosSinRetiro.length} retiros automáticos creados por vencimiento`);
+      console.log(`[cron] ${aCrear.length} retiros automáticos agregados a la bolsa por vencimiento`);
     }
   } catch (err: any) {
     console.error('[cron] Error procesando retiros automáticos por vencimiento:', err.message);

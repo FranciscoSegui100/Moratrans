@@ -78,6 +78,14 @@ interface VisitaPendiente {
   entrega?: ViajePendiente;
   retiro?: ViajePendiente;
 }
+type TipoVisita = 'entrega' | 'retiro' | 'recambio';
+const ETIQUETA_TIPO_VISITA: Record<TipoVisita, string> = { entrega: 'Entregas', retiro: 'Retiros', recambio: 'Recambios' };
+/** Recambio = la visita junta un retiro y una entrega (mismo grupo_id). */
+function tipoVisita(v: VisitaPendiente): TipoVisita {
+  if (v.entrega && v.retiro) return 'recambio';
+  return v.entrega ? 'entrega' : 'retiro';
+}
+
 function agruparPendientes(viajes: ViajePendiente[]): VisitaPendiente[] {
   const porGrupo = new Map<string, VisitaPendiente>();
   const sueltas: VisitaPendiente[] = [];
@@ -1121,6 +1129,9 @@ export function Rutas() {
   // La bolsa también es zona de drop: soltar ahí una parada arrastrada desde
   // el detalle de una ruta la saca de esa ruta (vuelve a pedidos sin rutear).
   const [dropBolsa, setDropBolsa] = useState(false);
+  // Filtro de la bolsa por tipo de pedido ('' = todos). Solo cambia lo que se
+  // ve en la bolsa — el auto-armado sigue repartiendo todo lo del día.
+  const [filtroTipoBolsa, setFiltroTipoBolsa] = useState<'' | TipoVisita>('');
   // Pedido abierto en la ficha de detalle (al tocar una tarjeta de la bolsa).
   const [pedidoDetalle, setPedidoDetalle] = useState<VisitaPendiente | null>(null);
 
@@ -1187,7 +1198,10 @@ export function Rutas() {
   // "Sin asignar" mezclaba el backlog TOTAL (toda fecha) con lo específico de
   // este día — al cambiar de fecha el número no se movía y confundía backlog
   // viejo con lo de hoy. Se muestran separados.
-  const sinAsignarDelDia = visitasPendientes.filter((v) => v.fecha === fecha).length;
+  const bolsaDelDia = visitasPendientes.filter((v) => v.fecha === fecha);
+  const sinAsignarDelDia = bolsaDelDia.length;
+  const cantidadPorTipo = (t: TipoVisita) => bolsaDelDia.filter((v) => tipoVisita(v) === t).length;
+  const visiblesEnBolsa = filtroTipoBolsa ? bolsaDelDia.filter((v) => tipoVisita(v) === filtroTipoBolsa).length : sinAsignarDelDia;
   const statsRutas = statsPorRuta(viajesDelDia);
   const visitasDelDia = agruparPendientes(viajesDelDia).length;
   const ruteados = agruparPendientes(viajesDelDia.filter((v) => v.ruta_id)).length;
@@ -1203,8 +1217,8 @@ export function Rutas() {
   // fecha a propósito, para no perder pedidos viejos de vista, así que hay
   // que ordenar para no perderlos.
   const bolsaAgrupada = (() => {
-    const ordenadas = [...visitasPendientes]
-      .filter((v) => v.fecha === fecha)
+    const ordenadas = [...bolsaDelDia]
+      .filter((v) => !filtroTipoBolsa || tipoVisita(v) === filtroTipoBolsa)
       .sort((a, b) => a.fecha.localeCompare(b.fecha));
     const porFecha = new Map<string, Map<string, VisitaPendiente[]>>();
     for (const v of ordenadas) {
@@ -1832,8 +1846,36 @@ export function Rutas() {
             Mostrando solo los pedidos de este día. Tocá un pedido para ver el detalle. Arrastralo sobre un chofer (abajo) para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
           </div>
 
+          {sinAsignarDelDia > 0 && (
+            <div className="btn-group" style={{ marginBottom: '12px', flexWrap: 'wrap' }} role="group" aria-label="Filtrar pedidos por tipo">
+              <button
+                type="button"
+                className={`btn btn-sm ${filtroTipoBolsa === '' ? 'btn-primary' : 'btn-ghost'}`}
+                aria-pressed={filtroTipoBolsa === ''}
+                onClick={() => setFiltroTipoBolsa('')}
+              >
+                Todos ({sinAsignarDelDia})
+              </button>
+              {(['entrega', 'retiro', 'recambio'] as TipoVisita[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`btn btn-sm ${filtroTipoBolsa === t ? 'btn-primary' : 'btn-ghost'}`}
+                  aria-pressed={filtroTipoBolsa === t}
+                  onClick={() => setFiltroTipoBolsa(t)}
+                >
+                  {ETIQUETA_TIPO_VISITA[t]} ({cantidadPorTipo(t)})
+                </button>
+              ))}
+            </div>
+          )}
+
           {sinAsignarDelDia === 0 ? (
             <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes para este día.</div>
+          ) : visiblesEnBolsa === 0 ? (
+            <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>
+              No hay {ETIQUETA_TIPO_VISITA[filtroTipoBolsa as TipoVisita].toLowerCase()} sin rutear para este día.
+            </div>
           ) : (
             // Se ven ~2 filas de tarjetas; si hay más, scroll vertical acá adentro
             // en vez de alargar toda la página.

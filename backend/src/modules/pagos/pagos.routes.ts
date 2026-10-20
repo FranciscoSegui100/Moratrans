@@ -20,6 +20,7 @@ import { formatearFechaCorta, formatearFechaLarga, medianocheArgentina, sumarDia
 import { hoyMendozaISO } from '../../services/fechas.service';
 import { saldoCuentaCorriente } from '../reportes/reportes.service';
 import { DIAS_ALQUILER_ANTES_RETIRO } from '../../config/bot.config';
+import { cancelarRetiroAutomatico } from '../../services/retiroAutomatico.service';
 
 export const pagosRouter = Router();
 pagosRouter.use(requireAuth);
@@ -243,6 +244,9 @@ async function validarAlargue(req: Request, res: Response, pagoId: string): Prom
       RETURNING vence_en`,
     [pago.contenedor_numero, DIAS_ALARGUE],
   );
+  // Alargue aprobado: el retiro automático del vencimiento viejo (si ya
+  // estaba en la bolsa) se cancela; el cron lo recrea para la fecha nueva.
+  await cancelarRetiroAutomatico(pago.contenedor_numero);
 
   await query(`UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'alargue_solicitado' AND referencia_id = $1`, [pagoId]);
   emitAlertaActualizada({ tipo: 'alargue_solicitado', referencia_id: pagoId, estado: 'resuelta' });

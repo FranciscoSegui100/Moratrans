@@ -11,6 +11,7 @@ import { manejarRespuestaInvalida } from '../estados';
 import { escalarAAsesor } from './asesor.flow';
 import { DIAS_ALARGUE, PORCENTAJE_ALARGUE } from '../../../config/bot.config';
 import { formatearFechaCorta } from '../../../services/diasHabiles.service';
+import { cancelarRetiroAutomatico } from '../../../services/retiroAutomatico.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -272,6 +273,9 @@ async function registrarAlargueCC(to: string, sesion: Sesion): Promise<void> {
       RETURNING vence_en`,
     [numero, DIAS_ALARGUE],
   );
+  // Si el retiro ya había entrado solo a la bolsa (día antes del vencimiento
+  // viejo), se cancela: el cron lo vuelve a crear para la fecha nueva.
+  await cancelarRetiroAutomatico(numero);
 
   const [pago] = await query<{ id: string }>(
     `INSERT INTO pagos (cliente_telefono, tipo, contenedor_numero, monto, estado, es_cuenta_corriente)

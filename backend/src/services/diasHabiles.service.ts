@@ -114,3 +114,23 @@ export function sumarDias(fechaISO: string, dias: number): string {
   const dd = String(fecha.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
 }
+
+/** ¿Es lunes a viernes? `fechaISO` es YYYY-MM-DD (se lee en UTC para no depender de la zona del server). */
+export function esDiaHabil(fechaISO: string): boolean {
+  const dia = new Date(`${fechaISO.slice(0, 10)}T00:00:00Z`).getUTCDay();
+  return dia !== 0 && dia !== 6;
+}
+
+/** Esa misma fecha si es hábil; si cae sábado/domingo, el lunes siguiente. */
+export function diaHabilDesde(fechaISO: string): string {
+  let f = fechaISO.slice(0, 10);
+  while (!esDiaHabil(f)) f = sumarDias(f, 1);
+  return f;
+}
+
+/** Último día hábil ANTERIOR a `fechaISO` (estricto): para un lunes, el viernes. */
+export function diaHabilAnterior(fechaISO: string): string {
+  let f = sumarDias(fechaISO.slice(0, 10), -1);
+  while (!esDiaHabil(f)) f = sumarDias(f, -1);
+  return f;
+}
