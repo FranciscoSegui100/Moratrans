@@ -954,8 +954,12 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .btn svg { width: 14px; height: 14px; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn:active:not(:disabled) { transform: scale(0.93); }
+/* Un .btn que es <a> (Link) hereda el a:hover global (color + subrayado) salvo que algo
+   más específico lo pise. Cada variante ya pisa el color en su :hover; esto cubre el
+   subrayado para todas sin repetirlo en cada una. */
+.btn:hover { text-decoration: none; }
 .btn-primary  { background: var(--accent); color: #fff; border-color: var(--accent); }
-.btn-primary:hover:not(:disabled) { background: var(--accent-dark); border-color: var(--accent-dark); box-shadow: 0 10px 22px -6px var(--accent-tint-strong); transform: translateY(-3px) scale(1.03); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-dark); color: #fff; border-color: var(--accent-dark); box-shadow: 0 10px 22px -6px var(--accent-tint-strong); transform: translateY(-3px) scale(1.03); }
 .btn-success  { background: var(--success-bg); color: var(--success); border-color: rgba(77,124,98,0.24); }
 .btn-success:hover:not(:disabled) { background: var(--success); color: white; border-color: var(--success); transform: translateY(-3px) scale(1.03); box-shadow: 0 10px 22px -8px rgba(77,124,98,0.45); }
 .btn-danger   { background: var(--danger-bg); color: var(--danger); border-color: rgba(179,69,61,0.24); }
