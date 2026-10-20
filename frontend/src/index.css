@@ -1863,6 +1863,7 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .stat .l { font-size: 0.74rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
 .stat .n { font-size: 1.7rem; font-weight: 700; margin-top: 4px; letter-spacing: -0.02em; font-family: var(--font-mono); }
 .stat .n.warn { color: var(--warning); }
+.stat .n.danger { color: var(--danger); }
 
 .routes-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px; margin-bottom: 14px; }
 .route-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 15px 16px; cursor: pointer; transition: border-color var(--transition), box-shadow var(--transition-slow), transform 260ms var(--ease-spring); text-align: left; width: 100%; }
@@ -2018,8 +2019,10 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   box-shadow: 0 0 0 1px var(--accent-tint-strong);
 }
 
-/* Badge de ruta con paradas todavía sin confirmar. */
-.badge.sin_confirmar { background: var(--warning-bg); color: var(--warning); }
+/* Badge de ruta con paradas todavía sin confirmar: color de alerta (no el
+   mismo ámbar que "En curso", que es un estado normal y esperado) — mientras
+   no se confirme, el chofer nunca se entera de que tiene ese viaje. */
+.badge.sin_confirmar { background: var(--danger-bg); color: var(--danger); font-weight: 700; }
 
 /* Resalta el aviso y el botón de "Confirmar" cuando hay cambios sin confirmar. */
 .confirmar-pendiente { animation: pulse-confirmar 1.8s ease-in-out infinite; }

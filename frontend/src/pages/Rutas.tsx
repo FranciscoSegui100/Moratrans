@@ -646,7 +646,10 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
           <div className="t">{ruta.chofer_nombre ?? 'Sin chofer'}</div>
           <div className="s">Patente {ruta.patente ?? '—'} · {formatearFecha(ruta.fecha)}</div>
         </div>
-        <span className={`badge ${estado.clase}`}>{estado.texto}</span>
+        <span className={`badge ${estado.clase}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          {estado.clase === 'sin_confirmar' && <AlertTriangle size={12} strokeWidth={2.5} />}
+          {estado.texto}
+        </span>
       </div>
 
       {/* Guía de pasos: elegir chofer siempre está hecho acá (ya lo elegiste tocando su tarjeta). */}
@@ -1168,6 +1171,10 @@ export function Rutas() {
   const statsRutas = statsPorRuta(viajesDelDia);
   const visitasDelDia = agruparPendientes(viajesDelDia).length;
   const ruteados = agruparPendientes(viajesDelDia.filter((v) => v.ruta_id)).length;
+  // Rutas con paradas agregadas (a mano o por auto-armado) que todavía no se
+  // confirmaron: mientras sigan así, el chofer nunca se entera de ese viaje
+  // — este número es lo que faltaría tocar "Confirmar ruta" para resolver.
+  const rutasSinConfirmar = rutas.filter((r) => badgeRuta(statsRutas.get(r.id) ?? { paradas: 0, sinConfirmar: 0, finalizadas: 0 }).clase === 'sin_confirmar').length;
 
   // Agrupamiento en dos niveles de los pedidos sin rutear: primero por día
   // puntual (una sección por cada fecha distinta, no por balde "Atrasados/
@@ -1745,6 +1752,10 @@ export function Rutas() {
           <div className="l">Sin asignar (hoy / total)</div>
           <div className={`n${sinAsignarDelDia ? ' warn' : ''}`}>{sinAsignarDelDia} <span style={{ fontSize: '0.5em', fontWeight: 500, color: 'var(--text-muted)' }}>/ {visitasPendientes.length}</span></div>
         </div>
+        <div className="stat" title="Rutas con paradas agregadas que todavía no se confirmaron — hasta que se confirmen, el chofer no se entera de ese viaje">
+          <div className="l">Rutas sin confirmar</div>
+          <div className={`n${rutasSinConfirmar ? ' danger' : ''}`}>{rutasSinConfirmar}</div>
+        </div>
         <div className="stat"><div className="l">Choferes activos</div><div className="n">{choferes.length}</div></div>
       </div>
 
@@ -1967,7 +1978,10 @@ export function Rutas() {
                     <div className="rc-head">
                       <div className="rc-av">{iniciales(chofer.nombre)}</div>
                       <div><div className="rc-nm">{chofer.nombre}</div><div className="rc-pat">{ruta.patente ?? '—'}</div></div>
-                      <span className={`badge ${estado.clase}`}>{estado.texto}</span>
+                      <span className={`badge ${estado.clase}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        {estado.clase === 'sin_confirmar' && <AlertTriangle size={12} strokeWidth={2.5} />}
+                        {estado.texto}
+                      </span>
                     </div>
                     <div className="rc-lines">
                       <div className="rc-line"><span>Paradas</span><span className="v">{stats.paradas}</span></div>
