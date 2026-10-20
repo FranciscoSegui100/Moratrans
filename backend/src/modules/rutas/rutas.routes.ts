@@ -8,7 +8,7 @@ import { reservarParaEntrega, liberarReservaEntrega } from '../../services/conte
 import { finalizarRetiro } from '../../services/retiro.service';
 import { simularDisponibilidad, ParadaSimulada, CapacidadCamion, CAPACIDAD_CAMION_DEFAULT } from './disponibilidad.service';
 import { avisarChoferViaje, avisarChoferRecambio } from '../viajes/viajes.routes';
-import { notificarClienteChoferEnCamino } from '../whatsapp/notificacionesCliente';
+import { notificarClientePedidoConfirmado } from '../whatsapp/notificacionesCliente';
 import { motivoErrorWa, sendText } from '../whatsapp/graphApi';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitRecursoActualizado } from '../../config/socket';
@@ -1102,7 +1102,7 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
         confirmadasAhora.push(v);
       }
 
-      return { confirmadasAhora, choferId: ruta!.chofer_id, pendientes };
+      return { confirmadasAhora, choferId: ruta!.chofer_id, fecha: ruta!.fecha, pendientes };
     });
     emitRecursoActualizado('viajes');
     emitRecursoActualizado('contenedores');
@@ -1152,22 +1152,18 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
         );
       });
 
-      // Notificación automática al cliente de la primera parada: chofer en camino
+      // Notificación automática al cliente de la primera parada: pedido
+      // confirmado (NO "chofer en camino" — confirmar la ruta no significa
+      // que el chofer ya salió, puede ser con días de anticipación; ver
+      // notificarClientePedidoConfirmado).
       const viajeCliente = entrega ?? retiro;
       if (viajeCliente?.cliente_telefono) {
-        query<{ nombre: string; patente: string | null }>(
-          'SELECT nombre, patente FROM choferes WHERE id = $1',
-          [resultado.choferId],
-        ).then(([choferInfo]) => {
-          return notificarClienteChoferEnCamino({
-            clienteTelefono: viajeCliente.cliente_telefono,
-            tipo: viajeCliente.tipo,
-            destinoDireccion: viajeCliente.destino_direccion,
-            choferNombre: choferInfo?.nombre ?? null,
-            patente: choferInfo?.patente ?? null,
-            contenedorNumero: viajeCliente.contenedor_numero,
-          });
-        }).catch((e) => console.error('Error notificando chofer en camino al cliente (primera parada):', e));
+        notificarClientePedidoConfirmado({
+          clienteTelefono: viajeCliente.cliente_telefono,
+          tipo: viajeCliente.tipo,
+          destinoDireccion: viajeCliente.destino_direccion,
+          fecha: resultado.fecha,
+        }).catch((e) => console.error('Error notificando pedido confirmado al cliente (primera parada):', e));
       }
     }
 

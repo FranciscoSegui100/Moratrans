@@ -12,7 +12,7 @@ import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { datosBancarios } from '../whatsapp/flows/pago.flow';
 import { setSesion } from '../whatsapp/session.store';
 import { avisarChoferRecambio } from '../viajes/viajes.routes';
-import { avisoEfectivoChofer } from '../whatsapp/avisoEfectivo';
+import { avisoPagoChofer } from '../whatsapp/avisoEfectivo';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
@@ -170,7 +170,7 @@ async function avisarChoferAsignacion(
       `📞 Teléfono: ${info?.cliente_telefono ?? '—'}\n` +
       `📍 Destino:\n${destino}\n\n` +
       'Cuando la completes, tocá el botón de abajo.' +
-      avisoEfectivoChofer(info?.medio_pago, info?.precio),
+      avisoPagoChofer(info?.medio_pago, info?.precio),
     [{ id: `cont:entregado:${contenedor}`, title: '📦 Ya entregué' }],
   );
 }
@@ -195,7 +195,7 @@ async function avisarChoferReservaFutura(
     chofer.telefono,
     `📦 Te quedó reservada una entrega del contenedor *${contenedor}*, pero todavía está con otro cliente.\n` +
       `Prevista para el ${formatearFechaCorta(fechaEntrega)} — te avisamos apenas esté listo para salir.` +
-      avisoEfectivoChofer(medioPago, precio),
+      avisoPagoChofer(medioPago, precio),
   );
 }
 

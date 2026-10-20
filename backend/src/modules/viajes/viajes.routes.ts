@@ -9,7 +9,7 @@ import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { reservarParaEntrega, liberarReservaEntrega } from '../../services/contenedorReserva.service';
 import { emitRecursoActualizado } from '../../config/socket';
-import { avisoEfectivoChofer } from '../whatsapp/avisoEfectivo';
+import { avisoPagoChofer } from '../whatsapp/avisoEfectivo';
 import { formatearTelefonoLegible } from '../../services/telefono.service';
 import { notificarClienteChoferEnCamino } from '../whatsapp/notificacionesCliente';
 
@@ -171,7 +171,7 @@ function formatearHora(horaEstimada: string | null): string | null {
 /**
  * Medio de pago y monto del pago asociado a un viaje (viajes.pago_id, ver
  * schema.sql), para poder avisarle al chofer si cobra en efectivo contra
- * entrega, y cuánto (ver avisoEfectivoChofer). Se resuelve acá, a partir del
+ * entrega, y cuánto (ver avisoPagoChofer). Se resuelve acá, a partir del
  * pago_id que YA viaja en la fila del viaje, en vez de que cada llamador
  * tenga que acordarse de pasarlo — antes cada aviso lo hacía "a mano" y la
  * mayoría de los call sites (asignar desde el panel, reasignar chofer,
@@ -241,7 +241,7 @@ export async function avisarChoferViaje(
     (hora ? `Horario estimado: *${hora} hs*\n` : '') +
     `📍 Dirección:\n${destino}\n\n` +
     (boton ? 'Cuando la completes, tocá el botón de abajo.' : `Cuando la completes, escribime *${tipo === 'entrega' ? 'entregué' : 'retiré'}*.`) +
-    avisoEfectivoChofer(medioPago, monto);
+    avisoPagoChofer(medioPago, monto);
 
   await conReintento(async () => {
     if (boton) await sendButtons(chofer.telefono!, cuerpo, [boton]);
@@ -323,7 +323,7 @@ export async function avisarChoferRecambio(
     (hora ? `Horario estimado: *${hora} hs*\n` : '') +
     `📍 Dirección:\n${destino}\n\n` +
     (boton ? 'Cuando lo completes, tocá el botón de abajo.' : 'Cuando lo completes, escribime *retiré*.') +
-    avisoEfectivoChofer(medioPago, monto);
+    avisoPagoChofer(medioPago, monto);
 
   await conReintento(async () => {
     if (boton) await sendButtons(chofer.telefono!, cuerpo, [boton]);
