@@ -4,6 +4,7 @@ import { CreditCard, Check, X, RotateCcw, CircleCheck } from 'lucide-react';
 import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
 import { RoleGate } from '../components/RoleGate';
+import { SkeletonPagos } from '../components/Skeleton';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
 import { useToast } from '../components/Toast';
 import { formatearFecha, formatearFechaHora } from '../lib/fechas';
@@ -59,7 +60,10 @@ export function Pagos() {
   // (el cliente no lo declara, ver pago.flow.ts) — uno por pago pendiente.
   const [montosAbono, setMontosAbono] = useState<Record<string, string>>({});
 
-  const { data: pagos = [] } = useQuery({
+  // isLoading (no isFetching): la silueta sale solo cuando todavía no hay
+  // nada. Sin esto, `pagos` arranca en [] y la pantalla mostraba "Todo al
+  // día" un instante antes de listar los pagos que SÍ están pendientes.
+  const { data: pagos = [], isLoading } = useQuery({
     queryKey: ['pagos', 'pendiente'],
     queryFn: () => api.get<Pago[]>('/api/pagos?estado=pendiente').then((r) => r.data),
   });
@@ -154,7 +158,9 @@ export function Pagos() {
         <p>Revisá los comprobantes y aprobá o rechazá cada pago pendiente</p>
       </div>
 
-      {pagos.length === 0 ? (
+      {isLoading ? (
+        <SkeletonPagos filas={3} />
+      ) : pagos.length === 0 ? (
         <div className="card">
           <div className="empty-state">
             <div className="empty-state-icon"><CircleCheck strokeWidth={1.5} /></div>

@@ -74,6 +74,10 @@
   --login-linea:  #ffffff;
   --login-ruta:   #7cc4ff;
   --login-camion: #8fcfff;
+
+  /* ── Siluetas de carga (Skeleton.tsx) ── */
+  --skeleton-base:   #f3ede1;
+  --skeleton-brillo: #fdfbf6;
 }
 
 /* ===================================================
@@ -123,6 +127,9 @@
     --curvas-linea:    #ffffff;
     --curvas-linea-op: 0.08;
     --curvas-luz:      #60a5fa;
+
+    --skeleton-base:   #322b23;
+    --skeleton-brillo: #40372c;
   }
 }
 
@@ -164,6 +171,9 @@
   --curvas-linea:    #ffffff;
   --curvas-linea-op: 0.08;
   --curvas-luz:      #60a5fa;
+
+  --skeleton-base:   #322b23;
+  --skeleton-brillo: #40372c;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -2203,4 +2213,47 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
    izquierda: mejor que no aparezca y queden solo las curvas. */
 @supports not (offset-path: path("M0 0")) {
   .fondo-ruta .camion { display: none; }
+}
+
+/* ===================================================
+   SILUETAS DE CARGA (Skeleton.tsx)
+   Se ven solo cuando todavía no llegó nada. El brillo
+   anima únicamente transform, y va envuelto en
+   prefers-reduced-motion: no-preference — sin él queda
+   la silueta quieta, que ya cumple su función.
+   =================================================== */
+.skeleton {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  background: var(--skeleton-base);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+.skeleton-avatar { width: 38px; height: 38px; border-radius: 50%; }
+.skeleton-pill { border-radius: var(--radius-pill); }
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  /* El brillo arranca fuera de la barra: sin animación (reduced motion) no
+     se ve, y la silueta queda como un bloque gris liso. */
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--skeleton-brillo), transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton::after { animation: shimmer 1.4s linear infinite; }
+}
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+
+/* La tarjeta fantasma no reacciona al mouse: todavía no hay nada que tocar. */
+.skeleton-card { pointer-events: none; }
+.skeleton-card:hover {
+  border-color: var(--border);
+  transform: none;
+  box-shadow: var(--shadow-sm);
 }
