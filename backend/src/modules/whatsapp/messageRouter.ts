@@ -7,7 +7,7 @@ import { MENSAJE_BOT_DESACTIVADO } from '../../config/bot.config';
 import { handleCotizacion, handlePedirNuevoContenedor } from './flows/cotizacion.flow';
 import { handlePago, pedidosAbiertos, opcionesMetodoPago, ofrecerPedidoPendiente, avisarAdjuntoSinContexto } from './flows/pago.flow';
 import { handleChofer } from './flows/chofer.flow';
-import { handleAsesor, escalarAAsesor, resolverAsesor } from './flows/asesor.flow';
+import { handleAsesor, escalarAAsesor } from './flows/asesor.flow';
 import { handleRecambio } from './flows/recambio.flow';
 import { handlePedirRetiro } from './flows/pedirRetiro.flow';
 import { handlePedirEntrega } from './flows/pedirEntrega.flow';
@@ -210,28 +210,21 @@ export async function enrutar(m: MensajeEntrante): Promise<void> {
     return sendText(m.from, MENSAJE_BOT_DESACTIVADO);
   }
 
-  // 2) Comandos globales: funcionan siempre, sin importar en qué flujo esté.
+  // 2.b) Modo humano: un asesor tiene esta conversación. El bot se calla (no
+  // reprocesa "menú" ni "asesor" ni sigue flujos) y solo vuelve cuando el
+  // operador resuelve la alerta o libera la charla desde el panel — el
+  // cliente no puede reactivarlo escribiendo "menú".
+  const enModoHumano = !!sesion.contexto?.modoHumano;
+
+  // 2) Comandos globales: funcionan siempre, sin importar en qué flujo esté
+  // (salvo en modo humano, ver arriba).
   const t = (m.texto ?? '').toLowerCase();
-  if (m.tipo === 'text' || m.tipo === 'interactive_list' || m.tipo === 'interactive_button') {
+  if (!enModoHumano && (m.tipo === 'text' || m.tipo === 'interactive_list' || m.tipo === 'interactive_button')) {
     if (COMANDOS_MENU.includes(t) || m.seleccionId === 'menu_principal') {
-      // Si estaba en modo humano (pidió asesor y el bot se había callado),
-      // "menú" tiene que resolver la alerta de verdad, no solo limpiar la
-      // sesión — si no, la alerta vieja queda abierta para siempre y la
-      // próxima vez que este cliente pida asesor, el ON CONFLICT evita una
-      // alerta nueva aunque el bot le confirme "ya avisamos a un asesor".
-      if (sesion.contexto?.modoHumano) {
-        await resolverAsesor(m.from);
-      } else {
-        await clearSesion(m.from);
-      }
+      await clearSesion(m.from);
       return enviarMenuPrincipal(m.from);
     }
   }
-
-  // 2.b) Modo humano: un operador tomó esta conversación a mano desde el panel.
-  // El bot se calla (no reprocesa "asesor" ni sigue flujos) hasta que el cliente
-  // escriba "menú" (arriba) o el operador marque la alerta como resuelta.
-  const enModoHumano = !!sesion.contexto?.modoHumano;
 
   // 2.a) Botón "Hablar con asesor" ofrecido tras 2 respuestas inválidas
   // seguidas (ver estados.ts): escala directo, sin el conteo de 3 pedidos

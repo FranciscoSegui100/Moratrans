@@ -96,7 +96,7 @@ export function Viajes() {
   const fechaUrl = searchParams.get('fecha');
 
   const [asignando, setAsignando] = useState<string | null>(null);
-  const [asignarForm, setAsignarForm] = useState({ contenedor_numero: '', chofer_id: '' });
+  const [asignarContenedorNumero, setAsignarContenedorNumero] = useState('');
   const [pestana, setPestana] = useState<PestanaViajes>('activos');
   const [viajeComprobantes, setViajeComprobantes] = useState<Viaje | null>(null);
   const [remitoImprimir, setRemitoImprimir] = useState<Viaje | null>(null);
@@ -108,9 +108,6 @@ export function Viajes() {
   const [filtroTipo, setFiltroTipo] = useState<'' | 'entrega' | 'retiro' | 'recambio'>('');
   const [filtroChofer, setFiltroChofer] = useState('');
   const [filtroRuteo, setFiltroRuteo] = useState<'' | EstadoRuteo>('');
-  const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set());
-  const [choferMasivo, setChoferMasivo] = useState('');
-  const [reasignandoMasivo, setReasignandoMasivo] = useState(false);
 
   useEffect(() => {
     if (fechaUrl) {
@@ -169,74 +166,22 @@ export function Viajes() {
     [viajes, desde, hasta, filtroZona, filtroTipo, filtroChofer, filtroRuteo],
   );
 
-  /** Completa la fila 'entrega' de un recambio (se crea sin contenedor, ver recambio.flow.ts). */
+  /**
+   * Completa la fila 'entrega' de un recambio (se crea sin contenedor, ver
+   * recambio.flow.ts). Solo el contenedor: el chofer ya no se elige desde
+   * Viajes, sale de la ruta en la que se arme el viaje (pestaña Rutas).
+   */
   async function asignarContenedor(id: string) {
-    if (!asignarForm.contenedor_numero) return;
+    if (!asignarContenedorNumero) return;
     try {
-      await api.patch(`/api/viajes/${id}`, {
-        contenedor_numero: asignarForm.contenedor_numero,
-        chofer_id: asignarForm.chofer_id || undefined,
-      });
+      await api.patch(`/api/viajes/${id}`, { contenedor_numero: asignarContenedorNumero });
       setAsignando(null);
-      setAsignarForm({ contenedor_numero: '', chofer_id: '' });
+      setAsignarContenedorNumero('');
       cargar();
       show('success', 'Contenedor asignado');
     } catch (err: any) {
       show('error', 'No se pudo asignar', err.response?.data?.error);
     }
-  }
-
-  /**
-   * Reasignar chofer en cualquier viaje ya creado — sobre todo para la pata
-   * "retiro" de un recambio pedido por WhatsApp, que se crea sin chofer (ver
-   * recambio.flow.ts): sin esto no había forma de asignárselo desde el panel,
-   * y sin chofer_id el bot nunca le ofrece al chofer completar el recambio.
-   */
-  async function reasignarChofer(id: string, choferId: string) {
-    try {
-      await api.patch(`/api/viajes/${id}`, { chofer_id: choferId || null });
-      cargar();
-      show('success', 'Chofer reasignado');
-    } catch (err: any) {
-      show('error', 'No se pudo reasignar', err.response?.data?.error);
-    }
-  }
-
-  /**
-   * Reasignar uno por uno a mano es el peor caso justo cuando más presión hay
-   * (un chofer que no vino y hay que repartir todo lo suyo) — filtrás por ese
-   * chofer y reasignás todo lo que ves de una. Usa el mismo PATCH que la
-   * reasignación individual, en bucle (no hay endpoint masivo en el backend).
-   */
-  async function reasignarSeleccionados() {
-    if (seleccionados.size === 0) return;
-    setReasignandoMasivo(true);
-    let ok = 0;
-    const errores: string[] = [];
-    for (const id of seleccionados) {
-      try {
-        await api.patch(`/api/viajes/${id}`, { chofer_id: choferMasivo || null });
-        ok++;
-      } catch (err: any) {
-        errores.push(err.response?.data?.error ?? id);
-      }
-    }
-    setReasignandoMasivo(false);
-    setSeleccionados(new Set());
-    cargar();
-    if (errores.length === 0) {
-      show('success', `${ok} viaje(s) reasignado(s)`);
-    } else {
-      show('error', `${ok} reasignados, ${errores.length} con error`, errores.slice(0, 3).join(' · '));
-    }
-  }
-
-  function toggleSeleccion(id: string) {
-    setSeleccionados((prev) => {
-      const copia = new Set(prev);
-      if (copia.has(id)) copia.delete(id); else copia.add(id);
-      return copia;
-    });
   }
 
   async function cambiarRemito(id: string, remito: string) {
@@ -340,25 +285,6 @@ export function Viajes() {
         </div>
       </div>
 
-      {seleccionados.size > 0 && (
-        <RoleGate roles={['admin', 'operador']}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--accent-tint)',
-            border: '1px solid var(--accent)', borderRadius: 'var(--radius)', padding: '10px 14px', marginBottom: '12px', fontSize: '0.85rem',
-          }}>
-            <span><strong>{seleccionados.size}</strong> viaje(s) seleccionado(s)</span>
-            <select className="form-select" style={{ width: 'auto' }} value={choferMasivo} onChange={(e) => setChoferMasivo(e.target.value)}>
-              <option value="">— Sin asignar —</option>
-              {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-            </select>
-            <button className="btn btn-primary btn-sm" onClick={reasignarSeleccionados} disabled={reasignandoMasivo}>
-              {reasignandoMasivo ? 'Reasignando...' : 'Reasignar seleccionados'}
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setSeleccionados(new Set())}>Cancelar selección</button>
-          </div>
-        </RoleGate>
-      )}
-
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
         <button
           className={`btn btn-sm ${pestana === 'activos' ? 'btn-primary' : 'btn-ghost'}`}
@@ -378,16 +304,6 @@ export function Viajes() {
         <table className="data-table">
           <thead>
             <tr>
-              <RoleGate roles={['admin', 'operador']}>
-                <th style={{ width: '32px' }}>
-                  <input
-                    type="checkbox"
-                    checked={viajesAMostrar.length > 0 && viajesAMostrar.every((v) => seleccionados.has(v.id))}
-                    onChange={(e) => setSeleccionados(e.target.checked ? new Set(viajesAMostrar.map((v) => v.id)) : new Set())}
-                    title="Seleccionar todos los viajes visibles"
-                  />
-                </th>
-              </RoleGate>
               <th>Fecha</th>
               <th>Horario sugerido</th>
               <th>Tipo</th>
@@ -408,11 +324,6 @@ export function Viajes() {
           <tbody>
             {viajesAMostrar.map((v) => (
               <tr key={v.id}>
-                <RoleGate roles={['admin', 'operador']}>
-                  <td>
-                    <input type="checkbox" checked={seleccionados.has(v.id)} onChange={() => toggleSeleccion(v.id)} />
-                  </td>
-                </RoleGate>
                 <td className="strong" style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {v.horario_preferido ? (
@@ -450,22 +361,13 @@ export function Viajes() {
                       <select
                         className="form-select"
                         style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                        value={asignarForm.contenedor_numero}
-                        onChange={(e) => setAsignarForm({ ...asignarForm, contenedor_numero: e.target.value })}
+                        value={asignarContenedorNumero}
+                        onChange={(e) => setAsignarContenedorNumero(e.target.value)}
                       >
                         <option value="">{v.tipo === 'retiro' ? '— Lleno —' : '— Vacío —'}</option>
                         {(v.tipo === 'retiro' ? contenedoresEntregados : vaciosDisponibles).map((c) => (
                           <option key={c.numero} value={c.numero}>{c.numero}</option>
                         ))}
-                      </select>
-                      <select
-                        className="form-select"
-                        style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                        value={asignarForm.chofer_id}
-                        onChange={(e) => setAsignarForm({ ...asignarForm, chofer_id: e.target.value })}
-                      >
-                        <option value="">— Sin chofer —</option>
-                        {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                       </select>
                       <button className="btn btn-success btn-sm" onClick={() => asignarContenedor(v.id)}>OK</button>
                       <button className="btn btn-ghost btn-sm" onClick={() => setAsignando(null)}>✕</button>
@@ -474,7 +376,7 @@ export function Viajes() {
                     <RoleGate roles={['admin', 'operador']}>
                       <button
                         className="btn btn-ghost btn-sm"
-                        onClick={() => { setAsignando(v.id); setAsignarForm({ contenedor_numero: '', chofer_id: v.chofer_id ?? '' }); }}
+                        onClick={() => { setAsignando(v.id); setAsignarContenedorNumero(''); }}
                       >
                         Asignar
                       </button>
@@ -490,22 +392,8 @@ export function Viajes() {
                     <span className="text-muted">—</span>
                   )}
                 </td>
-                <td>
-                  <RoleGate roles={['admin', 'operador']}>
-                    <select
-                      className="form-select"
-                      style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                      value={v.chofer_id ?? ''}
-                      onChange={(e) => reasignarChofer(v.id, e.target.value)}
-                    >
-                      <option value="">— Sin asignar —</option>
-                      {choferes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                    </select>
-                  </RoleGate>
-                  <RoleGate roles={['finanzas', 'lectura']}>
-                    {v.chofer_nombre ?? <span className="text-muted">Sin asignar</span>}
-                  </RoleGate>
-                </td>
+                {/* Solo lectura: el chofer sale de la ruta en la que se armó el viaje (pestaña Rutas). */}
+                <td>{v.chofer_nombre ?? <span className="text-muted">Sin asignar</span>}</td>
                 <td className="mono">{v.patente ?? <span className="text-muted">—</span>}</td>
                 <td className="mono">
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -613,7 +501,7 @@ export function Viajes() {
             ))}
             {viajesAMostrar.length === 0 && (
               <tr>
-                <td colSpan={16} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={15} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   {pestana === 'activos' ? 'No hay viajes activos o programados en el rango' : 'No hay viajes en el historial para el rango'}
                 </td>
               </tr>

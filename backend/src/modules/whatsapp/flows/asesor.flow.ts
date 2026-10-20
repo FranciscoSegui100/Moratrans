@@ -27,8 +27,8 @@ export async function resolverAsesor(telefono: string): Promise<void> {
 
 /**
  * Genera la alerta para el panel, marca la conversación como tomada por un
- * humano (el bot se calla hasta que el cliente escriba "menú" o el operador
- * la resuelva) y le avisa al cliente. Compartido por dos caminos:
+ * humano (el bot se calla hasta que el operador la resuelva o la libere desde
+ * el panel) y le avisa al cliente. Compartido por dos caminos:
  *  - handleAsesor, tras INTENTOS_PARA_ESCALAR_ASESOR pedidos espontáneos de "asesor".
  *  - estados.ts::manejarRespuestaInvalida, cuando el bot mismo ofrece un
  *    asesor tras no entender la respuesta dos veces seguidas (ahí se escala
