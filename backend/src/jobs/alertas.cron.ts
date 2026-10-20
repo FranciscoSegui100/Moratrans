@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { query } from '../config/db';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../config/socket';
 import { sendButtons } from '../modules/whatsapp/graphApi';
-import { formatearFechaLarga, diaHabilAnterior, diaHabilDesde, sumarDias } from '../services/diasHabiles.service';
+import { formatearFechaLarga, diaHabilDesde } from '../services/diasHabiles.service';
 import { hoyMendozaISO } from '../services/fechas.service';
 import { NOTA_RETIRO_AUTOMATICO } from '../services/retiroAutomatico.service';
 import { resolverUbicacion } from '../services/ubicaciones.service';
@@ -84,13 +84,12 @@ async function generarAlertas(): Promise<void> {
     console.error('[cron] Error procesando avisos de vencimiento por WhatsApp a clientes:', err.message);
   }
 
-  // 1.c) Retiro automático el día hábil ANTERIOR al vencimiento:
-  // si el cliente no pidió el retiro (ni lo extendió) y ya llegamos a ese día,
-  // el retiro entra solo a la Bolsa de Rutas con fecha = día del vencimiento
-  // (o el lunes, si vence en fin de semana), así se puede planificar con un
-  // día de anticipación. Vence un lunes -> se agrega el viernes.
-  // - Si ya está vencido sin retiro (ej. el server estuvo caído), se crea
-  //   igual para el próximo día hábil.
+  // 1.c) Retiro automático EL MISMO DÍA del vencimiento: si el cliente no
+  // pidió el retiro (ni lo extendió) y llegó el día en que vence, el retiro
+  // entra solo a la Bolsa de Rutas con fecha de ese mismo día. Si vence en
+  // fin de semana, entra el lunes siguiente (con fecha lunes).
+  // - Si ya pasó el día sin crearse (ej. el server estuvo caído), se crea
+  //   igual, con fecha de hoy (o el próximo día hábil si hoy es finde).
   // - Se resuelve la alerta 'contenedor_por_vencer' y se avisa al operador
   //   con 'retiro_solicitado'. Al cliente NO se le manda nada (ya recibe el
   //   recordatorio de 24-48hs con los botones de extender / pedir retiro).
@@ -122,9 +121,9 @@ async function generarAlertas(): Promise<void> {
          ) ultima ON true
         WHERE c.estado = 'entregado'
           AND c.vence_en IS NOT NULL
-          -- Margen de sobra para cubrir el fin de semana (vence lunes -> viernes);
-          -- el corte fino por día hábil se hace abajo, en TS.
-          AND c.vence_en < now() + interval '5 days'
+          -- Solo lo que vence a más tardar hoy (con margen de un día por la
+          -- zona horaria); el corte fino por día hábil se hace abajo, en TS.
+          AND c.vence_en < now() + interval '1 day'
           -- Evita duplicar si ya existe un retiro activo (programado o en curso):
           AND NOT EXISTS (
             SELECT 1 FROM viajes v2
@@ -136,11 +135,8 @@ async function generarAlertas(): Promise<void> {
 
     const hoy = hoyMendozaISO();
     const aCrear = candidatos
-      .filter((cv) => hoy >= diaHabilAnterior(cv.vence_fecha))
-      .map((cv) => ({
-        ...cv,
-        fechaRetiro: cv.vence_fecha >= hoy ? diaHabilDesde(cv.vence_fecha) : diaHabilDesde(sumarDias(hoy, 1)),
-      }));
+      .filter((cv) => hoy >= diaHabilDesde(cv.vence_fecha))
+      .map((cv) => ({ ...cv, fechaRetiro: diaHabilDesde(hoy) }));
 
     if (aCrear.length > 0) {
       const vaciadero = await resolverUbicacion('vaciadero');
@@ -179,10 +175,10 @@ async function generarAlertas(): Promise<void> {
         emitAlertaActualizada({ tipo: 'contenedor_por_vencer', referencia_id: cv.numero, estado: 'resuelta' });
 
         // 3) Alerta 'retiro_solicitado' para el operador en vivo
-        const yaVencido = cv.vence_fecha < hoy;
+        const yaVencido = cv.vence_fecha < cv.fechaRetiro;
         const mensajeAlerta = yaVencido
           ? `Contenedor ${cv.numero} YA VENCIÓ — retiro agregado a la bolsa para el ${formatearFechaLarga(cv.fechaRetiro)} (Listo en Rutas)`
-          : `Contenedor ${cv.numero} vence el ${formatearFechaLarga(cv.vence_fecha)} — retiro agregado a la bolsa para el ${formatearFechaLarga(cv.fechaRetiro)} (Listo en Rutas)`;
+          : `Contenedor ${cv.numero} vence HOY — retiro agregado a la bolsa de hoy (Listo en Rutas)`;
         const [alertaRetiro] = await query<{ id: string; tipo: string; referencia_id: string; mensaje: string; creado_en: string }>(
           `INSERT INTO alertas (tipo, referencia_id, mensaje)
            VALUES ('retiro_solicitado', $1, $2)
