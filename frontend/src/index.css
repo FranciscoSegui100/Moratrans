@@ -460,8 +460,11 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   gap: 16px;
   padding: 14px 0 12px;
   margin-bottom: 14px;
-  background: var(--bg-base);
-  border-bottom: 1px solid var(--border);
+  /* Sin fondo ni borde: los botones flotan sobre el fondo de curvas en vez
+     de quedar encerrados en una franja. Siguen siendo sticky (quedan a mano
+     al scrollear una tabla larga), y cada uno tiene su propio fondo opaco
+     para no perderse contra lo que pase por detrás. */
+  background: transparent;
 }
 .topbar-spacer { flex: 1; min-width: 0; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; }
