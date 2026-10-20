@@ -172,8 +172,26 @@ async function calcularDisponibilidadRuta(
     ? { llenos: capacidadRows[0].capacidad_llenos, vacios: capacidadRows[0].capacidad_vacios }
     : CAPACIDAD_CAMION_DEFAULT;
 
+  // Estado REAL de los contenedores de cada retiro de esta ruta: si el
+  // chofer ya lo vació por WhatsApp sin pasar por una parada de vaciado de
+  // ESTA ruta (ej. retiros de antes de que el vaciado automático quedara
+  // linkeado a un contenedor, o un vaciado hecho por el menú suelto del
+  // chofer), la simulación lo daba por "pendiente de vaciar" para siempre —
+  // ver yaVaciadoEnRealidad en disponibilidad.service.ts.
+  const numerosRetiro = [...new Set(viajes.filter((v) => v.tipo === 'retiro' && v.contenedor_numero).map((v) => v.contenedor_numero as string))];
+  const estadosReales = numerosRetiro.length
+    ? await ejecutar(`SELECT numero, estado FROM contenedores WHERE numero = ANY($1)`, [numerosRetiro]) as { numero: string; estado: string }[]
+    : [];
+  const estadoRealPorNumero = new Map(estadosReales.map((r) => [r.numero, r.estado]));
+
   const paradasSimuladas: ParadaSimulada[] = [
-    ...viajes.map((v) => ({ orden: v.orden, tipoParada: 'viaje' as const, viajeTipo: v.tipo, contenedorNumero: v.contenedor_numero })),
+    ...viajes.map((v) => ({
+      orden: v.orden, tipoParada: 'viaje' as const, viajeTipo: v.tipo, contenedorNumero: v.contenedor_numero,
+      completada: v.completada_en != null,
+      ...(v.tipo === 'retiro' && v.contenedor_numero
+        ? { yaVaciadoEnRealidad: estadoRealPorNumero.get(v.contenedor_numero) !== 'retirado' }
+        : {}),
+    })),
     ...vaciados.map((v) => ({ orden: v.orden, tipoParada: 'vaciado' as const })),
   ];
   const { porOrden, liberadosPor, advertencias } = simularDisponibilidad(paradasSimuladas, disponiblesAlInicio, capacidad);

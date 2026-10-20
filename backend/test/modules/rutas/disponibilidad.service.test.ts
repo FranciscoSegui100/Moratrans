@@ -30,6 +30,43 @@ describe('simularDisponibilidad', () => {
     expect(porOrden.get(2)).toEqual([]);
   });
 
+  it('un retiro ya vaciado en la realidad (yaVaciadoEnRealidad) queda disponible sin necesitar una parada de vaciado', () => {
+    // Bug real: el chofer vació el contenedor por WhatsApp (fuera de esta
+    // ruta, sin una parada de vaciado linkeada) y el panel seguía diciendo
+    // "sin stock" para la siguiente entrega de la misma ruta.
+    const paradas: ParadaSimulada[] = [
+      { orden: 1, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'MSKU001', yaVaciadoEnRealidad: true },
+      { orden: 2, tipoParada: 'viaje', viajeTipo: 'entrega', contenedorNumero: null },
+    ];
+    const { porOrden, liberadosPor } = simularDisponibilidad(paradas, []);
+    expect(porOrden.get(2)).toEqual(['MSKU001']);
+    expect(liberadosPor.get('MSKU001')).toBe(1);
+  });
+
+  it('un retiro ya vaciado en la realidad no cuenta para la advertencia de capacidad de llenos', () => {
+    const paradas: ParadaSimulada[] = [
+      { orden: 1, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'A', yaVaciadoEnRealidad: true },
+      { orden: 2, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'B' },
+    ];
+    const { advertencias } = simularDisponibilidad(paradas, []);
+    expect(advertencias.filter((a) => a.tipo === 'lleno_sin_vaciar')).toHaveLength(0);
+  });
+
+  it('un contenedor que completó entrega→retiro→vaciado en esta misma ruta queda libre para una entrega posterior', () => {
+    // Bug real: entrega de CAFE123 ya finalizada por el chofer, después
+    // retiro de CAFE123 ya vaciado en la realidad (yaVaciadoEnRealidad), y
+    // una tercera parada (otra entrega, sin contenedor todavía) en la MISMA
+    // ruta — el panel decía "sin stock" aunque CAFE123 ya había completado
+    // todo el ciclo y estaba libre de nuevo.
+    const paradas: ParadaSimulada[] = [
+      { orden: 1, tipoParada: 'viaje', viajeTipo: 'entrega', contenedorNumero: 'CAFE123', completada: true },
+      { orden: 2, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'CAFE123', yaVaciadoEnRealidad: true },
+      { orden: 3, tipoParada: 'viaje', viajeTipo: 'entrega', contenedorNumero: null },
+    ];
+    const { porOrden } = simularDisponibilidad(paradas, ['CAFE123']);
+    expect(porOrden.get(3)).toEqual(['CAFE123']);
+  });
+
   it('un recambio comparte orden: la mitad entrega ve lo disponible, la mitad retiro deja pendiente de vaciar', () => {
     const paradas: ParadaSimulada[] = [
       // Insertadas en el orden "menos favorable" a propósito (retiro antes

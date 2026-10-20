@@ -17,6 +17,20 @@ export interface ParadaSimulada {
   /** Solo si tipoParada === 'viaje'. */
   viajeTipo?: 'entrega' | 'retiro';
   contenedorNumero?: string | null;
+  /** Solo si tipoParada === 'viaje': el chofer ya la marcó hecha (completada_en no es null). */
+  completada?: boolean;
+  /**
+   * Solo si viajeTipo === 'retiro': el contenedor YA se vació de verdad
+   * (contenedores.estado ya no es 'retirado') aunque esta ruta no tenga
+   * ninguna parada de 'vaciado' que lo libere — pasa cuando el chofer lo
+   * vacía por WhatsApp sin pasar por una parada linkeada de esta ruta (ver
+   * rutas.routes.ts). Sin esto, la simulación lo daba por "pendiente de
+   * vaciar" para siempre y las entregas siguientes de la MISMA ruta se
+   * quedaban sin contenedores para ofrecer aunque en la realidad sí había
+   * stock (bug real: "dice que no hay stock habiendo contenedores
+   * disponibles").
+   */
+  yaVaciadoEnRealidad?: boolean;
 }
 
 export interface CapacidadCamion {
@@ -61,15 +75,20 @@ export function simularDisponibilidad(
   });
 
   const disponibles = new Set(disponiblesAlInicio);
-  // Contenedores ya tomados por ALGUNA parada de entrega de esta ruta: no se
-  // pueden ofrecer en ninguna otra parada (el índice único
+  // Contenedores ya tomados por ALGUNA parada de entrega PENDIENTE de esta
+  // ruta: no se pueden ofrecer en ninguna otra parada (el índice único
   // ux_viajes_activo_por_tipo admite un solo viaje activo por contenedor+tipo).
   // El `for` de abajo solo saca un contenedor DESPUÉS de su parada, así que sin
   // esto una parada de orden menor lo seguía viendo disponible y al asignarlo
   // se creaba una segunda entrega activa para el mismo contenedor.
+  // Una entrega ya COMPLETADA no cuenta acá: ese contenedor puede volver
+  // (retiro + vaciado) y empezar un ciclo nuevo más adelante en la misma
+  // ruta — bloquearlo para siempre por un uso ya terminado es el mismo bug
+  // real que el de yaVaciadoEnRealidad (ver arriba), solo que en la otra
+  // punta de la cadena entrega→retiro→vaciado→entrega.
   const asignadosAEntrega = new Set(
     ordenadas
-      .filter((p) => p.tipoParada === 'viaje' && p.viajeTipo !== 'retiro' && p.contenedorNumero)
+      .filter((p) => p.tipoParada === 'viaje' && p.viajeTipo !== 'retiro' && p.contenedorNumero && !p.completada)
       .map((p) => p.contenedorNumero as string),
   );
   const pendientesDeVaciar = new Set<string>();
@@ -108,6 +127,17 @@ export function simularDisponibilidad(
     }
 
     if (parada.viajeTipo === 'retiro') {
+      // Ya se vació de verdad por otro canal (ej. el chofer por WhatsApp,
+      // sin pasar por una parada de vaciado de ESTA ruta): vuelve a estar
+      // disponible de una, no hace falta esperar un 'vaciado' en la
+      // secuencia ni cuenta como "lleno a bordo sin vaciar".
+      if (parada.contenedorNumero && parada.yaVaciadoEnRealidad) {
+        disponibles.add(parada.contenedorNumero);
+        liberadosPor.set(parada.contenedorNumero, parada.orden);
+        vaciosABordo += 1;
+        chequearVacios(parada.orden);
+        continue;
+      }
       // Ya hay tantos llenos a bordo sin vaciar como la capacidad del camión:
       // esta parada de retiro/recambio es inválida hasta insertar un vaciado
       // antes. Se avisa igual (no se bloquea acá — el llamador decide).
