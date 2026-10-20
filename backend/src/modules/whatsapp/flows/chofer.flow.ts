@@ -400,7 +400,13 @@ async function cascadearParejaRecambio(
   if (parejaTipo === 'entrega') {
     // La pareja es el vacío: se entrega si está 'reservado' (ya asignado, esperando salir).
     if (cont?.estado !== 'reservado') return { texto: '', siguienteEnviada: false };
-    await query(`UPDATE contenedores SET estado = 'entregado', actualizado_por = $2 WHERE numero = $1`, [pareja.contenedor_numero, `chofer:${choferId}`]);
+    // Mismo vencimiento que cualquier entrega (días de alquiler desde AHORA):
+    // antes acá no se cargaba vence_en y el vacío de un recambio quedaba sin
+    // fecha — nunca le llegaba el recordatorio ni el retiro automático.
+    await query(
+      `UPDATE contenedores SET estado = 'entregado', vence_en = now() + make_interval(days => $3), actualizado_por = $2 WHERE numero = $1`,
+      [pareja.contenedor_numero, `chofer:${choferId}`, DIAS_ALQUILER_ANTES_RETIRO],
+    );
     await query(`UPDATE viajes SET completada_en = now() WHERE id = $1`, [pareja.id]);
     // El cascadeo cambia el contenedor/viaje de la pareja: se avisa acá adentro
     // para que valga sin importar el orden en que el llamador emita lo suyo.

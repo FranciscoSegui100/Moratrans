@@ -1201,6 +1201,19 @@ export function Rutas() {
   const bolsaDelDia = visitasPendientes.filter((v) => v.fecha === fecha);
   const sinAsignarDelDia = bolsaDelDia.length;
   const cantidadPorTipo = (t: TipoVisita) => bolsaDelDia.filter((v) => tipoVisita(v) === t).length;
+  // La bolsa muestra solo el día elegido: sin esto, un pedido de otra fecha
+  // (ej. el retiro automático que entra el día antes del vencimiento, con
+  // fecha de mañana) quedaba invisible mirando "hoy". Se avisa del próximo
+  // día con pedidos y de los atrasados, con un botón para saltar ahí.
+  const fechasOtras = [...new Set(visitasPendientes.map((v) => v.fecha).filter((f) => f !== fecha))].sort();
+  const proximaFechaConPedidos = fechasOtras.find((f) => f > fecha) ?? null;
+  const fechaAtrasadaMasVieja = fechasOtras.find((f) => f < fecha) ?? null;
+  const contarFecha = (f: string) => visitasPendientes.filter((v) => v.fecha === f).length;
+  const atrasadosSinRutear = visitasPendientes.filter((v) => v.fecha < fecha).length;
+  const irAFecha = (f: string) => {
+    setFecha(f);
+    setFormViaje((fv) => ({ ...fv, fecha: f }));
+  };
   const visiblesEnBolsa = filtroTipoBolsa ? bolsaDelDia.filter((v) => tipoVisita(v) === filtroTipoBolsa).length : sinAsignarDelDia;
   const statsRutas = statsPorRuta(viajesDelDia);
   const visitasDelDia = agruparPendientes(viajesDelDia).length;
@@ -1845,6 +1858,21 @@ export function Rutas() {
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
             Mostrando solo los pedidos de este día. Tocá un pedido para ver el detalle. Arrastralo sobre un chofer (abajo) para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
           </div>
+
+          {(proximaFechaConPedidos || fechaAtrasadaMasVieja) && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px', fontSize: '0.78rem' }}>
+              {fechaAtrasadaMasVieja && (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => irAFecha(fechaAtrasadaMasVieja)} style={{ color: 'var(--danger)' }}>
+                  <AlertTriangle size={13} strokeWidth={2} /> {atrasadosSinRutear} atrasado(s) sin rutear · ver desde el {formatearFecha(fechaAtrasadaMasVieja)}
+                </button>
+              )}
+              {proximaFechaConPedidos && (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => irAFecha(proximaFechaConPedidos)}>
+                  📅 {contarFecha(proximaFechaConPedidos)} pedido(s) para el {formatearFecha(proximaFechaConPedidos)} · ver
+                </button>
+              )}
+            </div>
+          )}
 
           {sinAsignarDelDia > 0 && (
             <div className="btn-group" style={{ marginBottom: '12px', flexWrap: 'wrap' }} role="group" aria-label="Filtrar pedidos por tipo">
