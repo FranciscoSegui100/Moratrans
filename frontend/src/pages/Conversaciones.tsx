@@ -225,7 +225,10 @@ export function Conversaciones() {
     const tb = new Date(b.escalado_en ?? b.asignado_en ?? b.ultimo_en).getTime();
     return ta - tb;
   });
-  const visiblesPorFiltro = filtro === 'requieren' ? requierenVosOrdenadas : conversaciones;
+  // Una conversación que pide asesor se MUEVE a "Necesitan asesor": deja de
+  // aparecer en "Todas" hasta que se resuelva o se libere (modo_humano false).
+  const sinAsesor = conversaciones.filter((c) => !c.modo_humano);
+  const visiblesPorFiltro = filtro === 'requieren' ? requierenVosOrdenadas : sinAsesor;
   const visibles = busqueda.trim()
     ? visiblesPorFiltro.filter((c) => {
         const q = busqueda.trim().toLowerCase();
@@ -314,7 +317,7 @@ export function Conversaciones() {
               className={`conv-filtro ${filtro === 'todas' ? 'active' : ''}`}
               onClick={() => setFiltro('todas')}
             >
-              Todas <b>{conversaciones.length}</b>
+              Todas <b>{sinAsesor.length}</b>
             </button>
             <button
               className={`conv-filtro conv-filtro--alerta ${filtro === 'requieren' ? 'active' : ''}`}
