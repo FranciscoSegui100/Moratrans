@@ -11,6 +11,31 @@ const PHONE = env.WA_PHONE_NUMBER_ID;
 const http = axios.create({
   baseURL: BASE,
   headers: { Authorization: `Bearer ${env.WA_ACCESS_TOKEN}` },
+  // Sin esto, un corte de red camino a Meta dejaba la request colgada hasta
+  // que el sistema operativo decidiera cortar la conexión (a veces varios
+  // minutos) — desde el punto de vista del cliente, el bot "dejaba de
+  // contestar" antes de mandar el aviso de error. Con el timeout, falla
+  // rápido y entra al reintento de abajo en vez de quedar colgado.
+  timeout: 15000,
+});
+
+// Reintenta UNA vez los fallos transitorios (sin respuesta — timeout, DNS,
+// red caída — o 5xx del lado de Meta): la mayoría son blips de un par de
+// segundos que se resuelven solos, y así el cliente ni se entera en vez de
+// recibir "tuvimos un problema, probá de nuevo" por algo que ya se hubiera
+// arreglado solo medio segundo después.
+const MAX_REINTENTOS_RED = 1;
+function esErrorTransitorio(e: any): boolean {
+  if (!e.response) return true; // la conexión en sí falló, Meta nunca llegó a responder
+  return e.response.status >= 500;
+}
+http.interceptors.response.use(undefined, async (error) => {
+  const config = error.config as (import('axios').InternalAxiosRequestConfig & { _reintentos?: number }) | undefined;
+  if (!config || !esErrorTransitorio(error)) throw error;
+  config._reintentos = (config._reintentos ?? 0) + 1;
+  if (config._reintentos > MAX_REINTENTOS_RED) throw error;
+  await new Promise((r) => setTimeout(r, 800 * config._reintentos!));
+  return http.request(config);
 });
 
 /**
@@ -234,6 +259,7 @@ export async function downloadMedia(mediaId: string): Promise<{ buffer: Buffer; 
   const bin = await axios.get<ArrayBuffer>(url, {
     responseType: 'arraybuffer',
     headers: { Authorization: `Bearer ${env.WA_ACCESS_TOKEN}` },
+    timeout: 15000,
   });
   return { buffer: Buffer.from(bin.data), mime };
 }
