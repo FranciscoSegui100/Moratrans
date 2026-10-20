@@ -1701,9 +1701,37 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 /* Comprobante intercalado en el hilo: más grande que la miniatura de 56px de Comprobantes. */
 .chat-burbuja .comprobante-thumb { display: block; width: 180px; height: auto; max-height: 240px; margin-top: 6px; }
 .chat-burbuja-hora { font-size: 0.66rem; color: var(--text-muted); margin-top: 2px; font-family: var(--font-mono); }
-.chat-asesor-acciones { display: flex; justify-content: flex-end; }
+.chat-asesor-acciones { display: flex; justify-content: flex-end; gap: 6px; }
 .chat-asesor-input { display: flex; gap: 8px; }
 .chat-asesor-input .form-input { flex: 1; }
+
+/* Reproductor de audio inline en burbujas */
+.chat-audio-player {
+  margin: 4px 0 2px;
+  min-width: 200px;
+}
+.chat-audio-player audio {
+  border-radius: 8px;
+  background: transparent;
+}
+
+/* Timer del grabador */
+.chat-audio-timer {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  font-size: 0.8rem;
+  opacity: 0.9;
+}
+
+/* Pulso rojo mientras graba */
+@keyframes chat-audio-pulse-anim {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.chat-audio-pulse {
+  animation: chat-audio-pulse-anim 1s ease-in-out infinite;
+}
+
 
 /* ===== PAGO CARDS ===== */
 .pago-card {

@@ -1,9 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { env, isProd } from '../../config/env';
-import { verifySignature, motivoErrorWa, sendText } from './graphApi';
+import { verifySignature, motivoErrorWa, sendText, downloadAudio } from './graphApi';
 import { normalizar, enrutar } from './messageRouter';
 import { query } from '../../config/db';
-import { logMensaje } from './chatLog.service';
+import { logMensaje, adjuntarAudioAUltimoMensaje } from './chatLog.service';
+import { encryptBuffer, encrypt } from '../../services/crypto.service';
+import { subirArchivo } from '../../services/storage.service';
 
 /**
  * Idempotencia: intenta registrar el message_id. Si ya existía (Meta reintentó
@@ -99,16 +101,33 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
               ? '📎 Imagen'
               : normalizado.tipo === 'document'
                 ? '📎 Documento'
-                : normalizado.tipo === 'location'
-                  ? `📍 Ubicación compartida (${normalizado.lat}, ${normalizado.lng})`
-                  : normalizado.tipo === 'order'
-                    ? `🛒 Pedido del catálogo: ${
-                        (normalizado.orderItems ?? [])
-                          .map((it) => `${it.cantidad}x ${it.nombre ?? it.retailerId}`)
-                          .join(', ') || '(sin detalle)'
-                      }`
-                    : '(mensaje)');
+                : normalizado.tipo === 'audio'
+                  ? '🎤 Nota de voz'
+                  : normalizado.tipo === 'location'
+                    ? `📍 Ubicación compartida (${normalizado.lat}, ${normalizado.lng})`
+                    : normalizado.tipo === 'order'
+                      ? `🛒 Pedido del catálogo: ${
+                          (normalizado.orderItems ?? [])
+                            .map((it) => `${it.cantidad}x ${it.nombre ?? it.retailerId}`)
+                            .join(', ') || '(sin detalle)'
+                        }`
+                      : '(mensaje)');
           await logMensaje(normalizado.from, 'cliente', textoLog).catch((e) => console.error('Error logueando mensaje:', e));
+
+          // Si el cliente mandó un audio, lo descargamos de Meta y lo guardamos
+          // en Storage cifrado — igual que los comprobantes de imagen/PDF.
+          if (normalizado.tipo === 'audio' && normalizado.mediaId) {
+            downloadAudio(normalizado.mediaId)
+              .then(async ({ buffer, mime }) => {
+                const ext = mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'm4a' : mime.includes('mpeg') ? 'mp3' : 'ogg';
+                const nombre = `audio_${Date.now()}_${normalizado.from}.${ext}`;
+                const ruta = `audios/${nombre}`;
+                const cifrado = encryptBuffer(buffer);
+                await subirArchivo(cifrado, ruta, 'application/octet-stream');
+                await adjuntarAudioAUltimoMensaje(normalizado.from, encrypt(ruta));
+              })
+              .catch((e) => console.error('Error descargando audio del cliente:', motivoErrorWa(e)));
+          }
           // Mismo catch-all para CUALQUIER flujo (cliente o chofer): antes,
           // si una query fallaba a mitad de un trámite (ej. confirmar un
           // pedido), el que tocó el botón no recibía nada — ni error ni

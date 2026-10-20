@@ -1,21 +1,33 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import multer from 'multer';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
-import { sendText } from '../whatsapp/graphApi';
+import { sendText, sendAudio } from '../whatsapp/graphApi';
 import { logMensaje } from '../whatsapp/chatLog.service';
 import { getSesion, setSesion, clearSesion } from '../whatsapp/session.store';
 import { resolverAsesor } from '../whatsapp/flows/asesor.flow';
 import { pedidosAbiertos } from '../whatsapp/flows/pago.flow';
 import { emitConversacionActualizada } from '../../config/socket';
 import path from 'path';
-import { decrypt, decryptBuffer } from '../../services/crypto.service';
-import { descargarArchivo } from '../../services/storage.service';
+import { decrypt, decryptBuffer, encrypt, encryptBuffer } from '../../services/crypto.service';
+import { descargarArchivo, subirArchivo } from '../../services/storage.service';
 import { mimeDeExtension } from '../pagos/pagos.routes';
 import type { Rol } from '../../middleware/rbac';
 
 export const chatRouter = Router();
 chatRouter.use(requireAuth);
+
+/** Multer en memoria para recibir audios del asesor (máx. 10 MB). */
+const audioUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ok = /audio\/(ogg|mpeg|mp4|webm|wav|aac|x-m4a)/.test(file.mimetype);
+    cb(null, ok);
+  },
+});
+
 
 /** Quién puede abrir los archivos que mandan los clientes — mismo criterio que GET /api/pagos/:id/comprobante. */
 const ROLES_ADJUNTOS: Rol[] = ['admin', 'operador', 'finanzas'];
@@ -126,8 +138,10 @@ chatRouter.get('/:telefono', async (req: Request, res: Response) => {
   // abajo. Mismos roles que pueden abrir comprobantes en Pagos.
   const verAdjuntos = ROLES_ADJUNTOS.includes(req.user!.rol);
   const rows = await query(
-    `SELECT id, origen, texto, creado_en, tiene_adjunto FROM (
-       SELECT id, origen, texto, creado_en, ($2::boolean AND adjunto_ruta IS NOT NULL) AS tiene_adjunto
+    `SELECT id, origen, texto, creado_en, tiene_adjunto, tiene_audio FROM (
+       SELECT id, origen, texto, creado_en,
+              ($2::boolean AND adjunto_ruta IS NOT NULL AND texto NOT IN ('🎤 Nota de voz')) AS tiene_adjunto,
+              ($2::boolean AND adjunto_ruta IS NOT NULL AND texto = '🎤 Nota de voz') AS tiene_audio
          FROM mensajes_chat
         WHERE telefono = $1 ORDER BY creado_en DESC LIMIT 200
      ) ultimos ORDER BY creado_en ASC`,
@@ -310,3 +324,102 @@ chatRouter.post('/:telefono/cancelar-pedido', requireRol('admin', 'operador'), a
   emitConversacionActualizada({ telefono, modo_humano: false, asignado_a: null, asignado_a_nombre: null });
   res.json({ ok: true, canceladas: pendientes.length });
 });
+
+/**
+ * GET /api/chat/mensaje/:id/audio — sirve el audio que el cliente mandó
+ * por WhatsApp en ese mensaje. Guardado cifrado en Storage (carpeta audios/)
+ * igual que los comprobantes. Solo roles con acceso a adjuntos.
+ */
+chatRouter.get('/mensaje/:id/audio', requireRol(...ROLES_ADJUNTOS), async (req: Request, res: Response) => {
+  const [mensaje] = await query<{ adjunto_ruta: string | null; texto: string | null }>(
+    'SELECT adjunto_ruta, texto FROM mensajes_chat WHERE id = $1',
+    [req.params.id],
+  );
+  if (!mensaje?.adjunto_ruta) return res.status(404).json({ error: 'Audio no encontrado' });
+
+  const filename = path.basename(decrypt(mensaje.adjunto_ruta));
+  // Determinar el mime-type por extensión del archivo guardado
+  const ext = path.extname(filename).toLowerCase().replace('.', '');
+  const mimeMap: Record<string, string> = {
+    ogg: 'audio/ogg',
+    mp3: 'audio/mpeg',
+    m4a: 'audio/mp4',
+    wav: 'audio/wav',
+    webm: 'audio/webm',
+  };
+  const contentType = mimeMap[ext] ?? 'audio/ogg';
+
+  try {
+    const buffer = decryptBuffer(await descargarArchivo(`audios/${filename}`));
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.send(buffer);
+  } catch (e) {
+    console.error('Error descargando audio de Supabase Storage:', e);
+    res.status(404).json({ error: 'Audio no encontrado en el storage' });
+  }
+});
+
+/**
+ * POST /api/chat/:telefono/audio — el asesor envía una nota de voz por WhatsApp.
+ * Recibe el archivo via multipart (campo "audio"), lo sube a Storage cifrado,
+ * lo envía a Meta y lo loguea en el hilo como 'operador'.
+ * Mismo bloqueo de reclamo que el POST de texto: no pisa a otro operador.
+ */
+chatRouter.post(
+  '/:telefono/audio',
+  requireRol('admin', 'operador'),
+  audioUpload.single('audio'),
+  async (req: Request, res: Response) => {
+    const telefono = req.params.telefono;
+    if (!req.file) return res.status(400).json({ error: 'Falta el archivo de audio' });
+
+    const reclamo = await reclamarConversacion(telefono, req.user!.id);
+    if (!reclamo.ok) {
+      return res.status(409).json({ error: `Ya la está atendiendo ${reclamo.ocupadaPor}.` });
+    }
+
+    // Guardar en Storage cifrado para que quede en el historial y sea reproducible
+    const ext = req.file.mimetype.includes('ogg') ? 'ogg'
+      : req.file.mimetype.includes('mp4') ? 'm4a'
+      : req.file.mimetype.includes('mpeg') ? 'mp3'
+      : req.file.mimetype.includes('webm') ? 'webm'
+      : 'ogg';
+    const nombre = `audio_op_${Date.now()}_${telefono}.${ext}`;
+    const ruta = `audios/${nombre}`;
+    try {
+      const cifrado = encryptBuffer(req.file.buffer);
+      await subirArchivo(cifrado, ruta, 'application/octet-stream');
+    } catch (e) {
+      console.error('Error subiendo audio del operador a Storage:', e);
+      // No bloqueamos el envío por WhatsApp si falla el storage
+    }
+
+    try {
+      await sendAudio(telefono, req.file.buffer, req.file.mimetype, { log: false });
+    } catch (e: any) {
+      const motivoMeta = e.response?.data?.error?.message as string | undefined;
+      console.error('Error enviando audio del operador por WhatsApp:', motivoMeta ?? e.message);
+      const ventanaVencida = /24\s*hour|window|re-?engagement/i.test(motivoMeta ?? '');
+      return res.status(502).json({
+        error: ventanaVencida
+          ? 'No se pudo enviar: pasaron más de 24hs desde el último mensaje del cliente.'
+          : 'No se pudo enviar el audio por WhatsApp. Probá de nuevo.',
+      });
+    }
+
+    // Loguear con adjunto_ruta para que se pueda reproducir desde el historial
+    const rutaCifrada = encrypt(ruta);
+    const [row] = await query<{ id: string }>(
+      `INSERT INTO mensajes_chat (telefono, origen, texto, usuario_id, adjunto_ruta)
+       VALUES ($1, 'operador', '🎤 Nota de voz', $2, $3) RETURNING id`,
+      [telefono, req.user!.id, rutaCifrada],
+    );
+    if (row) {
+      const { emitMensajeChat } = await import('../../config/socket');
+      emitMensajeChat({ id: row.id, telefono, origen: 'operador', texto: '🎤 Nota de voz', creado_en: new Date().toISOString(), tiene_audio: true });
+    }
+
+    res.json({ ok: true });
+  },
+);

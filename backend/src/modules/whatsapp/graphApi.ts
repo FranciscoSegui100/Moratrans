@@ -1,4 +1,5 @@
 import axios from 'axios';
+import stream from 'stream';
 import crypto from 'crypto';
 import FormData from 'form-data';
 import { env, isProd } from '../../config/env';
@@ -297,4 +298,45 @@ export async function sendDocument(
   }
   await logMensaje(to, 'bot', `[Documento: ${filename}]${caption ? ' — ' + caption : ''}`)
     .catch((e) => console.error('Error logueando mensaje del bot:', e));
+}
+
+/**
+ * Sube un buffer de audio al endpoint /media y lo envía como mensaje de tipo
+ * 'audio' — la nota de voz aparece con el reproductor nativo de WhatsApp.
+ * Se acepta audio/ogg (opus, lo que graba el navegador con MediaRecorder),
+ * audio/mpeg (mp3) o audio/mp4 (m4a).
+ */
+export async function sendAudio(
+  to: string,
+  buffer: Buffer,
+  mime: string,
+  opts: { log?: boolean } = {},
+): Promise<void> {
+  const { log = true } = opts;
+  const destino = normalizarDestinoWhatsApp(to);
+  const ext = mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'm4a' : mime.includes('mpeg') ? 'mp3' : 'ogg';
+  const filename = `nota_voz.${ext}`;
+
+  if (env.WA_ACCESS_TOKEN === 'mock') {
+    console.log(`[MOCK WA] 🎤 Audio a ${destino}: ${filename} (${buffer.length} bytes)`);
+  } else {
+    const mediaId = await uploadMedia(buffer, mime, filename);
+    await http.post(`/${PHONE}/messages`, {
+      messaging_product: 'whatsapp',
+      to: destino,
+      type: 'audio',
+      audio: { id: mediaId },
+    });
+  }
+  if (log) {
+    await logMensaje(to, 'bot', '🎤 Nota de voz').catch((e) => console.error('Error logueando audio del bot:', e));
+  }
+}
+
+/**
+ * Descarga un media de audio de Meta por su id. Idéntico a downloadMedia pero
+ * devuelve el mime tal como lo reporta Meta (audio/ogg, audio/mpeg, etc.).
+ */
+export async function downloadAudio(mediaId: string): Promise<{ buffer: Buffer; mime: string }> {
+  return downloadMedia(mediaId);
 }

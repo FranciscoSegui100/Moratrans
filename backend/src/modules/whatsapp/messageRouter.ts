@@ -108,7 +108,7 @@ function esPedidoDeContenedor(m: MensajeEntrante): boolean {
 /** Mensaje normalizado, agnóstico del formato crudo de Meta. */
 export interface MensajeEntrante {
   from: string; // teléfono E.164 sin '+'
-  tipo: 'text' | 'interactive_list' | 'interactive_button' | 'image' | 'document' | 'location' | 'order' | 'otro';
+  tipo: 'text' | 'interactive_list' | 'interactive_button' | 'image' | 'document' | 'location' | 'order' | 'audio' | 'otro';
   texto?: string; // texto o título del botón/lista
   seleccionId?: string; // id de la opción elegida en list/button
   mediaId?: string; // id del media (comprobante)
@@ -140,6 +140,8 @@ export function normalizar(msg: any, nombrePerfil?: string): MensajeEntrante {
       return { from, tipo: 'image', mediaId: msg.image?.id, mediaMime: msg.image?.mime_type, nombrePerfil };
     case 'document':
       return { from, tipo: 'document', mediaId: msg.document?.id, mediaMime: msg.document?.mime_type, nombrePerfil };
+    case 'audio':
+      return { from, tipo: 'audio', mediaId: msg.audio?.id, mediaMime: msg.audio?.mime_type ?? 'audio/ogg', nombrePerfil };
     case 'location':
       return {
         from,

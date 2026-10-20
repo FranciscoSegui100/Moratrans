@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, Wallet } from 'lucide-react';
+import { Send, Wallet, Mic, MicOff, Play, Square } from 'lucide-react';
 import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
 import { useToast } from './Toast';
@@ -11,9 +11,10 @@ interface MensajeChat {
   origen: 'cliente' | 'bot' | 'operador';
   texto: string;
   creado_en: string;
-  // El cliente mandó una imagen/PDF en este mensaje y quedó guardada (ver
-  // GET /api/chat/mensaje/:id/adjunto).
+  // El cliente mandó una imagen/PDF en este mensaje y quedó guardada.
   tiene_adjunto?: boolean;
+  // El mensaje es una nota de voz (cliente o asesor).
+  tiene_audio?: boolean;
 }
 
 const origenLabel: Record<MensajeChat['origen'], string> = {
@@ -32,9 +33,6 @@ function etiquetaDia(iso: string): string {
   return fecha.toLocaleDateString('es-AR', { day: 'numeric', month: 'long' });
 }
 
-// sendList/sendButtons (graphApi.ts) loguean el mensaje interactivo como
-// "<cuerpo>\n(opciones: A, B, C)" — esto separa ambas partes para poder
-// mostrar las opciones como en el mensaje real de WhatsApp, no como texto plano.
 const OPCIONES_RE = /\n\(opciones: (.+)\)$/;
 
 function parsearOpciones(texto: string): { cuerpo: string; opciones: string[] | null } {
@@ -43,7 +41,6 @@ function parsearOpciones(texto: string): { cuerpo: string; opciones: string[] | 
   return { cuerpo: texto.slice(0, m.index), opciones: m[1].split(', ') };
 }
 
-/** Agrupa los mensajes por día para intercalar separadores tipo WhatsApp. */
 function agruparPorDia(mensajes: MensajeChat[]): { etiqueta: string; mensajes: MensajeChat[] }[] {
   const grupos: { etiqueta: string; mensajes: MensajeChat[] }[] = [];
   for (const m of mensajes) {
@@ -55,6 +52,138 @@ function agruparPorDia(mensajes: MensajeChat[]): { etiqueta: string; mensajes: M
   return grupos;
 }
 
+/** Reproductor de audio inline para notas de voz — ruta del backend según origen. */
+function AudioPlayer({ mensajeId, origen }: { mensajeId: string; origen: MensajeChat['origen'] }) {
+  const src = `/api/chat/mensaje/${mensajeId}/audio`;
+  return (
+    <div className="chat-audio-player">
+      <audio controls preload="metadata" style={{ width: '100%', height: '36px' }}>
+        <source src={src} />
+        Tu navegador no soporta audio.
+      </audio>
+    </div>
+  );
+}
+
+/** Botón de grabación con MediaRecorder — graba en memoria y envía al backend. */
+function GrabadorAudio({
+  telefono,
+  disabled,
+  onEnviado,
+}: {
+  telefono: string;
+  disabled: boolean;
+  onEnviado: () => void;
+}) {
+  const { show } = useToast();
+  const [grabando, setGrabando] = useState(false);
+  const [segundos, setSegundos] = useState(0);
+  const [enviando, setEnviando] = useState(false);
+  const mediaRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Límite de 120 segundos para que no quede grabando solo
+  const MAX_SEG = 120;
+
+  async function iniciarGrabacion() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const opciones: MediaRecorderOptions = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+        ? { mimeType: 'audio/ogg;codecs=opus' }
+        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? { mimeType: 'audio/webm;codecs=opus' }
+        : {};
+      const recorder = new MediaRecorder(stream, opciones);
+      chunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const mime = recorder.mimeType || 'audio/ogg';
+        const blob = new Blob(chunksRef.current, { type: mime });
+        await enviarAudio(blob, mime);
+      };
+      recorder.start(250);
+      mediaRef.current = recorder;
+      setGrabando(true);
+      setSegundos(0);
+      timerRef.current = setInterval(() => {
+        setSegundos((s) => {
+          if (s + 1 >= MAX_SEG) detenerGrabacion();
+          return s + 1;
+        });
+      }, 1000);
+    } catch (e: any) {
+      show('error', 'No se pudo acceder al micrófono', e.message ?? 'Verificá los permisos del navegador');
+    }
+  }
+
+  function detenerGrabacion() {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (mediaRef.current && mediaRef.current.state !== 'inactive') {
+      mediaRef.current.stop();
+    }
+    setGrabando(false);
+    setSegundos(0);
+  }
+
+  async function enviarAudio(blob: Blob, mime: string) {
+    setEnviando(true);
+    try {
+      const ext = mime.includes('ogg') ? 'ogg' : mime.includes('webm') ? 'webm' : 'ogg';
+      const form = new FormData();
+      form.append('audio', blob, `nota_voz.${ext}`);
+      await api.post(`/api/chat/${encodeURIComponent(telefono)}/audio`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      onEnviado();
+    } catch (e: any) {
+      show('error', 'No se pudo enviar el audio', e.response?.data?.error || 'Error desconocido');
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  function formatSeg(s: number) {
+    const m = Math.floor(s / 60);
+    const ss = s % 60;
+    return `${m}:${String(ss).padStart(2, '0')}`;
+  }
+
+  if (enviando) {
+    return (
+      <button className="btn btn-ghost btn-sm" disabled title="Enviando audio...">
+        <Square size={15} strokeWidth={2} className="chat-audio-pulse" /> Enviando…
+      </button>
+    );
+  }
+
+  if (grabando) {
+    return (
+      <button
+        className="btn btn-danger btn-sm"
+        onClick={detenerGrabacion}
+        title="Detener y enviar la nota de voz"
+      >
+        <Square size={15} strokeWidth={2} />
+        <span className="chat-audio-timer">{formatSeg(segundos)}</span>
+        Enviar
+      </button>
+    );
+  }
+
+  return (
+    <button
+      className="btn btn-ghost btn-sm"
+      onClick={iniciarGrabacion}
+      disabled={disabled}
+      title="Grabar y enviar una nota de voz por WhatsApp"
+    >
+      <Mic size={15} strokeWidth={2} /> Nota de voz
+    </button>
+  );
+}
+
 /** Hilo de conversación + cuadro de respuesta libre para la alerta "pide asesor". */
 export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ventanaCerrada?: boolean }) {
   const [mensajes, setMensajes] = useState<MensajeChat[]>([]);
@@ -64,31 +193,35 @@ export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ven
   const { show } = useToast();
   const finRef = useRef<HTMLDivElement>(null);
 
+  const cargar = async () => {
+    try {
+      const { data } = await api.get<MensajeChat[]>(`/api/chat/${encodeURIComponent(telefono)}`);
+      setMensajes(data);
+    } catch {}
+  };
+
   useEffect(() => {
     let activo = true;
-    const cargar = () => {
+    const cargarActivo = () => {
       api
         .get<MensajeChat[]>(`/api/chat/${encodeURIComponent(telefono)}`)
         .then((r) => { if (activo) setMensajes(r.data); })
         .catch(() => {});
     };
-    cargar();
-    // Push en vivo: apenas llega un mensaje del cliente (o de otro operador)
-    // se agrega solo, sin esperar el polling.
+    cargarActivo();
     const socket = conectarSocket();
     const onNuevoMensaje = (m: MensajeChat) => {
       if (m.telefono !== telefono) return;
       setMensajes((prev) => (prev.find((x) => x.id === m.id) ? prev : [...prev, m]));
     };
     socket.on('nuevo_mensaje_chat', onNuevoMensaje);
-    socket.on('connect', cargar); // resincroniza si hubo un corte de conexión
-    // El polling queda como red de seguridad por si se pierde algún evento.
-    const interval = setInterval(cargar, 5000);
+    socket.on('connect', cargarActivo);
+    const interval = setInterval(cargarActivo, 5000);
     return () => {
       activo = false;
       clearInterval(interval);
       socket.off('nuevo_mensaje_chat', onNuevoMensaje);
-      socket.off('connect', cargar);
+      socket.off('connect', cargarActivo);
     };
   }, [telefono]);
 
@@ -106,21 +239,12 @@ export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ven
       const { data } = await api.get<MensajeChat[]>(`/api/chat/${encodeURIComponent(telefono)}`);
       setMensajes(data);
     } catch (e: any) {
-      // el texto queda en el cuadro para reintentar
       show('error', 'No se pudo enviar', e.response?.data?.error || 'Error desconocido al mandar el mensaje');
     } finally {
       setEnviando(false);
     }
   }
 
-  /**
-   * El asesor ya le cotizó este pedido al cliente a mano (el precio del
-   * catálogo depende de muchas cosas, el bot no lo resuelve solo) — acá se
-   * dispara el pedido de transferencia: el bot le manda los datos bancarios
-   * por WhatsApp y el comprobante que mande después entra a Comprobantes
-   * para validar, igual que un pedido de contenedor (ver
-   * pagos.routes.ts::POST /pedido-catalogo).
-   */
   async function pedirTransferencia() {
     const concepto = prompt('¿Qué le cotizaste? (se lo mandamos al cliente como referencia)');
     if (!concepto?.trim()) return;
@@ -153,7 +277,12 @@ export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ven
               return (
                 <div key={m.id} className={`chat-burbuja chat-burbuja-${m.origen}`}>
                   <div className="chat-burbuja-autor">{origenLabel[m.origen]}</div>
-                  <div className="chat-burbuja-texto">{cuerpo}</div>
+                  {/* Nota de voz: mostrar reproductor en vez del texto */}
+                  {m.tiene_audio ? (
+                    <AudioPlayer mensajeId={m.id} origen={m.origen} />
+                  ) : (
+                    <div className="chat-burbuja-texto">{cuerpo}</div>
+                  )}
                   {m.tiene_adjunto && <ComprobanteViewer mensajeId={m.id} />}
                   {opciones && (
                     <div className="chat-opciones">
@@ -188,6 +317,11 @@ export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ven
         >
           <Wallet strokeWidth={1.75} /> Pedir transferencia
         </button>
+        <GrabadorAudio
+          telefono={telefono}
+          disabled={!!ventanaCerrada}
+          onEnviado={cargar}
+        />
       </div>
       <div className="chat-asesor-input">
         <input

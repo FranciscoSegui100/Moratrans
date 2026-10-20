@@ -40,3 +40,20 @@ export async function adjuntarAUltimoMensaje(telefono: string, rutaCifrada: stri
     [telefono, rutaCifrada],
   ).catch((e) => console.error('Error adjuntando archivo al mensaje:', e));
 }
+
+/**
+ * Igual que adjuntarAUltimoMensaje pero para audios: busca el último
+ * '🎤 Nota de voz' sin adjunto del cliente y le cuelga la ruta.
+ */
+export async function adjuntarAudioAUltimoMensaje(telefono: string, rutaCifrada: string): Promise<void> {
+  await query(
+    `UPDATE mensajes_chat SET adjunto_ruta = $2
+      WHERE id = (
+        SELECT id FROM mensajes_chat
+         WHERE telefono = $1 AND origen = 'cliente' AND adjunto_ruta IS NULL
+           AND texto = '🎤 Nota de voz'
+         ORDER BY creado_en DESC LIMIT 1
+      )`,
+    [telefono, rutaCifrada],
+  ).catch((e) => console.error('Error adjuntando audio al mensaje:', e));
+}

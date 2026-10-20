@@ -13,6 +13,7 @@
     "db:schema": "psql \"$DATABASE_URL\" -f src/db/schema.sql",
     "db:seed": "psql \"$DATABASE_URL\" -f src/db/seed.sql",
     "db:seed-choferes": "tsx src/db/seedChoferes.ts",
+    "db:seed-masivo": "tsx src/db/seedMasivo.ts",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:rotar-clave": "tsx src/db/rotarClaveCifrado.ts",
     "test": "vitest run"
@@ -43,6 +44,7 @@
     "form-data": "^4.0.0",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^2.4.0",
     "node-cron": "^4.6.0",
     "otplib": "^12.0.1",
     "pdfkit": "^0.15.0",
@@ -55,6 +57,7 @@
     "zxcvbn": "^4.4.2"
   },
   "devDependencies": {
+    "@types/multer": "^2.3.0",
     "tsx": "^4.19.1",
     "vitest": "^4.1.10"
   }
