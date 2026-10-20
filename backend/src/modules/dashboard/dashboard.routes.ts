@@ -98,20 +98,23 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
        (SELECT count(*) FROM contenedores
          WHERE estado = 'entregado' AND vence_en IS NOT NULL AND vence_en < now())::int
                                                                                            AS contenedores_vencidos,
-       (SELECT count(*) FROM pagos WHERE estado = 'pendiente'
-                                       OR (medio_pago = 'efectivo' AND estado = 'validado' AND efectivo_cobrado = FALSE))::int
+       -- Solo lo que realmente espera validación (lo mismo que lista Validar
+       -- Pagos, GET /api/pagos?estado=pendiente). El efectivo ya validado
+       -- pero todavía no cobrado por el chofer es otro paso del circuito (se
+       -- marca desde la ficha del cliente) y ya se ve ahí como deuda —
+       -- sumarlo acá inflaba el número y mandaba a un link ("Ir a Validar
+       -- pagos") donde esos pagos no aparecen, confundiendo al operador.
+       (SELECT count(*) FROM pagos WHERE estado = 'pendiente')::int
                                                                                            AS cobros_pendientes,
-       -- Incluye pagos pendientes de validación + efectivo validado pero aún
-       -- no cobrado por el chofer. pagos.monto solo se carga para
-       -- alargues/abonos — un flete normal nace sin monto propio y el precio
-       -- vive en pedidos.precio (mismo criterio que ya usan GET /api/clientes
-       -- y el aviso de cobro en efectivo al chofer, ver medioPagoDeViaje en
-       -- viajes.routes.ts). Sin este COALESCE, la suma daba prácticamente $0
-       -- aunque hubiera varios cobros pendientes reales.
+       -- pagos.monto solo se carga para alargues/abonos — un flete normal
+       -- nace sin monto propio y el precio vive en pedidos.precio (mismo
+       -- criterio que ya usan GET /api/clientes y el aviso de cobro en
+       -- efectivo al chofer, ver medioPagoDeViaje en viajes.routes.ts). Sin
+       -- este COALESCE, la suma daba prácticamente $0 aunque hubiera varios
+       -- cobros pendientes reales.
        (SELECT COALESCE(SUM(COALESCE(p.monto, pe.precio)), 0)
           FROM pagos p LEFT JOIN pedidos pe ON pe.id = p.pedido_id
-         WHERE p.estado = 'pendiente'
-            OR (p.medio_pago = 'efectivo' AND p.estado = 'validado' AND p.efectivo_cobrado = FALSE))
+         WHERE p.estado = 'pendiente')
                                                                                            AS cobros_pendientes_monto,
        -- Mismo criterio que el cron de alertas (alertas.cron.ts): pagos
        -- pendientes hace más de 24h.
