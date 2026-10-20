@@ -374,6 +374,12 @@ chatRouter.post(
     const telefono = req.params.telefono;
     if (!req.file) return res.status(400).json({ error: 'Falta el archivo de audio' });
 
+    if (req.file.mimetype.includes('webm')) {
+      return res.status(400).json({
+        error: 'Tu navegador tiene una versión en caché que envía WebM. Por favor recargá la página con Cmd + Shift + R.',
+      });
+    }
+
     const reclamo = await reclamarConversacion(telefono, req.user!.id);
     if (!reclamo.ok) {
       return res.status(409).json({ error: `Ya la está atendiendo ${reclamo.ocupadaPor}.` });
