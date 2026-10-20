@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { MessageCircle, Pause, Play, UserPlus, Search, Wallet, Clock, X } from 'lucide-react';
+import { MessageCircle, Pause, Play, UserPlus, Search, Wallet, Clock, X, Pin } from 'lucide-react';
 import { useConversaciones, Conversacion } from '../hooks/useConversaciones';
 import { RoleGate } from '../components/RoleGate';
 import { ChatAsesor } from '../components/ChatAsesor';
@@ -146,16 +146,18 @@ function ConversacionItem({
   activo,
   onSelect,
   onResponderAhora,
+  onToggleFijado,
 }: {
   c: Conversacion;
   activo: boolean;
   onSelect: () => void;
   onResponderAhora: () => void;
+  onToggleFijado: () => void;
 }) {
   const espera = useTiempoEspera(c.escalado_en ?? c.asignado_en);
   return (
     <div
-      className={`asesoria-item ${activo ? 'active' : ''} ${c.modo_humano ? 'asesoria-item--alerta' : ''}`}
+      className={`asesoria-item ${activo ? 'active' : ''} ${c.modo_humano ? 'asesoria-item--alerta' : ''} ${c.fijado ? 'asesoria-item--fijado' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onSelect}
@@ -168,6 +170,16 @@ function ConversacionItem({
           {c.nombre && <div className="asesoria-item-tel">{c.telefono}</div>}
         </div>
         <span className="asesoria-item-time">{formatHora(c.ultimo_en)}</span>
+        <button
+          type="button"
+          className={`asesoria-item-fijar ${c.fijado ? 'is-fijado' : ''}`}
+          onClick={(e) => { e.stopPropagation(); onToggleFijado(); }}
+          title={c.fijado ? 'Desfijar (solo para vos)' : 'Fijar arriba (solo para vos)'}
+          aria-label={c.fijado ? 'Desfijar chat' : 'Fijar chat'}
+          aria-pressed={c.fijado}
+        >
+          <Pin size={13} strokeWidth={2} fill={c.fijado ? 'currentColor' : 'none'} />
+        </button>
       </div>
       <p className="asesoria-item-msg">
         {origenPreviewPrefix[c.ultimo_origen]}{c.ultimo_mensaje}
@@ -196,7 +208,7 @@ function ConversacionItem({
 
 /** Vista general: TODAS las conversaciones del bot (no solo las que piden asesor), con hilo completo y pausa manual. */
 export function Conversaciones() {
-  const { conversaciones, setModoHumano, reclamar } = useConversaciones();
+  const { conversaciones, setModoHumano, reclamar, setFijado } = useConversaciones();
   const { user } = useAuth();
   const { show } = useToast();
   // Deep-link desde la Bandeja de alertas (ver rutaAlerta en Alertas.tsx):
@@ -228,7 +240,18 @@ export function Conversaciones() {
   // Una conversación que pide asesor se MUEVE a "Necesitan asesor": deja de
   // aparecer en "Todas" hasta que se resuelva o se libere (modo_humano false).
   const sinAsesor = conversaciones.filter((c) => !c.modo_humano);
-  const visiblesPorFiltro = filtro === 'requieren' ? requierenVosOrdenadas : sinAsesor;
+  // Los chats que fijó este usuario van arriba en las dos listas (sort estable:
+  // dentro de fijados / no fijados se mantiene el orden de cada lista).
+  const visiblesPorFiltro = [...(filtro === 'requieren' ? requierenVosOrdenadas : sinAsesor)]
+    .sort((a, b) => Number(b.fijado) - Number(a.fijado));
+
+  async function toggleFijado(c: Conversacion) {
+    try {
+      await setFijado(c.telefono, !c.fijado);
+    } catch (err: any) {
+      show('error', 'No se pudo fijar el chat', err.response?.data?.error);
+    }
+  }
   const visibles = busqueda.trim()
     ? visiblesPorFiltro.filter((c) => {
         const q = busqueda.trim().toLowerCase();
@@ -349,6 +372,7 @@ export function Conversaciones() {
                 activo={c.telefono === seleccionado}
                 onSelect={() => setSeleccionado(c.telefono)}
                 onResponderAhora={() => responderAhora(c.telefono)}
+                onToggleFijado={() => toggleFijado(c)}
               />
             ))}
           </div>

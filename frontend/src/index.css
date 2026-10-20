@@ -1403,6 +1403,20 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   white-space: nowrap;
 }
 .asesoria-item-time { font-size: 0.68rem; color: var(--text-muted); flex-shrink: 0; }
+/* Fijar chat (solo para el usuario logueado): discreto hasta pasar el mouse
+   por la fila; fijado queda siempre visible, en el color de acento. */
+.asesoria-item-fijar {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px;
+  background: transparent; color: var(--text-muted); cursor: pointer; opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.asesoria-item:hover .asesoria-item-fijar,
+.asesoria-item-fijar:focus-visible,
+.asesoria-item-fijar.is-fijado { opacity: 1; }
+.asesoria-item-fijar:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+.asesoria-item-fijar.is-fijado { color: var(--accent); }
+@media (hover: none) { .asesoria-item-fijar { opacity: 1; } }
 .asesoria-item-pie { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .asesoria-item-asignado { font-size: 0.68rem; color: var(--text-muted); }
 /* Botón chico dentro de la fila (que ahora es un div, no un button, para

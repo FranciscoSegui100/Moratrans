@@ -24,6 +24,9 @@ export interface Conversacion {
   cuenta_corriente_estado: 'sin_pedir' | 'pendiente' | 'aprobada' | 'rechazada' | null;
   /** Si no es null, esta conversación es con un CHOFER (no un cliente) — la lista mezcla ambos. */
   chofer_nombre: string | null;
+  /** Lo fijó el usuario logueado (cada uno fija los suyos, no se comparte). */
+  fijado: boolean;
+  fijado_en: string | null;
 }
 
 interface MensajeChatSocket {
@@ -78,6 +81,8 @@ export function useConversaciones() {
             asignado_en: actual?.asignado_en ?? null,
             cuenta_corriente_estado: actual?.cuenta_corriente_estado ?? null,
             chofer_nombre: actual?.chofer_nombre ?? null,
+            fijado: actual?.fijado ?? false,
+            fijado_en: actual?.fijado_en ?? null,
           },
           ...resto,
         ];
@@ -146,5 +151,21 @@ export function useConversaciones() {
       ));
   }
 
-  return { conversaciones, setModoHumano, reclamar };
+  /** Fija/desfija un chat solo para el usuario logueado. Optimista: si falla, vuelve como estaba y tira. */
+  async function setFijado(telefono: string, fijado: boolean) {
+    const aplicar = (valor: boolean) =>
+      queryClient.setQueryData<Conversacion[]>(CONVERSACIONES_KEY, (prev = []) =>
+        prev.map((c) =>
+          c.telefono === telefono ? { ...c, fijado: valor, fijado_en: valor ? new Date().toISOString() : null } : c,
+        ));
+    aplicar(fijado);
+    try {
+      await api.put(`/api/chat/${encodeURIComponent(telefono)}/fijado`, { fijado });
+    } catch (err) {
+      aplicar(!fijado);
+      throw err;
+    }
+  }
+
+  return { conversaciones, setModoHumano, reclamar, setFijado };
 }

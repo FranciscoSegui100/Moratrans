@@ -40,8 +40,11 @@ const ROLES_ADJUNTOS: Rol[] = ['admin', 'operador', 'finanzas'];
  *  - `chofer_nombre`: esta lista mezcla charlas con clientes Y con choferes
  *    (ambos le escriben al mismo bot) — sin esto no había forma de saber,
  *    de un vistazo, si una fila era un chofer y no un cliente común.
+ *  - `fijado`/`fijado_en`: si el usuario logueado fijó este chat (cada uno
+ *    fija los suyos, ver chats_fijados). Los fijados entran siempre, aunque
+ *    queden fuera de los 200 más recientes.
  */
-chatRouter.get('/', async (_req: Request, res: Response) => {
+chatRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query(
     `SELECT m.telefono, m.texto AS ultimo_mensaje, m.origen AS ultimo_origen, m.creado_en AS ultimo_en,
             COALESCE((s.contexto->>'modoHumano')::boolean, false) AS modo_humano,
@@ -53,12 +56,15 @@ chatRouter.get('/', async (_req: Request, res: Response) => {
             al.creado_en AS escalado_en,
             (s.contexto->>'asignadoA')::uuid AS asignado_a,
             asig.nombre AS asignado_a_nombre,
-            (s.contexto->>'asignadoEn')::timestamptz AS asignado_en
+            (s.contexto->>'asignadoEn')::timestamptz AS asignado_en,
+            (f.telefono IS NOT NULL) AS fijado,
+            f.fijado_en
        FROM (
          SELECT DISTINCT ON (telefono) telefono, texto, origen, creado_en
            FROM mensajes_chat
           ORDER BY telefono, creado_en DESC
        ) m
+       LEFT JOIN chats_fijados f ON f.telefono = m.telefono AND f.usuario_id = $1
        LEFT JOIN sesiones_chat s ON s.telefono = m.telefono
        LEFT JOIN clientes c ON c.telefono = m.telefono
        LEFT JOIN choferes ch ON ch.telefono = m.telefono
@@ -78,10 +84,31 @@ chatRouter.get('/', async (_req: Request, res: Response) => {
           ORDER BY a.creado_en DESC LIMIT 1
        ) al ON true
        LEFT JOIN usuarios asig ON asig.id = (s.contexto->>'asignadoA')::uuid
-      ORDER BY m.creado_en DESC
+      ORDER BY (f.telefono IS NOT NULL) DESC, m.creado_en DESC
       LIMIT 200`,
+    [req.user!.id],
   );
   res.json(rows);
+});
+
+const fijarSchema = z.object({ fijado: z.boolean() });
+
+/**
+ * PUT /api/chat/:telefono/fijado — fija o desfija un chat SOLO para el
+ * usuario logueado (los demás operadores no lo ven fijado).
+ */
+chatRouter.put('/:telefono/fijado', async (req: Request, res: Response) => {
+  const parsed = fijarSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
+  if (parsed.data.fijado) {
+    await query(
+      'INSERT INTO chats_fijados (usuario_id, telefono) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [req.user!.id, req.params.telefono],
+    );
+  } else {
+    await query('DELETE FROM chats_fijados WHERE usuario_id = $1 AND telefono = $2', [req.user!.id, req.params.telefono]);
+  }
+  res.json({ ok: true, fijado: parsed.data.fijado });
 });
 
 /**
