@@ -411,7 +411,19 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 }
 
 .page-enter {
-  animation: pageEnter .45s var(--ease-pop) both;
+  /* Sin "both"/"forwards" a propósito: con fill-mode persistente, el
+     `transform` del keyframe final (aunque sea la matriz identidad,
+     visualmente "sin transform") queda aplicado para siempre después de la
+     animación — y CUALQUIER transform no-"none" en un ancestro arma un
+     nuevo contenedor de posicionamiento para sus descendientes con
+     position:fixed. Eso rompía TODOS los popups (overlay de modal
+     centrado con position:fixed) de cualquier página: el centrado se
+     calculaba contra la caja de este wrapper en vez de contra la ventana
+     real, y aparecían cortados arriba/abajo según cuánto medía la página.
+     Sin fill-mode, apenas termina la animación (0.45s) el transform vuelve
+     a su valor base real (ninguno) y los position:fixed anidados vuelven a
+     centrarse contra la ventana como corresponde. */
+  animation: pageEnter .45s var(--ease-pop);
 }
 
 /* ===== TOPBAR ===== */
