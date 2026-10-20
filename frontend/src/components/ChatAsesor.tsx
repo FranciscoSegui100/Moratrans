@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Send, Wallet, Mic, MicOff, Play, Square } from 'lucide-react';
+import { Mp3Encoder } from '@breezystack/lamejs';
 import { api } from '../api/client';
 import { conectarSocket } from '../api/socket';
 import { useToast } from './Toast';
@@ -65,7 +66,55 @@ function AudioPlayer({ mensajeId, origen }: { mensajeId: string; origen: Mensaje
   );
 }
 
-/** Botón de grabación con MediaRecorder — graba en memoria y envía al backend. */
+/**
+ * Convierte cualquier blob grabado por el navegador (WebM u OGG) a MP3 (audio/mpeg)
+ * mono de 64 kbps, compatible 100% con WhatsApp Cloud API y todos los dispositivos.
+ */
+async function convertirAudioAMp3(blob: Blob): Promise<Blob> {
+  const arrayBuffer = await blob.arrayBuffer();
+  const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+  const audioCtx = new AudioContextClass();
+  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+  const numChannels = audioBuffer.numberOfChannels;
+  const length = audioBuffer.length;
+  const pcm = new Int16Array(length);
+
+  if (numChannels === 1) {
+    const ch0 = audioBuffer.getChannelData(0);
+    for (let i = 0; i < length; i++) {
+      const s = Math.max(-1, Math.min(1, ch0[i]));
+      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+  } else {
+    const ch0 = audioBuffer.getChannelData(0);
+    const ch1 = audioBuffer.getChannelData(1);
+    for (let i = 0; i < length; i++) {
+      const s = Math.max(-1, Math.min(1, (ch0[i] + ch1[i]) / 2));
+      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+  }
+
+  await audioCtx.close();
+
+  const sampleRate = audioBuffer.sampleRate;
+  const encoder = new Mp3Encoder(1, sampleRate, 64);
+  const mp3Data: Uint8Array[] = [];
+  const blockSize = 1152;
+
+  for (let i = 0; i < length; i += blockSize) {
+    const chunk = pcm.subarray(i, i + blockSize);
+    const buf = encoder.encodeBuffer(chunk);
+    if (buf.length > 0) mp3Data.push(buf);
+  }
+
+  const end = encoder.flush();
+  if (end.length > 0) mp3Data.push(end);
+
+  return new Blob(mp3Data as unknown as BlobPart[], { type: 'audio/mpeg' });
+}
+
+/** Botón de grabación con MediaRecorder — graba en memoria y envía al backend en formato MP3. */
 function GrabadorAudio({
   telefono,
   disabled,
@@ -89,19 +138,19 @@ function GrabadorAudio({
   async function iniciarGrabacion() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const opciones: MediaRecorderOptions = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
-        ? { mimeType: 'audio/ogg;codecs=opus' }
-        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      const opciones: MediaRecorderOptions = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? { mimeType: 'audio/webm;codecs=opus' }
+        : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+        ? { mimeType: 'audio/ogg;codecs=opus' }
         : {};
       const recorder = new MediaRecorder(stream, opciones);
       chunksRef.current = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
-        const mime = recorder.mimeType || 'audio/ogg';
+        const mime = recorder.mimeType || 'audio/webm';
         const blob = new Blob(chunksRef.current, { type: mime });
-        await enviarAudio(blob, mime);
+        await procesarYEnviar(blob);
       };
       recorder.start(250);
       mediaRef.current = recorder;
@@ -127,18 +176,19 @@ function GrabadorAudio({
     setSegundos(0);
   }
 
-  async function enviarAudio(blob: Blob, mime: string) {
+  async function procesarYEnviar(blobOriginal: Blob) {
     setEnviando(true);
     try {
-      const ext = mime.includes('ogg') ? 'ogg' : mime.includes('webm') ? 'webm' : 'ogg';
+      // Convertir a MP3 para compatibilidad garantizada con Meta WhatsApp Cloud API
+      const mp3Blob = await convertirAudioAMp3(blobOriginal);
       const form = new FormData();
-      form.append('audio', blob, `nota_voz.${ext}`);
+      form.append('audio', mp3Blob, 'nota_voz.mp3');
       await api.post(`/api/chat/${encodeURIComponent(telefono)}/audio`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       onEnviado();
     } catch (e: any) {
-      show('error', 'No se pudo enviar el audio', e.response?.data?.error || 'Error desconocido');
+      show('error', 'No se pudo enviar el audio', e.response?.data?.error || e.message || 'Error desconocido');
     } finally {
       setEnviando(false);
     }

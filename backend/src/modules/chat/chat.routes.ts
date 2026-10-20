@@ -404,7 +404,7 @@ chatRouter.post(
       return res.status(502).json({
         error: ventanaVencida
           ? 'No se pudo enviar: pasaron más de 24hs desde el último mensaje del cliente.'
-          : 'No se pudo enviar el audio por WhatsApp. Probá de nuevo.',
+          : (motivoMeta ? `WhatsApp: ${motivoMeta}` : 'No se pudo enviar el audio por WhatsApp. Probá de nuevo.'),
       });
     }
 
