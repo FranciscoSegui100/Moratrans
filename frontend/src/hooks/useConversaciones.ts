@@ -20,6 +20,10 @@ export interface Conversacion {
   asignado_a_nombre: string | null;
   /** Desde cuándo la tiene asignada — base del timer cuando la tomó un operador sin escalación del bot. */
   asignado_en: string | null;
+  /** 'aprobada' = cliente de cuenta corriente; cualquier otro valor (o null, sin fila en clientes) = cliente común. */
+  cuenta_corriente_estado: 'sin_pedir' | 'pendiente' | 'aprobada' | 'rechazada' | null;
+  /** Si no es null, esta conversación es con un CHOFER (no un cliente) — la lista mezcla ambos. */
+  chofer_nombre: string | null;
 }
 
 interface MensajeChatSocket {
@@ -72,6 +76,8 @@ export function useConversaciones() {
             asignado_a: actual?.asignado_a ?? null,
             asignado_a_nombre: actual?.asignado_a_nombre ?? null,
             asignado_en: actual?.asignado_en ?? null,
+            cuenta_corriente_estado: actual?.cuenta_corriente_estado ?? null,
+            chofer_nombre: actual?.chofer_nombre ?? null,
           },
           ...resto,
         ];

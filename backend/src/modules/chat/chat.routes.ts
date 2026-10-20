@@ -34,13 +34,21 @@ const ROLES_ADJUNTOS: Rol[] = ['admin', 'operador', 'finanzas'];
  *    esta conversación ahora mismo (ver sesiones_chat.contexto.asignadoA),
  *    y desde cuándo — es la base del timer cuando un operador la tomó a mano
  *    sin pasar por una escalación del bot.
+ *  - `cuenta_corriente_estado`: para que el asesor vea de un vistazo si es
+ *    cliente de cuenta corriente ('aprobada') o común, sin tener que abrir
+ *    su ficha. NULL si el teléfono todavía no tiene fila en `clientes`.
+ *  - `chofer_nombre`: esta lista mezcla charlas con clientes Y con choferes
+ *    (ambos le escriben al mismo bot) — sin esto no había forma de saber,
+ *    de un vistazo, si una fila era un chofer y no un cliente común.
  */
 chatRouter.get('/', async (_req: Request, res: Response) => {
   const rows = await query(
     `SELECT m.telefono, m.texto AS ultimo_mensaje, m.origen AS ultimo_origen, m.creado_en AS ultimo_en,
             COALESCE((s.contexto->>'modoHumano')::boolean, false) AS modo_humano,
             uc.creado_en AS ultimo_cliente_en,
-            COALESCE(NULLIF(c.nombre, 'Sin nombre'), p.cliente_nombre) AS nombre,
+            COALESCE(NULLIF(c.nombre, 'Sin nombre'), p.cliente_nombre, ch.nombre) AS nombre,
+            c.cuenta_corriente_estado,
+            ch.nombre AS chofer_nombre,
             al.mensaje AS motivo,
             al.creado_en AS escalado_en,
             (s.contexto->>'asignadoA')::uuid AS asignado_a,
@@ -53,6 +61,7 @@ chatRouter.get('/', async (_req: Request, res: Response) => {
        ) m
        LEFT JOIN sesiones_chat s ON s.telefono = m.telefono
        LEFT JOIN clientes c ON c.telefono = m.telefono
+       LEFT JOIN choferes ch ON ch.telefono = m.telefono
        LEFT JOIN LATERAL (
          SELECT mc.creado_en FROM mensajes_chat mc
           WHERE mc.telefono = m.telefono AND mc.origen = 'cliente'

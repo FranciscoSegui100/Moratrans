@@ -124,6 +124,18 @@ function ChipEstado({ c }: { c: Conversacion }) {
 }
 
 /**
+ * Quién es el otro lado de la charla: esta lista mezcla clientes Y choferes
+ * (ambos le escriben al mismo bot), y entre los clientes hay comunes y de
+ * cuenta corriente (no pagan por entrega — importa saberlo antes de
+ * responder). Sin este chip no había forma de distinguirlos de un vistazo.
+ */
+function ChipTipoContacto({ c }: { c: Conversacion }) {
+  if (c.chofer_nombre) return <span className="chip chip--chofer">🚚 Chofer</span>;
+  if (c.cuenta_corriente_estado === 'aprobada') return <span className="chip chip--cc">Cuenta corriente</span>;
+  return <span className="chip chip--comun">Cliente común</span>;
+}
+
+/**
  * Fila de la lista, como componente aparte (no inline en el .map de
  * Conversaciones) porque necesita su propio useTiempoEspera — llamar un hook
  * dentro de un .map() del padre violaría las reglas de hooks apenas la
@@ -161,6 +173,7 @@ function ConversacionItem({
         {origenPreviewPrefix[c.ultimo_origen]}{c.ultimo_mensaje}
       </p>
       <div className="asesoria-item-pie">
+        <ChipTipoContacto c={c} />
         <ChipEstado c={c} />
         {c.modo_humano && espera.minutos !== null && (
           <span className={`sla-chip sla-chip--${espera.nivel}`}>
@@ -345,7 +358,10 @@ export function Conversaciones() {
                 <div className="asesoria-panel-quien">
                   <span className="asesoria-avatar asesoria-avatar-lg">{iniciales(activa.nombre, activa.telefono)}</span>
                   <div>
-                    <div className="asesoria-panel-nombre">{activa.nombre ?? activa.telefono}</div>
+                    <div className="asesoria-panel-nombre" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {activa.nombre ?? activa.telefono}
+                      <ChipTipoContacto c={activa} />
+                    </div>
                     {activa.nombre && <div className="asesoria-panel-tel">{activa.telefono}</div>}
                   </div>
                 </div>

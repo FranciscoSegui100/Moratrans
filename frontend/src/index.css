@@ -1536,6 +1536,9 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 }
 .chip--bot { background: var(--bg-surface); border-color: var(--border-light); color: var(--text-secondary); }
 .chip--cerrada { background: var(--purple-bg); border-color: rgba(125,106,158,0.25); color: var(--purple); }
+.chip--chofer { background: var(--accent-tint); border-color: rgba(181,101,46,0.25); color: var(--accent-dark); }
+.chip--cc { background: var(--warning-bg); border-color: rgba(173,127,36,0.25); color: var(--warning); }
+.chip--comun { background: var(--bg-surface); border-color: var(--border-light); color: var(--text-muted); }
 
 /* ===== TIMER DE ESPERA (SLA) — verde/ámbar/rojo según hace cuánto espera una conversación a un humano ===== */
 .sla-chip {
