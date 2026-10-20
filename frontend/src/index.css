@@ -60,6 +60,20 @@
   --ease-pop: cubic-bezier(.2, 1.4, .4, 1);
   --font-mono: 'Roboto Mono', 'SFMono-Regular', Consolas, monospace;
   --font-display: 'Instrument Serif', Georgia, serif;
+
+  /* ── Fondo de curvas de nivel (FondoCurvas, detrás de todo el panel) ── */
+  --curvas-fondo:    #eef1ef;
+  --curvas-linea:    #17231e;
+  --curvas-linea-op: 0.13;
+  --curvas-luz:      #378ADD;
+
+  /* ── Fondo del login (FondoRuta). A diferencia del resto, el login es
+     siempre oscuro: estos tokens NO se redefinen en los bloques de tema
+     oscuro a propósito, no es un olvido. ── */
+  --login-fondo:  #0e1613;
+  --login-linea:  #ffffff;
+  --login-ruta:   #7cc4ff;
+  --login-camion: #8fcfff;
 }
 
 /* ===================================================
@@ -104,6 +118,11 @@
     --shadow-sm:   0 1px 3px rgba(0,0,0,0.32);
     --shadow:      0 14px 32px -12px rgba(0,0,0,0.5);
     --shadow-hover:0 26px 48px -14px rgba(0,0,0,0.6), 0 0 0 1px var(--accent-tint);
+
+    --curvas-fondo:    #141a18;
+    --curvas-linea:    #ffffff;
+    --curvas-linea-op: 0.08;
+    --curvas-luz:      #60a5fa;
   }
 }
 
@@ -140,6 +159,11 @@
   --shadow-sm:   0 1px 3px rgba(0,0,0,0.32);
   --shadow:      0 14px 32px -12px rgba(0,0,0,0.5);
   --shadow-hover:0 26px 48px -14px rgba(0,0,0,0.6), 0 0 0 1px var(--accent-tint);
+
+  --curvas-fondo:    #141a18;
+  --curvas-linea:    #ffffff;
+  --curvas-linea-op: 0.08;
+  --curvas-luz:      #60a5fa;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1735,6 +1759,9 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   background: var(--bg-base);
 }
 .login-card {
+  /* Por encima de FondoRuta (z-index 0): el camión le pasa por detrás. */
+  position: relative;
+  z-index: 1;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -2045,4 +2072,117 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 @keyframes pulse-confirmar {
   0%, 100% { box-shadow: 0 0 0 0 var(--warning-bg); }
   50% { box-shadow: 0 0 0 4px var(--warning-bg); }
+}
+
+/* ===================================================
+   FONDOS DE CURVAS DE NIVEL
+   Dos estados de una misma imagen: el panel (claro/oscuro
+   según el tema, con una luz azul que recorre las curvas) y
+   el login (oscuro fijo, con un camión viajando por la ruta).
+   Las dos capas son decorativas: pointer-events:none y por
+   debajo del contenido. Se anima únicamente `transform` y
+   `offset-distance`, y toda animación va envuelta en
+   prefers-reduced-motion: no-preference.
+   Los trazados viven en src/lib/curvas.ts.
+   =================================================== */
+
+/* ===== FONDO DEL PANEL ===== */
+/* z-index negativo, no 0: un position:fixed con z-index:auto/0 se pinta por
+   ENCIMA del texto en flujo normal (que no está posicionado) y taparía todo
+   el contenido del panel. Con -1 queda por debajo del contenido y por encima
+   del fondo del <body>. Ni .layout ni .main-content tienen background, así
+   que nada en flujo lo tapa. */
+.fondo-curvas {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--curvas-fondo);
+}
+.fondo-curvas svg { display: block; width: 100%; height: 100%; }
+
+.fondo-curvas .curvas path {
+  stroke: var(--curvas-linea);
+  stroke-opacity: var(--curvas-linea-op);
+}
+.fondo-curvas .curvas-luz path {
+  stroke: var(--curvas-luz);
+  stroke-opacity: 0.4;
+  stroke-width: 1.5;
+}
+
+/* La banda de luz se mueve sola; las curvas no se tocan. 1000px en unidades
+   del viewBox (680 de ancho) alcanza para que la banda entre por la izquierda
+   y salga por la derecha. */
+@keyframes barrido {
+  from { transform: translateX(0); }
+  to   { transform: translateX(1000px); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fondo-curvas .banda { animation: barrido 15s linear infinite; }
+}
+/* Sin animación la banda se queda en su x inicial (fuera del viewBox) y la
+   capa azul desaparecería por completo. Se la deja quieta cerca del centro,
+   igual que el camión del login, para que el acento de marca siga estando. */
+@media (prefers-reduced-motion: reduce) {
+  .fondo-curvas .banda { transform: translateX(480px); }
+}
+
+/* ===== FONDO DEL LOGIN ===== */
+/* Acá sí z-index 0: .login-page tiene background propio y taparía un -1. El
+   fondo se pinta sobre ese background y la tarjeta se levanta con z-index 1
+   (más abajo), así el camión le pasa por detrás. */
+.fondo-ruta {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: var(--login-fondo);
+}
+.fondo-ruta svg { display: block; width: 100%; height: 100%; }
+
+.fondo-ruta .curvas path {
+  stroke: var(--login-linea);
+  stroke-opacity: 0.07;
+}
+.fondo-ruta #ruta {
+  stroke: var(--login-ruta);
+  stroke-opacity: 0.22;
+  stroke-width: 1.2;
+}
+
+.fondo-ruta .camion {
+  fill: none;
+  stroke: var(--login-camion);
+  stroke-opacity: 0.85;
+  stroke-width: 1.3;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+
+  /* Misma curva que RUTA en src/lib/curvas.ts: si se cambia una, cambiar la
+     otra (CSS no puede leer el módulo). */
+  offset-path: path("M-30 280 C 90 240, 190 300, 300 258 S 520 198, 710 240");
+  offset-rotate: auto;
+  offset-distance: 0%;
+  /* El punto del camión que se apoya sobre la ruta es su transform-origin, y
+     por defecto eso es el centro del viewBox (50% 50%), no el origen: sin
+     esto el camión viaja desplazado 340x170 respecto de la curva. */
+  transform-box: view-box;
+  transform-origin: 0 0;
+}
+@keyframes conducir {
+  from { offset-distance: 0%; }
+  to   { offset-distance: 100%; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fondo-ruta .camion { animation: conducir 26s linear infinite; }
+}
+/* Quieto, pero en un punto donde se lee como parte del dibujo. */
+@media (prefers-reduced-motion: reduce) {
+  .fondo-ruta .camion { offset-distance: 45%; }
+}
+/* Sin offset-path el camión quedaría apilado en el origen, arriba a la
+   izquierda: mejor que no aparezca y queden solo las curvas. */
+@supports not (offset-path: path("M0 0")) {
+  .fondo-ruta .camion { display: none; }
 }

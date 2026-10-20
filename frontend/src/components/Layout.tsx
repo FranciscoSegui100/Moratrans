@@ -28,6 +28,7 @@ import { useToast } from './Toast';
 import { tipoLabel } from '../lib/alertLabels';
 import { armarSonidoAlerta, playAlertSound } from '../lib/notificationSound';
 import { useTheme } from '../hooks/useTheme';
+import { FondoCurvas } from './FondoCurvas';
 
 interface AlertaSocket { tipo: string; mensaje: string; cliente_telefono?: string | null }
 interface ConversacionActualizadaSocket { telefono: string; modo_humano?: boolean }
@@ -263,6 +264,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div className={`layout ${sidebarOculta ? 'sidebar-hidden' : ''}`}>
+      <FondoCurvas />
       <button
         className="sidebar-toggle"
         onClick={() => setSidebarOculta((o) => !o)}

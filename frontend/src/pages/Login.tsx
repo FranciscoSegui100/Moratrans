@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { FondoRuta } from '../components/FondoRuta';
 
 export function Login() {
   const { login, verificarMfa } = useAuth();
@@ -65,6 +66,7 @@ export function Login() {
   if (challengeId) {
     return (
       <div className="login-page">
+        <FondoRuta />
         <div className="login-card">
           <div className="login-logo">
             <img src="/logo.png" alt="MoraTrans" className="login-logo-mark" />
@@ -119,6 +121,7 @@ export function Login() {
 
   return (
     <div className="login-page">
+      <FondoRuta />
       <div className="login-card">
         <div className="login-logo">
           <img src="/logo.png" alt="MoraTrans" className="login-logo-mark" />
