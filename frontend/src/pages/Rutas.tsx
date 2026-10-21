@@ -1196,11 +1196,19 @@ export function Rutas() {
   const rutasAbiertasAnteriores = rutasConPendientes.filter((r) => r.fecha < fecha);
 
   const visitasPendientes = agruparPendientes(cola);
-  // Pedidos sin rutear que deben verse en la bolsa: los del día seleccionado MÁS
-  // todos los atrasados de días anteriores que hayan quedado colgados sin rutear.
-  const pedidosAtrasados = visitasPendientes.filter((v) => v.fecha < fecha);
-  const pedidosDelDia = visitasPendientes.filter((v) => v.fecha === fecha);
-  const pedidosBolsa = visitasPendientes.filter((v) => v.fecha <= fecha);
+  // Un pedido sin rutear "vive" en la bolsa de su fecha EFECTIVA, no la
+  // original: mientras no pasó su fecha, esa fecha es la suya; en cuanto se
+  // pasó (quedó atrasado), su fecha efectiva pasa a ser HOY y ahí se queda —
+  // nunca vuelve a aparecer en la bolsa de su día original ni de ningún otro
+  // día ya pasado. Antes un pedido atrasado seguía viviendo en su propio día
+  // viejo: con las flechitas para moverse de día, eso dejaba armar una ruta
+  // fechada ese día que ya pasó, y el aviso al chofer/cliente terminaba
+  // mencionando una fecha vencida sin sentido.
+  const hoy = hoyISO();
+  const fechaEfectiva = (f: string) => (f < hoy ? hoy : f);
+  const pedidosBolsa = visitasPendientes.filter((v) => fechaEfectiva(v.fecha) === fecha);
+  const pedidosAtrasados = pedidosBolsa.filter((v) => v.fecha < hoy);
+  const pedidosDelDia = pedidosBolsa.filter((v) => v.fecha === fecha);
   const sinAsignarDelDia = pedidosDelDia.length;
   const atrasadosSinRutear = pedidosAtrasados.length;
   const totalBolsa = pedidosBolsa.length;
@@ -1497,9 +1505,12 @@ export function Rutas() {
    * hasta que se cierre el aviso o se vuelva a auto-armar.
    */
   async function autoArmarRutas() {
-    const visitasParaArmar = agruparPendientes(cola).filter((v) => v.fecha <= fecha && (v.entrega?.id ?? v.retiro?.id));
+    // Mismo criterio que la bolsa (fecha efectiva): no arma rutas fechadas en el pasado.
+    const visitasParaArmar = agruparPendientes(cola).filter(
+      (v) => fechaEfectiva(v.fecha) === fecha && (v.entrega?.id ?? v.retiro?.id),
+    );
     if (visitasParaArmar.length === 0) {
-      show('info', 'Nada para armar', 'No hay pedidos sin rutear para este día ni atrasados.');
+      show('info', 'Nada para armar', fecha === hoy ? 'No hay pedidos sin rutear para hoy ni atrasados.' : 'No hay pedidos sin rutear para este día.');
       return;
     }
     if (choferes.length === 0) {
@@ -1864,7 +1875,9 @@ export function Rutas() {
           </div>
 
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
-            Mostrando pedidos de la fecha y pedidos atrasados acumulados. Tocá un pedido para ver el detalle. Arrastralo sobre un chofer (abajo) para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
+            {fecha === hoy
+              ? 'Mostrando los pedidos de hoy y los atrasados acumulados de días anteriores.'
+              : 'Mostrando solo los pedidos de este día.'} Tocá un pedido para ver el detalle. Arrastralo sobre un chofer (abajo) para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
           </div>
 
           {proximaFechaConPedidos && (
@@ -1900,10 +1913,12 @@ export function Rutas() {
           )}
 
           {totalBolsa === 0 ? (
-            <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes para este día ni atrasados.</div>
+            <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>
+              {fecha === hoy ? 'No hay pedidos pendientes para hoy ni atrasados.' : 'No hay pedidos pendientes para este día.'}
+            </div>
           ) : visiblesEnBolsa === 0 ? (
             <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>
-              No hay {ETIQUETA_TIPO_VISITA[filtroTipoBolsa as TipoVisita].toLowerCase()} sin rutear para este día ni atrasados.
+              No hay {ETIQUETA_TIPO_VISITA[filtroTipoBolsa as TipoVisita].toLowerCase()} sin rutear para {fecha === hoy ? 'hoy ni atrasados' : 'este día'}.
             </div>
           ) : (
             // Se ven ~2 filas de tarjetas; si hay más, scroll vertical acá adentro
@@ -1994,9 +2009,16 @@ export function Rutas() {
                               </span>
                             </div>
                           </div>
-                          <span className={`tag ${visita.entrega && visita.retiro ? 'recambio' : visita.entrega ? 'entrega' : 'retiro'}`} style={{ fontSize: '0.68rem', padding: '2px 6px', flexShrink: 0 }}>
-                            {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
-                          </span>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', flexShrink: 0 }}>
+                            <span className={`tag ${visita.entrega && visita.retiro ? 'recambio' : visita.entrega ? 'entrega' : 'retiro'}`} style={{ fontSize: '0.68rem', padding: '2px 6px' }}>
+                              {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
+                            </span>
+                            {categoriaDia(dias) === 'atrasado' && (
+                              <span style={{ fontSize: '0.63rem', fontWeight: 700, color: '#fff', background: 'var(--danger)', padding: '2px 6px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap' }}>
+                                ⚠️ Atrasado
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
