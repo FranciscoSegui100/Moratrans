@@ -855,6 +855,41 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   display: flex;
   flex-direction: column;
 }
+.activity-day {
+  display: flex;
+  flex-direction: column;
+}
+/* Encabezado de día: etiqueta + cantidad y una línea que ocupa el resto, para
+   que cada jornada se lea como un bloque aparte dentro del mismo feed. */
+.activity-day-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 0 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.activity-day:first-child .activity-day-label {
+  padding-top: 4px;
+}
+.activity-day-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.activity-day-count {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 1px 7px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
 .activity-item {
   display: flex;
   align-items: center;
