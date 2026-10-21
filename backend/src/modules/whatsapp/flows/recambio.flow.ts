@@ -618,11 +618,34 @@ async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: s
   const vaciadero = await resolverUbicacion('vaciadero');
   const deposito = await resolverUbicacion('deposito');
 
-  await query(
-    `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
-     VALUES ('retiro', $12, $1, $2, $3, $4, $5, $6, $7, $8, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
-    [numero, to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, fechaRecambio],
+  // ¿Ya había un retiro activo para este contenedor (típicamente el
+  // automático por vencimiento, ver jobs/alertas.cron.ts)? Se adopta como la
+  // mitad "retiro" de este recambio en vez de insertar uno nuevo — sin esto,
+  // el INSERT de abajo violaba el índice único ux_viajes_activo_por_tipo (un
+  // solo viaje activo por contenedor+tipo) y el recambio quedaba a medias
+  // (la entrega del vacío sí se creaba, el retiro del lleno no).
+  const [retiroExistente] = await query<{ id: string }>(
+    `SELECT id FROM viajes
+      WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
+      ORDER BY creado_en DESC LIMIT 1`,
+    [numero],
   );
+  if (retiroExistente) {
+    await query(
+      `UPDATE viajes SET
+         fecha = $1, zona = $2, destino_direccion = $3, destino_lat = $4, destino_lng = $5,
+         direccion_verificada = $6, horario_preferido = $7, grupo_id = $8,
+         notas = 'Retiro automático por vencimiento — pasó a formar parte de un recambio pedido por WhatsApp.'
+       WHERE id = $9`,
+      [fechaRecambio, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, retiroExistente.id],
+    );
+  } else {
+    await query(
+      `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+       VALUES ('retiro', $12, $1, $2, $3, $4, $5, $6, $7, $8, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
+      [numero, to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, fechaRecambio],
+    );
+  }
   await query(
     `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, importe, es_cuenta_corriente, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
      VALUES ('entrega', $12, $1, $2, $3, $4, $5, $6, $7, $8, TRUE, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,

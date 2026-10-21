@@ -706,12 +706,39 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       // y caer en CURRENT_DATE.
       const fechaViaje = venceEn ?? info?.fecha_entrega ?? null;
       const hoy = hoyMendozaISO();
-      await query(
-        `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion, pago_id)
-         VALUES ('retiro', COALESCE($1, $14::date), $2, $3, $4, $5, $6, $7, $8, $9, 'programado', 'Creado al validar el pago (recambio)', $10, $11, $12, $13)`,
-        [fechaViaje, choferId ?? null, info!.contenedor_recambio_numero, info?.cliente_telefono ?? null, info?.zona ?? null,
-         info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, pagoId, hoy],
+
+      // ¿Ya había un retiro activo para este contenedor (típicamente el
+      // automático por vencimiento, ver jobs/alertas.cron.ts)? Se adopta
+      // como la mitad "retiro" de este recambio en vez de insertar uno
+      // nuevo — sin esto, el INSERT de abajo violaba el índice único
+      // ux_viajes_activo_por_tipo (un solo viaje activo por contenedor+tipo)
+      // y la validación del pago fallaba entera (bug real: contenedor
+      // vencido, cliente pide un recambio en vez de un retiro simple).
+      const [retiroExistente] = await query<{ id: string }>(
+        `SELECT id FROM viajes
+          WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
+          ORDER BY creado_en DESC LIMIT 1`,
+        [info!.contenedor_recambio_numero],
       );
+      if (retiroExistente) {
+        await query(
+          `UPDATE viajes SET
+             fecha = COALESCE($1, $9::date), chofer_id = COALESCE(chofer_id, $2),
+             zona = $3, destino_direccion = $4, destino_lat = $5, destino_lng = $6,
+             horario_preferido = $7, grupo_id = $8, pago_id = $10,
+             notas = 'Retiro automático por vencimiento — pasó a formar parte de un recambio al validar el pago.'
+           WHERE id = $11`,
+          [fechaViaje, choferId ?? null, info?.zona ?? null, info?.destino_direccion ?? null, info?.destino_lat ?? null,
+           info?.destino_lng ?? null, info?.horario_preferido ?? null, grupoId, hoy, pagoId, retiroExistente.id],
+        );
+      } else {
+        await query(
+          `INSERT INTO viajes (tipo, fecha, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion, pago_id)
+           VALUES ('retiro', COALESCE($1, $14::date), $2, $3, $4, $5, $6, $7, $8, $9, 'programado', 'Creado al validar el pago (recambio)', $10, $11, $12, $13)`,
+          [fechaViaje, choferId ?? null, info!.contenedor_recambio_numero, info?.cliente_telefono ?? null, info?.zona ?? null,
+           info?.destino_direccion ?? null, info?.destino_lat ?? null, info?.destino_lng ?? null, info?.horario_preferido ?? null, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, pagoId, hoy],
+        );
+      }
       await query(
         // El costo del recambio va en la entrega (el nuevo contenedor), no en el
         // retiro — mismo criterio que el recambio directo de cuenta corriente
