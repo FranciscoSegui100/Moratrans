@@ -2015,7 +2015,7 @@ export function Rutas() {
                       <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', background: 'var(--bg-surface)', padding: '4px 8px', borderRadius: 'var(--radius-sm)' }}>
                         📍 {zona} ({items.length})
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: '10px' }}>
                       {items.map((visita) => {
                     const fuenteDireccion = visita.destino_direccion
                       ? visita
@@ -2059,27 +2059,12 @@ export function Rutas() {
                         style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '10px 12px', cursor: 'grab', marginBottom: 0 }}
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-                          <div>
-                            <div className="cli" style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: '1.25' }}>
-                              {fuenteDireccion
-                                ? <DireccionMaps direccion={direccionPedido} lat={fuenteDireccion.destino_lat} lng={fuenteDireccion.destino_lng} />
-                                : `📍 ${direccionPedido}`}
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: '1.25', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {nombrePedido || visita.cliente_telefono || 'Sin nombre'}
                             </div>
-                            <div className="sub" style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '3px' }}>
-                              {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
-                              {nombrePedido ? ` · ${nombrePedido}` : ''}
-                              {visita.cliente_telefono ? ` · 📞 ${visita.cliente_telefono}` : ''}
-                              {horarioPedido ? ` · 🕐 ${horarioPedido}` : ''}
-                              {importePedido != null ? ` · $${importePedido.toLocaleString('es-AR')}` : ''}
-                              {' · '}
-                              <span style={{
-                                color: espera ? 'var(--danger)' : esFutura ? 'var(--text-muted)' : 'inherit',
-                                fontStyle: esFutura ? 'italic' : 'normal',
-                                fontWeight: espera ? 700 : 400,
-                              }}>
-                                {espera && <AlertTriangle size={11} strokeWidth={2} style={{ verticalAlign: '-1px', marginRight: '2px' }} />}
-                                {etiquetaEspera(dias, visita.fecha)}
-                              </span>
+                            <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--accent)', lineHeight: '1.3', marginTop: '2px' }}>
+                              {visita.zona ?? zona}
                             </div>
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', flexShrink: 0 }}>
@@ -2092,6 +2077,28 @@ export function Rutas() {
                               </span>
                             )}
                           </div>
+                        </div>
+
+                        <div className="cli" style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: '1.3' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Dirección: </span>
+                          {fuenteDireccion
+                            ? <DireccionMaps direccion={direccionPedido} lat={fuenteDireccion.destino_lat} lng={fuenteDireccion.destino_lng} />
+                            : direccionPedido}
+                        </div>
+
+                        <div className="sub" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                          {visita.cliente_telefono ? `📞 ${visita.cliente_telefono}` : ''}
+                          {horarioPedido ? ` · 🕐 ${horarioPedido}` : ''}
+                          {importePedido != null ? ` · $${importePedido.toLocaleString('es-AR')}` : ''}
+                          {' · '}
+                          <span style={{
+                            color: espera ? 'var(--danger)' : esFutura ? 'var(--text-muted)' : 'inherit',
+                            fontStyle: esFutura ? 'italic' : 'normal',
+                            fontWeight: espera ? 700 : 400,
+                          }}>
+                            {espera && <AlertTriangle size={11} strokeWidth={2} style={{ verticalAlign: '-1px', marginRight: '2px' }} />}
+                            {etiquetaEspera(dias, visita.fecha)}
+                          </span>
                         </div>
 
                         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
