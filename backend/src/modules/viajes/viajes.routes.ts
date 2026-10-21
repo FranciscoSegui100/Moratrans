@@ -575,6 +575,11 @@ const patchSchema = z.object({
   remito: z.string().nullable().optional(),
   importe: z.coerce.number().nonnegative().nullable().optional(),
   ubicacion_id: z.string().uuid().nullable().optional(),
+  // Corrección de departamento/dirección por un asesor (ej. el cliente se
+  // equivocó de departamento al pedirlo) — ver guarda más abajo y el
+  // comentario de "cambiaZona".
+  zona: z.string().min(1).nullable().optional(),
+  destino_direccion: z.string().min(1).nullable().optional(),
 });
 
 /** PATCH /api/viajes/:id — cambiar estado, reasignar chofer o contenedor (admin/operador). */
@@ -629,9 +634,9 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
       const { rows: viajeRows } = await c.query<{
         tipo: string; fecha: string; ruta_id: string | null; orden: number | null;
         completada_en: string | null; ruta_confirmada_en: string | null; estado: string;
-        chofer_id: string | null; contenedor_numero: string | null;
+        chofer_id: string | null; contenedor_numero: string | null; zona: string | null; importe: string | null;
       }>(
-        'SELECT tipo, fecha, ruta_id, orden, completada_en, ruta_confirmada_en, estado, chofer_id, contenedor_numero FROM viajes WHERE id = $1 FOR UPDATE',
+        'SELECT tipo, fecha, ruta_id, orden, completada_en, ruta_confirmada_en, estado, chofer_id, contenedor_numero, zona, importe FROM viajes WHERE id = $1 FOR UPDATE',
         [req.params.id],
       );
       if (!viajeRows[0]) return null;
@@ -646,8 +651,16 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
       const reasignaChofer = 'chofer_id' in parsed.data && viajeActual.chofer_id != null && parsed.data.chofer_id !== viajeActual.chofer_id;
       const reasignaContenedor =
         'contenedor_numero' in parsed.data && viajeActual.contenedor_numero != null && parsed.data.contenedor_numero !== viajeActual.contenedor_numero;
-      if (parsed.data.estado === 'cancelado' || reasignaChofer || reasignaContenedor) {
-        const accion = parsed.data.estado === 'cancelado' ? 'cancelar' : 'reasignar';
+      // Un asesor corrigiendo el departamento (ej. el cliente se equivocó al
+      // pedirlo) — mismo riesgo que reasignar: no tiene sentido tocarlo sobre
+      // una parada ya entregada/retirada o a la que el chofer ya está yendo.
+      // A propósito NO toca `importe`: si ya estaba pagado, el precio pagado
+      // queda congelado tal cual — ver `tarifaZonaNueva` en la respuesta,
+      // que el panel usa para avisar la diferencia y que un humano la
+      // resuelva (no se mueve plata sola).
+      const cambiaZona = 'zona' in parsed.data && parsed.data.zona != null && parsed.data.zona !== viajeActual.zona;
+      if (parsed.data.estado === 'cancelado' || reasignaChofer || reasignaContenedor || cambiaZona) {
+        const accion = parsed.data.estado === 'cancelado' ? 'cancelar' : cambiaZona ? 'cambiar el departamento de' : 'reasignar';
         if (viajeActual.completada_en != null) {
           return fail(`No se puede ${accion}: el chofer ya completó esta parada.`, 409);
         }
@@ -671,11 +684,24 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
           });
         }
       }
+      // Si cambia el departamento, no se inventa un precio (ver comentario de
+      // `cambiaZona` arriba): solo se valida que el departamento nuevo tenga
+      // tarifa activa (mismo departamento que ofrece el bot), y se devuelve
+      // su precio para que el panel compare contra lo ya pagado.
+      let tarifaZonaNueva: string | null = null;
+      if (cambiaZona) {
+        const { rows: tarifaRows } = await c.query<{ precio: string }>(
+          'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+          [parsed.data.zona],
+        );
+        if (!tarifaRows[0]) return fail(`"${parsed.data.zona}" no es un departamento con tarifa activa.`, 400);
+        tarifaZonaNueva = tarifaRows[0].precio;
+      }
       const { rows } = await c.query(
         `UPDATE viajes SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
         params,
       );
-      return rows[0] ?? null;
+      return rows[0] ? { ...rows[0], tarifaZonaNueva } : null;
     });
     if (!row) return res.status(404).json({ error: 'Viaje inexistente' });
 

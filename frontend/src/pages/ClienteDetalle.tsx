@@ -160,9 +160,13 @@ export function ClienteDetalle() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const puedeEditarRemito = tieneRol(user, 'admin', 'operador', 'finanzas');
+  const puedeEditarZona = tieneRol(user, 'admin', 'operador');
   const [enviando, setEnviando] = useState(false);
   const [editandoRemito, setEditandoRemito] = useState<string | null>(null);
   const [remitoForm, setRemitoForm] = useState('');
+  const [editandoZona, setEditandoZona] = useState<ViajeCliente | null>(null);
+  const [zonaForm, setZonaForm] = useState('');
+  const [guardandoZona, setGuardandoZona] = useState(false);
   const [viajeComprobantes, setViajeComprobantes] = useState<ViajeCliente | null>(null);
   const [comprobanteAbono, setComprobanteAbono] = useState<{ id: string; fecha: string; monto: number } | null>(null);
   const [reenviando, setReenviando] = useState<string | null>(null);
@@ -201,6 +205,38 @@ export function ClienteDetalle() {
       show('success', 'Nº de remito actualizado');
     } catch (err: any) {
       show('error', 'No se pudo guardar', err.response?.data?.error);
+    }
+  }
+
+  /**
+   * Corrige el departamento de un pedido ya confirmado (ej. el cliente se
+   * equivocó al pedirlo) — a propósito NO toca el importe ya pagado (ver
+   * comentario de `cambiaZona` en el backend): si el precio del departamento
+   * nuevo es distinto, se avisa para que alguien lo resuelva a mano, nada
+   * automático con la plata.
+   */
+  async function guardarZona() {
+    if (!editandoZona || !zonaForm) return;
+    setGuardandoZona(true);
+    try {
+      const { data } = await api.patch(`/api/viajes/${editandoZona.id}`, { zona: zonaForm });
+      queryClient.invalidateQueries({ queryKey: ['clientes', telefono, 'viajes'] });
+      const pagado = editandoZona.importe != null ? Number(editandoZona.importe) : null;
+      const tarifaNueva = data.tarifaZonaNueva != null ? Number(data.tarifaZonaNueva) : null;
+      if (pagado != null && tarifaNueva != null && pagado !== tarifaNueva) {
+        show(
+          'info',
+          'Departamento actualizado — revisar diferencia de precio',
+          `Se pagó $${pagado.toLocaleString('es-AR')} pero la tarifa de ${zonaForm} es $${tarifaNueva.toLocaleString('es-AR')}. La diferencia no se ajustó sola, coordinala con el cliente.`,
+        );
+      } else {
+        show('success', 'Departamento actualizado');
+      }
+      setEditandoZona(null);
+    } catch (err: any) {
+      show('error', 'No se pudo cambiar el departamento', err.response?.data?.error);
+    } finally {
+      setGuardandoZona(false);
     }
   }
 
@@ -770,6 +806,16 @@ export function ClienteDetalle() {
                             {v.zona && <div className="text-muted" style={{ fontSize: '11px' }}>{v.zona}</div>}
                           </>
                         ) : (v.zona ?? '—')}
+                        {puedeEditarZona && v.tipo !== 'alargue_retiro' && v.estado !== 'completado' && v.estado !== 'cancelado' && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            style={{ marginTop: '2px', padding: '1px 6px' }}
+                            onClick={() => { setEditandoZona(v); setZonaForm(v.zona ?? ''); }}
+                            title="Corregir el departamento (ej. el cliente se equivocó al pedirlo)"
+                          >
+                            Cambiar depto. <Pencil size={10} strokeWidth={1.75} />
+                          </button>
+                        )}
                       </td>
                       <td>{tipoBulto(v)}</td>
                       <td className="mono">{v.contenedor_numero ?? '—'}</td>
@@ -897,6 +943,50 @@ export function ClienteDetalle() {
                   </button>
                 </RoleGate>
               )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {editandoZona && (() => {
+        const pagado = editandoZona.importe != null ? Number(editandoZona.importe) : null;
+        const tarifaElegida = tarifas.find((t) => t.departamento === zonaForm && t.activo);
+        const precioNuevo = tarifaElegida ? Number(tarifaElegida.precio) : null;
+        const difiere = pagado != null && precioNuevo != null && pagado !== precioNuevo;
+        return (
+          <div className="modal-overlay" onClick={() => !guardandoZona && setEditandoZona(null)}>
+            <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <div className="section-title" style={{ margin: 0 }}>Cambiar departamento</div>
+                <button className="modal-close" onClick={() => setEditandoZona(null)}>
+                  <X size={18} strokeWidth={2} />
+                </button>
+              </div>
+              <p className="text-muted" style={{ marginTop: 0 }}>
+                {formatearFecha(editandoZona.fecha)} · {editandoZona.destino_direccion ?? editandoZona.zona ?? 'Sin dirección'}
+                {editandoZona.zona && <> — departamento actual: <b>{editandoZona.zona}</b></>}
+              </p>
+              <div className="form-group">
+                <label className="form-label">Departamento correcto</label>
+                <select className="form-input" value={zonaForm} onChange={(e) => setZonaForm(e.target.value)}>
+                  <option value="">Elegir...</option>
+                  {tarifas.filter((t) => t.activo).map((t) => (
+                    <option key={t.departamento} value={t.departamento}>{t.departamento} — ${Number(t.precio).toLocaleString('es-AR')}</option>
+                  ))}
+                </select>
+              </div>
+              {difiere && (
+                <div className="rc-warn" style={{ marginTop: '10px', background: 'var(--warning-bg)', padding: '8px 12px', borderRadius: 'var(--radius)' }}>
+                  ⚠️ Se pagó ${pagado!.toLocaleString('es-AR')} pero {zonaForm} tiene tarifa ${precioNuevo!.toLocaleString('es-AR')}.
+                  No se ajusta el importe solo — coordiná la diferencia con el cliente aparte.
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
+                <button className="btn btn-ghost" onClick={() => setEditandoZona(null)} disabled={guardandoZona}>Cancelar</button>
+                <button className="btn btn-primary" onClick={guardarZona} disabled={guardandoZona || !zonaForm || zonaForm === editandoZona.zona}>
+                  {guardandoZona ? 'Guardando...' : 'Confirmar cambio'}
+                </button>
+              </div>
             </div>
           </div>
         );
