@@ -1035,14 +1035,18 @@ rutasRouter.patch('/:id/paradas/:viajeId/contenedor', requireRol('admin', 'opera
       const { rows: rutaRows } = await c.query('SELECT id FROM rutas WHERE id = $1 FOR UPDATE', [rutaId]);
       if (!rutaRows[0]) fail('Ruta no encontrada.', 404);
 
-      const { rows: viajeRows } = await c.query<{ orden: number | null; tipo: string; completada_en: string | null }>(
-        `SELECT orden, tipo, completada_en FROM viajes WHERE id = $1 AND ruta_id = $2`,
+      const { rows: viajeRows } = await c.query<{
+        orden: number | null; tipo: string; completada_en: string | null;
+        contenedor_numero: string | null; ruta_confirmada_en: string | null; fecha: string;
+      }>(
+        `SELECT orden, tipo, completada_en, contenedor_numero, ruta_confirmada_en, fecha FROM viajes WHERE id = $1 AND ruta_id = $2`,
         [viajeId, rutaId],
       );
       const viaje = viajeRows[0];
       if (!viaje) fail('Parada no encontrada en esta ruta.', 404);
       if (viaje!.tipo !== 'entrega') fail('Solo se asigna contenedor en una parada de entrega.', 400);
       if (viaje!.completada_en != null) fail('Esta parada ya la terminó el chofer; no se le puede cambiar el contenedor.');
+      const contenedorAnterior = viaje!.contenedor_numero;
 
       const { porOrden } = await calcularDisponibilidadRuta(rutaId, ejecutar);
       const disponibles = porOrden.get(viaje!.orden!) ?? [];
@@ -1063,6 +1067,20 @@ rutasRouter.patch('/:id/paradas/:viajeId/contenedor', requireRol('admin', 'opera
       );
       if (conflicto[0]) {
         fail(`El contenedor ${contenedor_numero} ya está asignado a otra entrega activa.`, 409);
+      }
+
+      // Si esta parada ya estaba confirmada (reservó un contenedor al
+      // confirmar la ruta, ver POST /:id/confirmar), cambiarlo acá tiene que
+      // actualizar la reserva real además del puntero en `viajes` — si no, el
+      // contenedor viejo queda "reservado" fantasma para siempre (sin ningún
+      // viaje activo que lo use) y el nuevo sigue figurando "disponible"
+      // aunque ya esté comprometido con este cliente (bug real: pasó en
+      // producción armando una ruta para el día siguiente). Antes de
+      // confirmar no hace falta tocar `contenedores` acá — la reserva de
+      // verdad recién pasa al confirmar.
+      if (viaje!.ruta_confirmada_en != null && contenedorAnterior !== contenedor_numero) {
+        if (contenedorAnterior) await liberarReservaEntrega(c, contenedorAnterior, `operador:${req.user!.id}`);
+        await reservarParaEntrega(c, contenedor_numero, viaje!.fecha, `operador:${req.user!.id}`, { excluirViajeId: viajeId });
       }
 
       await c.query(`UPDATE viajes SET contenedor_numero = $1 WHERE id = $2`, [contenedor_numero, viajeId]);
