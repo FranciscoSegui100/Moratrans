@@ -11,7 +11,7 @@ import { resolverUbicacion } from '../services/ubicaciones.service';
  * Inserta alertas nuevas (evitando duplicados por el índice único parcial)
  * y las empuja por Socket.io a la sala 'alertas'.
  */
-async function generarAlertas(): Promise<void> {
+export async function generarAlertas(): Promise<void> {
   // 1) Alertas para contenedores que vencen en las próximas 48h
   // Si todavía no venció (BETWEEN now() AND now() + 48h), muestra "vence el DD/MM".
   // Si ya venció, la sección 1.c de abajo se encarga de crear el viaje de retiro y
