@@ -399,6 +399,10 @@ CREATE TABLE ruta_vaciados (
   -- link al contenedor real.
   contenedor_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL,
   notas             TEXT,
+  -- Cuándo se le mandó al chofer el pedido de vaciar ESTE contenedor como
+  -- parada de la secuencia (ver avisarSiguienteParadaDesde) — evita
+  -- reenviarlo dos veces.
+  chofer_notificado_en TIMESTAMPTZ,
   creado_en         TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (ruta_id, orden)
 );

@@ -7,7 +7,7 @@ import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { reservarParaEntrega, liberarReservaEntrega } from '../../services/contenedorReserva.service';
 import { finalizarRetiro } from '../../services/retiro.service';
 import { simularDisponibilidad, ParadaSimulada, CapacidadCamion, CAPACIDAD_CAMION_DEFAULT } from './disponibilidad.service';
-import { avisarChoferViaje, avisarChoferRecambio } from '../viajes/viajes.routes';
+import { avisarChoferViaje, avisarChoferRecambio, avisarSiguienteParadaDesde } from '../viajes/viajes.routes';
 import { notificarClientePedidoConfirmado } from '../whatsapp/notificacionesCliente';
 import { motivoErrorWa, sendText } from '../whatsapp/graphApi';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
@@ -693,8 +693,8 @@ rutasRouter.post('/:id/paradas/vaciado', requireRol('admin', 'operador'), async 
  */
 rutasRouter.post('/:id/paradas/vaciado/:paradaId/confirmar', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const { id: rutaId, paradaId } = req.params;
-  const [vaciado] = await query<{ contenedor_numero: string | null }>(
-    `SELECT contenedor_numero FROM ruta_vaciados WHERE id = $1 AND ruta_id = $2`,
+  const [vaciado] = await query<{ contenedor_numero: string | null; orden: number }>(
+    `SELECT contenedor_numero, orden FROM ruta_vaciados WHERE id = $1 AND ruta_id = $2`,
     [paradaId, rutaId],
   );
   if (!vaciado) return res.status(404).json({ error: 'Parada no encontrada.' });
@@ -705,6 +705,14 @@ rutasRouter.post('/:id/paradas/vaciado/:paradaId/confirmar', requireRol('admin',
   const resultado = await finalizarRetiro(vaciado.contenedor_numero, `operador:${req.user!.id}`);
   if ('error' in resultado) return res.status(409).json({ error: resultado.error });
   res.json({ ok: true });
+
+  // Mismo criterio que cuando lo confirma el chofer por WhatsApp (ver
+  // aplicarVaciado en chofer.flow.ts): si esto desatasca la secuencia de la
+  // ruta, seguir avisando — acá puede ser la próxima parada de viaje, o
+  // incluso otro vaciado pendiente antes.
+  avisarSiguienteParadaDesde(rutaId, vaciado.orden).catch((e) =>
+    console.error('Error avisando siguiente parada tras confirmar vaciado desde el panel:', e.message),
+  );
 });
 
 /**

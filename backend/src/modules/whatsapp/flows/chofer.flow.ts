@@ -6,7 +6,7 @@ import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { finalizarRetiro } from '../../../services/retiro.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { DIAS_ALQUILER_ANTES_RETIRO, LIMITE_INTENTOS_INVALIDOS } from '../../../config/bot.config';
-import { avisarSiguienteParadaRuta, avisarChoferViaje, avisarChoferRecambio } from '../../viajes/viajes.routes';
+import { avisarSiguienteParadaRuta, avisarSiguienteParadaDesde, avisarChoferViaje, avisarChoferRecambio } from '../../viajes/viajes.routes';
 import { notificarClienteServicioFinalizado } from '../notificacionesCliente';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
@@ -84,7 +84,7 @@ if (chofer.length === 0) {
     }
     return aplicarEstado(to, chofer[0].id, chofer[0].nombre, numero, sesion, targetEstado);
   }
-  if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('vaciado:')) {
+  if (esSeleccion && m.seleccionId?.startsWith('vaciado:')) {
     return aplicarVaciado(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('vaciado:', ''));
   }
   if (esSeleccion && m.seleccionId?.startsWith('recgrupo:')) {
@@ -358,6 +358,27 @@ async function aplicarVaciado(to: string, choferId: string, choferNombre: string
   const resultado = await finalizarRetiro(numero, `chofer:${choferId}`, choferId);
   if ('error' in resultado) {
     await sendText(to, `⚠️ No pudimos registrar el vaciado del contenedor ${numero}: ${resultado.error}`);
+    return menuChofer(to, choferNombre);
+  }
+  // Si este vaciado era una parada de una ruta (insertada automáticamente al
+  // retirar, ver insertarVaciadoAutomatico), sigue la secuencia desde ahí —
+  // la próxima parada de la ruta, o el próximo vaciado si hubiera otro
+  // pendiente antes. Si no hay ruta de por medio (vaciado suelto, fuera de
+  // cualquier ruta), sigue mandando el menú como siempre.
+  const [paradaVaciado] = await query<{ ruta_id: string; orden: number }>(
+    `SELECT rv.ruta_id, rv.orden
+       FROM ruta_vaciados rv
+       JOIN rutas r ON r.id = rv.ruta_id
+      WHERE rv.contenedor_numero = $1 AND r.chofer_id = $2
+      ORDER BY rv.creado_en DESC LIMIT 1`,
+    [numero, choferId],
+  );
+  if (paradaVaciado) {
+    const siguienteEnviada = await avisarSiguienteParadaDesde(paradaVaciado.ruta_id, paradaVaciado.orden).catch((e) => {
+      console.error('Error avisando siguiente parada tras vaciado:', e.message);
+      return false;
+    });
+    if (siguienteEnviada) return;
   }
   return menuChofer(to, choferNombre);
 }

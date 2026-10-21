@@ -251,6 +251,32 @@ export async function avisarChoferViaje(
 }
 
 /**
+ * Le pide al chofer que vacíe un contenedor que acaba de retirar, como
+ * parada propia de la secuencia de la ruta (ver avisarSiguienteParadaDesde)
+ * — antes de ofrecerle la próxima parada. El botón `vaciado:<numero>`
+ * dispara lo mismo que ya usa el menú self-service "🗑️" (ver
+ * ofrecerVaciadosPendientes/aplicarVaciado en chofer.flow.ts), solo que acá
+ * se empuja en el momento justo en vez de que el chofer tenga que acordarse
+ * de ir a buscarlo.
+ */
+export async function avisarChoferVaciado(choferId: string, contenedorNumero: string): Promise<void> {
+  const [chofer] = await query<{ telefono: string | null; nombre: string }>(
+    'SELECT telefono, nombre FROM choferes WHERE id = $1',
+    [choferId],
+  );
+  if (!chofer?.telefono) return; // chofer sin número vinculado todavía: nada que mandar
+
+  await conReintento(async () => {
+    await sendButtons(
+      chofer.telefono!,
+      `🗑️ *Vaciado de contenedor*\n\nContenedor: *${contenedorNumero}*\n\nCuando lo vacíes en el vaciadero, tocá el botón de abajo.`,
+      [{ id: `vaciado:${contenedorNumero}`, title: '🗑️ Ya vacié' }],
+    );
+  });
+  await menuChofer(chofer.telefono, chofer.nombre);
+}
+
+/**
  * Aviso específico para un recambio: a diferencia de avisarChoferViaje (que
  * solo hablaría del "retiro" del lleno), acá se le aclara al chofer que es
  * un recambio y qué contenedor vacío le corresponde dejar — y de qué
@@ -362,6 +388,31 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
   );
   if (pendienteEnMismoOrden) return false; // recambio: falta que termine la otra mitad de la visita
 
+  return avisarSiguienteParadaDesde(actual.ruta_id, actual.orden);
+}
+
+/**
+ * Núcleo de avisarSiguienteParadaRuta, reutilizable desde una posición
+ * (`rutaId`, `ordenActual`) en vez de un viaje puntual — hace falta para
+ * seguir la secuencia después de un VACIADO (no es una fila de `viajes`, no
+ * tiene id de viaje del que partir). Antes de pasar a la próxima parada de
+ * tipo viaje, chequea si hay una parada de vaciado sin resolver con un
+ * `orden` menor (o sea, antes en la secuencia): si la hay, se le avisa esa
+ * primero — antes esta función solo miraba la tabla `viajes`, así que un
+ * vaciado insertado automáticamente entre un retiro y la entrega siguiente
+ * quedaba invisible para el chofer por WhatsApp (seguía viendo la próxima
+ * parada de la ruta directo, sin que nadie le pidiera vaciar primero).
+ */
+export async function avisarSiguienteParadaDesde(rutaId: string, ordenActual: number): Promise<boolean> {
+  const [siguienteVaciado] = await query<{ id: string; orden: number; contenedor_numero: string }>(
+    `SELECT rv.id, rv.orden, rv.contenedor_numero
+       FROM ruta_vaciados rv
+       JOIN contenedores c ON c.numero = rv.contenedor_numero
+      WHERE rv.ruta_id = $1 AND rv.orden > $2 AND c.estado = 'retirado'
+      ORDER BY rv.orden ASC LIMIT 1`,
+    [rutaId, ordenActual],
+  );
+
   const siguientes = await query<{
     id: string; tipo: 'entrega' | 'retiro'; contenedor_numero: string | null; destino_direccion: string | null;
     ubicacion_id: string | null; grupo_id: string | null; chofer_id: string | null; orden: number;
@@ -372,8 +423,29 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
       WHERE ruta_id = $1 AND orden > $2 AND ruta_confirmada_en IS NOT NULL
         AND estado IN ('programado', 'en_curso') AND completada_en IS NULL
       ORDER BY orden ASC`,
-    [actual.ruta_id, actual.orden],
+    [rutaId, ordenActual],
   );
+
+  // El vaciado va antes si su `orden` es menor que la próxima parada de tipo
+  // viaje (o si no queda ninguna parada de viaje pendiente) — misma regla
+  // que ya usa el panel para calcular qué contenedores ofrecer en cada
+  // parada (ver disponibilidad.service.ts).
+  if (siguienteVaciado && (siguientes.length === 0 || siguienteVaciado.orden < siguientes[0].orden)) {
+    const [ruta] = await query<{ chofer_id: string | null }>('SELECT chofer_id FROM rutas WHERE id = $1', [rutaId]);
+    if (!ruta?.chofer_id) return false;
+    try {
+      await avisarChoferVaciado(ruta.chofer_id, siguienteVaciado.contenedor_numero);
+      await query(`UPDATE ruta_vaciados SET chofer_notificado_en = now() WHERE id = $1`, [siguienteVaciado.id]);
+    } catch (e: any) {
+      const motivo = motivoErrorWa(e);
+      console.error('Error avisando vaciado pendiente:', motivo);
+      notificarEnvioFallido(siguienteVaciado.id, `chofer de la ruta ${rutaId}`, 'aviso de vaciado', motivo).catch(
+        (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+      );
+    }
+    return true;
+  }
+
   if (siguientes.length === 0) return false;
   const proximoOrden = siguientes[0].orden;
   const visita = siguientes.filter((v) => v.orden === proximoOrden);
@@ -417,7 +489,7 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
   } catch (e: any) {
     const motivo = motivoErrorWa(e);
     console.error('Error avisando la siguiente parada de la ruta:', motivo);
-    notificarEnvioFallido(visita[0].id, `chofer de la ruta ${actual.ruta_id}`, 'aviso de siguiente parada', motivo).catch(
+    notificarEnvioFallido(visita[0].id, `chofer de la ruta ${rutaId}`, 'aviso de siguiente parada', motivo).catch(
       (e2) => console.error('Error registrando alerta de envío fallido:', e2),
     );
   }
