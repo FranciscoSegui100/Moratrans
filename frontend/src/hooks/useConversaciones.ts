@@ -118,11 +118,17 @@ export function useConversaciones() {
     };
   }, [queryClient]);
 
-  /** Pausa+reclama (activo=true) o resuelve/reanuda (activo=false) el bot para un número, desde la vista general. Tira si otro operador ya la tenía tomada (409). */
-  async function setModoHumano(telefono: string, activo: boolean) {
+  /**
+   * Pausa+reclama (activo=true) o resuelve/reanuda (activo=false) el bot
+   * para un número, desde la vista general. Tira si otro operador ya la
+   * tenía tomada (409) — salvo `forzar:true` (botón "Tomar igual", para
+   * destrabar un chat asignado a alguien que ya no está con el panel
+   * abierto). `activo:false` siempre funciona sin importar quién la tenía.
+   */
+  async function setModoHumano(telefono: string, activo: boolean, forzar?: boolean) {
     const { data } = await api.patch<{ ok: true; modoHumano: boolean; asignadoA?: string; asignadoANombre?: string }>(
       `/api/chat/${encodeURIComponent(telefono)}/modo-humano`,
-      { activo },
+      { activo, forzar },
     );
     queryClient.setQueryData<Conversacion[]>(CONVERSACIONES_KEY, (prev = []) =>
       prev.map((c) =>
@@ -140,10 +146,15 @@ export function useConversaciones() {
       ));
   }
 
-  /** Reclama una conversación que el BOT ya puso en modo humano sola (pidió asesor) pero que todavía nadie tomó. Tira si otro operador se adelantó (409). */
-  async function reclamar(telefono: string) {
+  /**
+   * Reclama una conversación que el BOT ya puso en modo humano sola (pidió
+   * asesor) pero que todavía nadie tomó. Tira si otro operador se adelantó
+   * (409) — salvo `forzar:true` (botón "Tomar igual" en el panel).
+   */
+  async function reclamar(telefono: string, forzar?: boolean) {
     const { data } = await api.post<{ ok: true; asignadoA: string; asignadoANombre: string }>(
       `/api/chat/${encodeURIComponent(telefono)}/reclamar`,
+      { forzar },
     );
     queryClient.setQueryData<Conversacion[]>(CONVERSACIONES_KEY, (prev = []) =>
       prev.map((c) =>

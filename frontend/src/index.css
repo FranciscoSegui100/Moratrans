@@ -1457,6 +1457,7 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   margin: 10px 0;
 }
 .asesoria-atendida-por { font-size: 0.76rem; color: var(--text-muted); font-style: italic; }
+.asesoria-atendida-por-bloque { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 .asesoria-avatar {
   width: 30px;

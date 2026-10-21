@@ -179,15 +179,19 @@ chatRouter.get('/mensaje/:id/adjunto', requireRol(...ROLES_ADJUNTOS), async (req
  * a él" en un solo paso — pausar y reclamar son la misma acción (ver
  * decisión de producto). Si ya está asignada a OTRO usuario, no la pisa:
  * tira un error 409 con el nombre de quien la tiene, para que dos
- * operadores no terminen respondiendo lo mismo.
+ * operadores no terminen respondiendo lo mismo — salvo que se pida con
+ * `forzar: true` (botón "Tomar igual" en el panel), para el caso de un chat
+ * que quedó "atendido por" alguien que ya no tiene el panel abierto y nadie
+ * más podía ni hablarle ni devolverlo al bot.
  */
 async function reclamarConversacion(
   telefono: string,
   usuarioId: string,
+  forzar = false,
 ): Promise<{ ok: true; asignadoA: string; asignadoANombre: string } | { ok: false; ocupadaPor: string }> {
   const sesion = await getSesion(telefono);
   const asignadoActual = sesion.contexto?.asignadoA as string | undefined;
-  if (asignadoActual && asignadoActual !== usuarioId) {
+  if (asignadoActual && asignadoActual !== usuarioId && !forzar) {
     const [otro] = await query<{ nombre: string }>('SELECT nombre FROM usuarios WHERE id = $1', [asignadoActual]);
     return { ok: false, ocupadaPor: otro?.nombre ?? 'otro operador' };
   }
@@ -245,7 +249,7 @@ chatRouter.post('/:telefono', requireRol('admin', 'operador'), async (req: Reque
   res.json({ ok: true });
 });
 
-const modoHumanoSchema = z.object({ activo: z.boolean() });
+const modoHumanoSchema = z.object({ activo: z.boolean(), forzar: z.boolean().optional() });
 
 /**
  * PATCH /api/chat/:telefono/modo-humano — pausa (y reclama) o reanuda el bot
@@ -257,7 +261,14 @@ const modoHumanoSchema = z.object({ activo: z.boolean() });
  * además resuelve la alerta 'solicita_asesor' si había una abierta — antes
  * este endpoint dejaba la alerta viva para siempre, y el próximo pedido de
  * asesor del mismo cliente no generaba una alerta nueva (ON CONFLICT DO
- * NOTHING sobre la vieja, todavía abierta).
+ * NOTHING sobre la vieja, todavía abierta). No chequea dueño: cualquier
+ * admin/operador puede devolver al bot un chat aunque esté "atendido por"
+ * otro — sirve para destrabar uno que quedó asignado a alguien que ya no
+ * está con el panel abierto.
+ *
+ * `activo:true` con `forzar:true` (botón "Tomar igual" en el panel) salta
+ * el bloqueo de dueño — mismo caso de destrabe, pero para tomarla uno mismo
+ * en vez de devolverla al bot.
  */
 chatRouter.patch('/:telefono/modo-humano', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const parsed = modoHumanoSchema.safeParse(req.body);
@@ -265,7 +276,7 @@ chatRouter.patch('/:telefono/modo-humano', requireRol('admin', 'operador'), asyn
   const telefono = req.params.telefono;
 
   if (parsed.data.activo) {
-    const reclamo = await reclamarConversacion(telefono, req.user!.id);
+    const reclamo = await reclamarConversacion(telefono, req.user!.id, parsed.data.forzar);
     if (!reclamo.ok) return res.status(409).json({ error: `Ya la está atendiendo ${reclamo.ocupadaPor}.` });
     return res.json({ ok: true, modoHumano: true, asignadoA: reclamo.asignadoA, asignadoANombre: reclamo.asignadoANombre });
   }
@@ -274,16 +285,22 @@ chatRouter.patch('/:telefono/modo-humano', requireRol('admin', 'operador'), asyn
   res.json({ ok: true, modoHumano: false });
 });
 
+const reclamarSchema = z.object({ forzar: z.boolean().optional() });
+
 /**
  * POST /api/chat/:telefono/reclamar — para el caso en que el BOT ya escaló
  * sola (pidió asesor tras N intentos, ver asesor.flow.ts) y la conversación
  * ya está en modo humano, pero todavía nadie la tomó: reclamarla acá no
  * toca `modoHumano` (ya está en true), solo asigna. Mismo bloqueo duro que
- * el resto: si otro operador ya la reclamó, 409.
+ * el resto: si otro operador ya la reclamó, 409 — salvo `forzar:true`
+ * (botón "Tomar igual"), para destrabar un chat asignado a alguien que ya
+ * no está con el panel abierto.
  */
 chatRouter.post('/:telefono/reclamar', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const telefono = req.params.telefono;
-  const reclamo = await reclamarConversacion(telefono, req.user!.id);
+  const parsed = reclamarSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
+  const reclamo = await reclamarConversacion(telefono, req.user!.id, parsed.data.forzar);
   if (!reclamo.ok) return res.status(409).json({ error: `Ya la está atendiendo ${reclamo.ocupadaPor}.` });
   res.json({ ok: true, asignadoA: reclamo.asignadoA, asignadoANombre: reclamo.asignadoANombre });
 });
