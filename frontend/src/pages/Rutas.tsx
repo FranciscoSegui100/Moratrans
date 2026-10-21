@@ -1061,6 +1061,7 @@ function rangoHorario(horario: string | null): number {
 function ordenarParaRuta(visitas: VisitaPendiente[]): VisitaPendiente[] {
   return [...visitas].sort(
     (a, b) =>
+      a.fecha.localeCompare(b.fecha) ||
       rangoHorario(a.horario_preferido) - rangoHorario(b.horario_preferido) ||
       (a.zona ?? '').localeCompare(b.zona ?? ''),
   );
@@ -1195,26 +1196,24 @@ export function Rutas() {
   const rutasAbiertasAnteriores = rutasConPendientes.filter((r) => r.fecha < fecha);
 
   const visitasPendientes = agruparPendientes(cola);
-  // "Sin asignar" mezclaba el backlog TOTAL (toda fecha) con lo específico de
-  // este día — al cambiar de fecha el número no se movía y confundía backlog
-  // viejo con lo de hoy. Se muestran separados.
-  const bolsaDelDia = visitasPendientes.filter((v) => v.fecha === fecha);
-  const sinAsignarDelDia = bolsaDelDia.length;
-  const cantidadPorTipo = (t: TipoVisita) => bolsaDelDia.filter((v) => tipoVisita(v) === t).length;
-  // La bolsa muestra solo el día elegido: sin esto, un pedido de otra fecha
-  // (ej. el retiro automático que entra el día antes del vencimiento, con
-  // fecha de mañana) quedaba invisible mirando "hoy". Se avisa del próximo
-  // día con pedidos y de los atrasados, con un botón para saltar ahí.
-  const fechasOtras = [...new Set(visitasPendientes.map((v) => v.fecha).filter((f) => f !== fecha))].sort();
-  const proximaFechaConPedidos = fechasOtras.find((f) => f > fecha) ?? null;
-  const fechaAtrasadaMasVieja = fechasOtras.find((f) => f < fecha) ?? null;
+  // Pedidos sin rutear que deben verse en la bolsa: los del día seleccionado MÁS
+  // todos los atrasados de días anteriores que hayan quedado colgados sin rutear.
+  const pedidosAtrasados = visitasPendientes.filter((v) => v.fecha < fecha);
+  const pedidosDelDia = visitasPendientes.filter((v) => v.fecha === fecha);
+  const pedidosBolsa = visitasPendientes.filter((v) => v.fecha <= fecha);
+  const sinAsignarDelDia = pedidosDelDia.length;
+  const atrasadosSinRutear = pedidosAtrasados.length;
+  const totalBolsa = pedidosBolsa.length;
+  const cantidadPorTipo = (t: TipoVisita) => pedidosBolsa.filter((v) => tipoVisita(v) === t).length;
+  // Avisa de fechas futuras con pedidos programados
+  const fechasOtras = [...new Set(visitasPendientes.map((v) => v.fecha).filter((f) => f > fecha))].sort();
+  const proximaFechaConPedidos = fechasOtras[0] ?? null;
   const contarFecha = (f: string) => visitasPendientes.filter((v) => v.fecha === f).length;
-  const atrasadosSinRutear = visitasPendientes.filter((v) => v.fecha < fecha).length;
   const irAFecha = (f: string) => {
     setFecha(f);
     setFormViaje((fv) => ({ ...fv, fecha: f }));
   };
-  const visiblesEnBolsa = filtroTipoBolsa ? bolsaDelDia.filter((v) => tipoVisita(v) === filtroTipoBolsa).length : sinAsignarDelDia;
+  const visiblesEnBolsa = filtroTipoBolsa ? pedidosBolsa.filter((v) => tipoVisita(v) === filtroTipoBolsa).length : totalBolsa;
   const statsRutas = statsPorRuta(viajesDelDia);
   const visitasDelDia = agruparPendientes(viajesDelDia).length;
   const ruteados = agruparPendientes(viajesDelDia.filter((v) => v.ruta_id)).length;
@@ -1224,13 +1223,10 @@ export function Rutas() {
   const rutasSinConfirmar = rutas.filter((r) => badgeRuta(statsRutas.get(r.id) ?? { paradas: 0, sinConfirmar: 0, finalizadas: 0 }).clase === 'sin_confirmar').length;
 
   // Agrupamiento en dos niveles de los pedidos sin rutear: primero por día
-  // puntual (una sección por cada fecha distinta, no por balde "Atrasados/
-  // Próximos" — así no se mezclan pedidos de días distintos en una sola
-  // sección larga) y dentro de cada día, por zona. La cola no filtra por
-  // fecha a propósito, para no perder pedidos viejos de vista, así que hay
-  // que ordenar para no perderlos.
+  // puntual (una sección por cada fecha distinta, con atrasados arriba) y
+  // dentro de cada día, por zona. La cola no descarta atrasados.
   const bolsaAgrupada = (() => {
-    const ordenadas = [...bolsaDelDia]
+    const ordenadas = [...pedidosBolsa]
       .filter((v) => !filtroTipoBolsa || tipoVisita(v) === filtroTipoBolsa)
       .sort((a, b) => a.fecha.localeCompare(b.fecha));
     const porFecha = new Map<string, Map<string, VisitaPendiente[]>>();
@@ -1242,10 +1238,10 @@ export function Rutas() {
       porZona.set(zona, lista);
       porFecha.set(v.fecha, porZona);
     }
-    return [...porFecha.entries()].map(([fecha, zonasMap]) => ({
-      fecha,
-      categoria: categoriaDia(diasEspera(fecha)),
-      titulo: tituloSeccionDia(fecha),
+    return [...porFecha.entries()].map(([fechaItem, zonasMap]) => ({
+      fecha: fechaItem,
+      categoria: categoriaDia(diasEspera(fechaItem)),
+      titulo: tituloSeccionDia(fechaItem),
       zonas: [...zonasMap.entries()],
     }));
   })();
@@ -1501,9 +1497,9 @@ export function Rutas() {
    * hasta que se cierre el aviso o se vuelva a auto-armar.
    */
   async function autoArmarRutas() {
-    const visitasDelDia = agruparPendientes(cola).filter((v) => v.fecha === fecha && (v.entrega?.id ?? v.retiro?.id));
-    if (visitasDelDia.length === 0) {
-      show('info', 'Nada para armar', 'No hay pedidos sin rutear para este día.');
+    const visitasParaArmar = agruparPendientes(cola).filter((v) => v.fecha <= fecha && (v.entrega?.id ?? v.retiro?.id));
+    if (visitasParaArmar.length === 0) {
+      show('info', 'Nada para armar', 'No hay pedidos sin rutear para este día ni atrasados.');
       return;
     }
     if (choferes.length === 0) {
@@ -1515,7 +1511,7 @@ export function Rutas() {
     const rutasCreadas: string[] = [];
     const choferesConCambios = new Set<string>();
     const errores: string[] = [];
-    for (const a of armarPropuesta(visitasDelDia, choferes)) {
+    for (const a of armarPropuesta(visitasParaArmar, choferes)) {
       const visitasChofer = ordenarParaRuta(a.clusters.flatMap((c) => c.visitas));
       if (visitasChofer.length === 0) continue;
       let rutaId: string;
@@ -1852,29 +1848,28 @@ export function Rutas() {
                 </button>
               </RoleGate>
             </div>
-            <span className="badge programado" style={{ fontSize: '0.75rem' }} title={`Total acumulado sin rutear (todas las fechas): ${visitasPendientes.length}`}>{sinAsignarDelDia}</span>
+            <span
+              className={`badge ${atrasadosSinRutear > 0 ? 'danger' : 'programado'}`}
+              style={{ fontSize: '0.75rem' }}
+              title={`Pedidos de la fecha: ${sinAsignarDelDia} · Atrasados: ${atrasadosSinRutear} · Total acumulado: ${visitasPendientes.length}`}
+            >
+              {totalBolsa}{atrasadosSinRutear > 0 ? ` (${atrasadosSinRutear} atrasado${atrasadosSinRutear > 1 ? 's' : ''})` : ''}
+            </span>
           </div>
 
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
-            Mostrando solo los pedidos de este día. Tocá un pedido para ver el detalle. Arrastralo sobre un chofer (abajo) para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
+            Mostrando pedidos de la fecha y pedidos atrasados acumulados. Tocá un pedido para ver el detalle. Arrastralo sobre un chofer (abajo) para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
           </div>
 
-          {(proximaFechaConPedidos || fechaAtrasadaMasVieja) && (
+          {proximaFechaConPedidos && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px', fontSize: '0.78rem' }}>
-              {fechaAtrasadaMasVieja && (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => irAFecha(fechaAtrasadaMasVieja)} style={{ color: 'var(--danger)' }}>
-                  <AlertTriangle size={13} strokeWidth={2} /> {atrasadosSinRutear} atrasado(s) sin rutear · ver desde el {formatearFecha(fechaAtrasadaMasVieja)}
-                </button>
-              )}
-              {proximaFechaConPedidos && (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => irAFecha(proximaFechaConPedidos)}>
-                  📅 {contarFecha(proximaFechaConPedidos)} pedido(s) para el {formatearFecha(proximaFechaConPedidos)} · ver
-                </button>
-              )}
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => irAFecha(proximaFechaConPedidos)}>
+                📅 {contarFecha(proximaFechaConPedidos)} pedido(s) programado(s) para el {formatearFecha(proximaFechaConPedidos)} · ver
+              </button>
             </div>
           )}
 
-          {sinAsignarDelDia > 0 && (
+          {totalBolsa > 0 && (
             <div className="btn-group" style={{ marginBottom: '12px', flexWrap: 'wrap' }} role="group" aria-label="Filtrar pedidos por tipo">
               <button
                 type="button"
@@ -1882,7 +1877,7 @@ export function Rutas() {
                 aria-pressed={filtroTipoBolsa === ''}
                 onClick={() => setFiltroTipoBolsa('')}
               >
-                Todos ({sinAsignarDelDia})
+                Todos ({totalBolsa})
               </button>
               {(['entrega', 'retiro', 'recambio'] as TipoVisita[]).map((t) => (
                 <button
@@ -1898,11 +1893,11 @@ export function Rutas() {
             </div>
           )}
 
-          {sinAsignarDelDia === 0 ? (
-            <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes para este día.</div>
+          {totalBolsa === 0 ? (
+            <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes para este día ni atrasados.</div>
           ) : visiblesEnBolsa === 0 ? (
             <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>
-              No hay {ETIQUETA_TIPO_VISITA[filtroTipoBolsa as TipoVisita].toLowerCase()} sin rutear para este día.
+              No hay {ETIQUETA_TIPO_VISITA[filtroTipoBolsa as TipoVisita].toLowerCase()} sin rutear para este día ni atrasados.
             </div>
           ) : (
             // Se ven ~2 filas de tarjetas; si hay más, scroll vertical acá adentro
