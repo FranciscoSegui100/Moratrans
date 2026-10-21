@@ -84,17 +84,19 @@ export async function generarAlertas(): Promise<void> {
     console.error('[cron] Error procesando avisos de vencimiento por WhatsApp a clientes:', err.message);
   }
 
-  // 1.c) Retiro automático EL MISMO DÍA del vencimiento: si el cliente no
-  // pidió el retiro (ni lo extendió) y llegó el día en que vence, el retiro
-  // entra solo a la Bolsa de Rutas con fecha de ese mismo día. Si vence en
-  // fin de semana, entra el lunes siguiente (con fecha lunes).
-  // - Si ya pasó el día sin crearse (ej. el server estuvo caído), se crea
-  //   igual, con fecha de hoy (o el próximo día hábil si hoy es finde).
-  // - Se resuelve la alerta 'contenedor_por_vencer' y se avisa al operador
-  //   con 'retiro_solicitado'. Al cliente NO se le manda nada (ya recibe el
-  //   recordatorio de 24-48hs con los botones de extender / pedir retiro).
-  // - Si después el cliente extiende, ese retiro se cancela solo (ver
-  //   cancelarRetiroAutomatico) y vuelve a crearse acá para la nueva fecha.
+  // 1.c) Retiro automático EN CUANTO SE SABE el vencimiento: apenas un
+  // contenedor queda 'entregado' con `vence_en` cargado, su retiro ya entra
+  // a la Bolsa de Rutas fechado el día que vence (día hábil siguiente si cae
+  // en fin de semana) — así un operador lo puede ver y planificar (chofer,
+  // ruta) con anticipación, no recién el día que vence.
+  // - Si el cliente pide un retiro anticipado o un recambio de este mismo
+  //   contenedor, este viaje se reprograma a la fecha que pidió en vez de
+  //   duplicarse (ver pedirRetiro.flow.ts / recambio.flow.ts).
+  // - Si el cliente extiende el alquiler, se cancela solo (ver
+  //   cancelarRetiroAutomatico) y se vuelve a crear acá para la fecha nueva.
+  // - El aviso al operador ('retiro_solicitado') NO sale acá — recién
+  //   cuando está próximo/vencido de verdad (ver 1.d, más abajo); si no, se
+  //   generaría una alerta de algo que todavía falta muchos días.
   try {
     const candidatos = await query<{
       numero: string;
@@ -121,9 +123,6 @@ export async function generarAlertas(): Promise<void> {
          ) ultima ON true
         WHERE c.estado = 'entregado'
           AND c.vence_en IS NOT NULL
-          -- Solo lo que vence a más tardar hoy (con margen de un día por la
-          -- zona horaria); el corte fino por día hábil se hace abajo, en TS.
-          AND c.vence_en < now() + interval '1 day'
           -- Evita duplicar si ya existe un retiro activo (programado o en curso):
           AND NOT EXISTS (
             SELECT 1 FROM viajes v2
@@ -133,16 +132,13 @@ export async function generarAlertas(): Promise<void> {
           )`,
     );
 
-    const hoy = hoyMendozaISO();
-    const aCrear = candidatos
-      .filter((cv) => hoy >= diaHabilDesde(cv.vence_fecha))
-      .map((cv) => ({ ...cv, fechaRetiro: diaHabilDesde(hoy) }));
+    const aCrear = candidatos.map((cv) => ({ ...cv, fechaRetiro: diaHabilDesde(cv.vence_fecha) }));
 
     if (aCrear.length > 0) {
       const vaciadero = await resolverUbicacion('vaciadero');
 
       for (const cv of aCrear) {
-        // 1) Crear el viaje de retiro (ruta_id = null -> entra directo a la Bolsa de Rutas)
+        // Crea el viaje de retiro (ruta_id = null -> entra directo a la Bolsa de Rutas)
         await query(
           `INSERT INTO viajes (
              tipo, fecha, contenedor_numero, cliente_telefono,
@@ -166,39 +162,60 @@ export async function generarAlertas(): Promise<void> {
             NOTA_RETIRO_AUTOMATICO,
           ],
         );
-
-        // 2) Resolver alerta previa de "contenedor_por_vencer" si existía
-        await query(
-          `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'contenedor_por_vencer' AND referencia_id = $1`,
-          [cv.numero],
-        );
-        emitAlertaActualizada({ tipo: 'contenedor_por_vencer', referencia_id: cv.numero, estado: 'resuelta' });
-
-        // 3) Alerta 'retiro_solicitado' para el operador en vivo
-        const yaVencido = cv.vence_fecha < cv.fechaRetiro;
-        const mensajeAlerta = yaVencido
-          ? `Contenedor ${cv.numero} YA VENCIÓ — retiro agregado a la bolsa para el ${formatearFechaLarga(cv.fechaRetiro)} (Listo en Rutas)`
-          : `Contenedor ${cv.numero} vence HOY — retiro agregado a la bolsa de hoy (Listo en Rutas)`;
-        const [alertaRetiro] = await query<{ id: string; tipo: string; referencia_id: string; mensaje: string; creado_en: string }>(
-          `INSERT INTO alertas (tipo, referencia_id, mensaje)
-           VALUES ('retiro_solicitado', $1, $2)
-           ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta'
-             DO UPDATE SET mensaje = EXCLUDED.mensaje, estado = 'nueva'
-           RETURNING id, tipo, referencia_id, mensaje, creado_en`,
-          [cv.numero, mensajeAlerta],
-        );
-        if (alertaRetiro) {
-          emitAlerta({ ...alertaRetiro, cliente_telefono: cv.cliente_telefono });
-        }
       }
 
-      // 4) Notificar actualización de viajes y contenedores a las pantallas del panel
       emitRecursoActualizado('viajes');
-      emitRecursoActualizado('contenedores');
-      console.log(`[cron] ${aCrear.length} retiros automáticos agregados a la bolsa por vencimiento`);
+      console.log(`[cron] ${aCrear.length} retiro(s) automático(s) agregado(s) a la bolsa por vencimiento`);
     }
   } catch (err: any) {
-    console.error('[cron] Error procesando retiros automáticos por vencimiento:', err.message);
+    console.error('[cron] Error creando retiros automáticos por vencimiento:', err.message);
+  }
+
+  // 1.d) Aviso al operador cuando un retiro automático (ver 1.c) ya está
+  // próximo o vencido (fecha <= hoy): recién acá se resuelve la alerta
+  // 'contenedor_por_vencer' y se levanta 'retiro_solicitado' — el viaje
+  // puede llevar días ya en la bolsa (creado con anticipación en 1.c), y acá
+  // es donde de verdad hace falta que alguien lo asigne. El `NOT EXISTS`
+  // evita repetir la alerta en cada corrida del cron (cada 15 min) mientras
+  // siga sin resolverse. Al cliente NO se le manda nada acá (ya recibió el
+  // recordatorio de 24-48hs con los botones de extender / pedir retiro).
+  try {
+    const hoy = hoyMendozaISO();
+    const vencidosOProximos = await query<{ contenedor_numero: string; fecha: string; cliente_telefono: string | null }>(
+      `SELECT v.contenedor_numero, v.fecha, v.cliente_telefono FROM viajes v
+        WHERE v.tipo = 'retiro' AND v.estado = 'programado' AND v.notas = $1 AND v.fecha <= $2
+          AND NOT EXISTS (
+            SELECT 1 FROM alertas a
+             WHERE a.tipo = 'retiro_solicitado' AND a.referencia_id = v.contenedor_numero AND a.estado <> 'resuelta'
+          )`,
+      [NOTA_RETIRO_AUTOMATICO, hoy],
+    );
+
+    for (const v of vencidosOProximos) {
+      await query(
+        `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'contenedor_por_vencer' AND referencia_id = $1`,
+        [v.contenedor_numero],
+      );
+      emitAlertaActualizada({ tipo: 'contenedor_por_vencer', referencia_id: v.contenedor_numero, estado: 'resuelta' });
+
+      const yaVencido = v.fecha < hoy;
+      const mensajeAlerta = yaVencido
+        ? `Contenedor ${v.contenedor_numero} YA VENCIÓ — retiro agregado a la bolsa para el ${formatearFechaLarga(v.fecha)} (Listo en Rutas)`
+        : `Contenedor ${v.contenedor_numero} vence HOY — retiro agregado a la bolsa de hoy (Listo en Rutas)`;
+      const [alertaRetiro] = await query<{ id: string; tipo: string; referencia_id: string; mensaje: string; creado_en: string }>(
+        `INSERT INTO alertas (tipo, referencia_id, mensaje)
+         VALUES ('retiro_solicitado', $1, $2)
+         ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta'
+           DO UPDATE SET mensaje = EXCLUDED.mensaje, estado = 'nueva'
+         RETURNING id, tipo, referencia_id, mensaje, creado_en`,
+        [v.contenedor_numero, mensajeAlerta],
+      );
+      if (alertaRetiro) {
+        emitAlerta({ ...alertaRetiro, cliente_telefono: v.cliente_telefono });
+      }
+    }
+  } catch (err: any) {
+    console.error('[cron] Error avisando retiros automáticos próximos/vencidos:', err.message);
   }
 
   // 2) Pagos pendientes hace más de 24h (vencidos de validación)
