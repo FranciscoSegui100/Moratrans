@@ -1964,8 +1964,9 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   background: var(--bg-card); color: var(--text-secondary);
   cursor: pointer; transition: all 0.15s;
 }
-.date-pick-arrow:hover { border-color: var(--accent); color: var(--text-primary); background: var(--bg-card-hover); }
-.date-pick-arrow:active { transform: scale(0.92); }
+.date-pick-arrow:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); background: var(--bg-card-hover); }
+.date-pick-arrow:active:not(:disabled) { transform: scale(0.92); }
+.date-pick-arrow:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
 .stat { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px 16px; }

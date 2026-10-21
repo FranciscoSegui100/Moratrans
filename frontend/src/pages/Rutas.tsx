@@ -1842,13 +1842,28 @@ export function Rutas() {
             <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <span>📦 Pedidos sin rutear</span>
               <div className="date-pick" style={{ fontWeight: 500, fontSize: '0.78rem' }}>
-                <button type="button" className="date-pick-arrow" onClick={() => irAFecha(sumarDias(fecha, -1))} title="Día anterior">
+                <button
+                  type="button"
+                  className="date-pick-arrow"
+                  onClick={() => irAFecha(sumarDias(fecha, -1))}
+                  disabled={fecha <= hoy}
+                  title={fecha <= hoy ? 'No se puede ir antes de hoy: los pedidos atrasados ya se ven acá' : 'Día anterior'}
+                >
                   <ChevronLeft size={14} strokeWidth={2.5} />
                 </button>
-                <input type="date" value={fecha} onChange={(e) => {
-                  setFecha(e.target.value);
-                  setFormViaje((fv) => ({ ...fv, fecha: e.target.value }));
-                }} />
+                <input
+                  type="date"
+                  value={fecha}
+                  min={hoy}
+                  title="No se puede elegir una fecha pasada: los pedidos atrasados ya se ven en el día de hoy"
+                  onChange={(e) => {
+                    // El atributo min bloquea el calendario nativo, pero algunos
+                    // navegadores igual permiten tipear una fecha pasada a mano.
+                    const f = e.target.value < hoy ? hoy : e.target.value;
+                    setFecha(f);
+                    setFormViaje((fv) => ({ ...fv, fecha: f }));
+                  }}
+                />
                 <button type="button" className="date-pick-arrow" onClick={() => irAFecha(sumarDias(fecha, 1))} title="Día siguiente">
                   <ChevronRight size={14} strokeWidth={2.5} />
                 </button>
