@@ -29,6 +29,7 @@ import { tipoLabel } from '../lib/alertLabels';
 import { armarSonidoAlerta, playAlertSound } from '../lib/notificationSound';
 import { useTheme } from '../hooks/useTheme';
 import { FondoCurvas } from './FondoCurvas';
+import { EVENTO_CHAT_LEIDO } from '../hooks/useConversaciones';
 
 interface AlertaSocket { tipo: string; mensaje: string; cliente_telefono?: string | null }
 interface ConversacionActualizadaSocket { telefono: string; modo_humano?: boolean }
@@ -92,6 +93,15 @@ export function Layout({ children }: { children: ReactNode }) {
   // global de mensaje nuevo de abajo (ver ese efecto). Ref porque solo lo lee
   // un handler de socket, no hace falta re-renderizar al cambiar.
   const telefonosEnAsesorRef = useRef<Set<string>>(new Set());
+  // Chats en modo asesor con mensajes que ESTE usuario no leyó: es lo que
+  // cuenta el badge de "Conversaciones" (y el título de la pestaña). Sale de
+  // la base (chats_leidos), así que sobrevive a un F5 y a otras pestañas.
+  const asesorSinLeerRef = useRef<Set<string>>(new Set());
+  // Ruta actual, leída desde handlers de socket/respuestas async (que se
+  // registran una sola vez y si no verían siempre la ruta del primer render).
+  const pathRef = useRef(loc.pathname);
+  pathRef.current = loc.pathname;
+  const recargarConteoAlertasRef = useRef<(() => void) | null>(null);
   // Ocultar la barra lateral para que las tablas anchas (Viajes, Contenedores…)
   // usen todo el ancho. Se recuerda por navegador.
   const [sidebarOculta, setSidebarOculta] = useState(() => {
@@ -143,16 +153,25 @@ export function Layout({ children }: { children: ReactNode }) {
   // muestra además, por separado, cuántos de esos son pedidos de asesor. Los
   // pagos pendientes de validar suman a su propio badge en "Validar pagos"
   // además de quedar listados en "Alertas" (no se les saca de ahí).
+  //
+  // "Alertas" = las que nadie vio todavía (estado 'nueva'). Al entrar a
+  // /alertas la propia bandeja las pasa a 'vista' en la base (PATCH
+  // /api/alertas/marcar-vistas, ver Alertas.tsx), así que el 0 es real para
+  // todos. Mientras se está en /alertas el badge queda en 0 aunque llegue la
+  // respuesta de un conteo pedido antes: antes esa respuesta tardía pisaba el
+  // 0 con el valor viejo (entrar directo o con F5 a /alertas dejaba "15").
+  // "Validar pagos" = pagos pendientes de validar (alertas sin resolver de
+  // ese tipo, vistas o no): baja solo al validar/rechazar, no al mirar.
   useEffect(() => {
     const cargarConteo = () => {
-      api.get<{ id: string; tipo: string }[]>('/api/alertas?estado=nueva')
+      api.get<{ id: string; tipo: string; estado: string }[]>('/api/alertas')
         .then((r) => {
-          setAlertCount(r.data.length);
-          setConversacionesCount(r.data.filter((a) => a.tipo === 'solicita_asesor').length);
+          setAlertCount(pathRef.current === '/alertas' ? 0 : r.data.filter((a) => a.estado === 'nueva').length);
           setPagosCount(r.data.filter((a) => a.tipo === 'pago_pendiente_validacion').length);
         })
         .catch(() => {});
     };
+    recargarConteoAlertasRef.current = cargarConteo;
 
     const socket = conectarSocket();
     cargarConteo(); // conteo inicial
@@ -160,20 +179,30 @@ export function Layout({ children }: { children: ReactNode }) {
     // suspendió, cualquier alerta creada durante ese lapso no llegó por
     // socket y quedaría afuera del contador hasta un refresh manual.
     const onNuevaAlerta = (a: AlertaSocket) => {
-      setAlertCount((c) => c + 1);
-      if (a.tipo === 'solicita_asesor') setConversacionesCount((c) => c + 1);
+      if (pathRef.current !== '/alertas') setAlertCount((c) => c + 1);
       if (a.tipo === 'pago_pendiente_validacion') setPagosCount((c) => c + 1);
       show('info', tipoLabel[a.tipo] ?? a.tipo, a.cliente_telefono ? `${a.cliente_telefono} · ${a.mensaje}` : a.mensaje);
       playAlertSound();
     };
+    // Otro operador (u otra pestaña) las marcó vistas o resolvió alguna: se
+    // vuelve a pedir el conteo real. Con un pequeño retardo porque
+    // marcar-vistas emite un evento por alerta y alcanza con un solo request.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onAlertaActualizada = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(cargarConteo, 400);
+    };
     socket.on('connect', cargarConteo);
     socket.on('nueva_alerta', onNuevaAlerta);
+    socket.on('alerta_actualizada', onAlertaActualizada);
     return () => {
+      if (timer) clearTimeout(timer);
       socket.off('connect', cargarConteo);
       // Con referencia al handler: useAlertas.ts registra su propio listener
       // de 'nueva_alerta' sobre el mismo socket compartido, y off(evento) sin
       // handler borra TODOS los listeners de ese evento, no solo el propio.
       socket.off('nueva_alerta', onNuevaAlerta);
+      socket.off('alerta_actualizada', onAlertaActualizada);
     };
   }, []);
 
@@ -187,28 +216,50 @@ export function Layout({ children }: { children: ReactNode }) {
   // conversación está en modo asesor — si no, sonaría en cada mensaje que
   // contesta el bot solo, para TODAS las conversaciones.
   useEffect(() => {
-    api.get<{ telefono: string; modo_humano: boolean }[]>('/api/chat')
-      .then((r) => {
-        telefonosEnAsesorRef.current = new Set(r.data.filter((c) => c.modo_humano).map((c) => c.telefono));
-      })
-      .catch(() => {});
+    const actualizarBadge = () => setConversacionesCount(asesorSinLeerRef.current.size);
+    const cargarChats = () => {
+      api.get<{ telefono: string; modo_humano: boolean; no_leidos: number }[]>('/api/chat')
+        .then((r) => {
+          telefonosEnAsesorRef.current = new Set(r.data.filter((c) => c.modo_humano).map((c) => c.telefono));
+          asesorSinLeerRef.current = new Set(r.data.filter((c) => c.modo_humano && c.no_leidos > 0).map((c) => c.telefono));
+          actualizarBadge();
+        })
+        .catch(() => {});
+    };
+    cargarChats();
 
     const socket = conectarSocket();
     const onConversacionActualizada = (p: ConversacionActualizadaSocket) => {
-      if (p.modo_humano === true) telefonosEnAsesorRef.current.add(p.telefono);
-      else if (p.modo_humano === false) telefonosEnAsesorRef.current.delete(p.telefono);
+      // Pasó a modo asesor: se vuelve a pedir la lista para saber si tiene
+      // mensajes sin leer (el "asesor" del cliente llega ANTES de este aviso).
+      if (p.modo_humano === true) cargarChats();
+      else if (p.modo_humano === false) {
+        telefonosEnAsesorRef.current.delete(p.telefono);
+        asesorSinLeerRef.current.delete(p.telefono);
+        actualizarBadge();
+      }
     };
     const onNuevoMensajeChat = (m: MensajeChatSocket) => {
       if (m.origen !== 'cliente' || !telefonosEnAsesorRef.current.has(m.telefono)) return;
-      setConversacionesCount((c) => c + 1);
+      asesorSinLeerRef.current.add(m.telefono);
+      actualizarBadge();
       show('info', '💬 El cliente te sigue escribiendo', `${m.telefono}: ${m.texto}`);
       playAlertSound();
     };
+    // Conversaciones marcó un chat como leído (ver marcarLeido en useConversaciones).
+    const onChatLeido = (e: Event) => {
+      const telefono = (e as CustomEvent<{ telefono: string }>).detail?.telefono;
+      if (telefono && asesorSinLeerRef.current.delete(telefono)) actualizarBadge();
+    };
+    socket.on('connect', cargarChats);
     socket.on('conversacion_actualizada', onConversacionActualizada);
     socket.on('nuevo_mensaje_chat', onNuevoMensajeChat);
+    window.addEventListener(EVENTO_CHAT_LEIDO, onChatLeido);
     return () => {
+      socket.off('connect', cargarChats);
       socket.off('conversacion_actualizada', onConversacionActualizada);
       socket.off('nuevo_mensaje_chat', onNuevoMensajeChat);
+      window.removeEventListener(EVENTO_CHAT_LEIDO, onChatLeido);
     };
   }, []);
 
@@ -245,11 +296,13 @@ export function Layout({ children }: { children: ReactNode }) {
     return () => { socket.off('recurso_actualizado', onRecursoActualizado); };
   }, [queryClient]);
 
-  // Al entrar a cada sección, resetear su badge
+  // En /alertas el badge es 0 (la bandeja las marca vistas en la base); al
+  // salir se vuelve a pedir el conteo real. Conversaciones y Validar pagos
+  // ya no se resetean al entrar: bajan cuando de verdad se lee el chat o se
+  // valida el pago.
   useEffect(() => {
     if (loc.pathname === '/alertas') setAlertCount(0);
-    if (loc.pathname === '/conversaciones') setConversacionesCount(0);
-    if (loc.pathname === '/pagos') setPagosCount(0);
+    else recargarConteoAlertasRef.current?.();
   }, [loc.pathname]);
 
   // Contador en el título de la pestaña: para que un pedido de asesor se

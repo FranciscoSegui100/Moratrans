@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, X, RotateCcw, CircleCheck, ArrowRight } from 'lucide-react';
 import { useAlertas, Alerta } from '../hooks/useAlertas';
@@ -38,9 +38,31 @@ function rutaAlerta(a: Alerta): { to: string; label: string } | null {
 }
 
 export function Alertas() {
-  const { alertas, resolver, validarPago, rechazarPago, confirmarRetiro } = useAlertas();
+  const { alertas, resolver, validarPago, rechazarPago, confirmarRetiro, marcarVistas } = useAlertas();
   const { show } = useToast();
   const [procesando, setProcesando] = useState<string | null>(null);
+
+  // "¿La vi?" separado de "¿está resuelta?": las que estaban en 'nueva' al
+  // abrir la bandeja (o que entran con la bandeja abierta) se recuerdan acá
+  // para marcarlas con un punto durante esta visita, y en la base pasan a
+  // 'vista' enseguida — el contador del sidebar baja a 0 de verdad, para
+  // todos. Siguen en la lista hasta que alguien las resuelva.
+  const [nuevasEnEstaVisita, setNuevasEnEstaVisita] = useState<Set<string>>(() => new Set());
+  const timerVistasRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const nuevas = alertas.filter((a) => a.estado === 'nueva');
+    if (nuevas.length === 0) return;
+    setNuevasEnEstaVisita((prev) => {
+      if (nuevas.every((a) => prev.has(a.id))) return prev;
+      const copia = new Set(prev);
+      nuevas.forEach((a) => copia.add(a.id));
+      return copia;
+    });
+    if (timerVistasRef.current) clearTimeout(timerVistasRef.current);
+    timerVistasRef.current = setTimeout(() => { marcarVistas(); }, 300);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alertas]);
+  useEffect(() => () => { if (timerVistasRef.current) clearTimeout(timerVistasRef.current); }, []);
 
   // Esta pantalla es, antes que nada, una lista de atajos para ir a resolver
   // algo en otro lado — un solo filtro por tipo (con contador) alcanza para
@@ -144,11 +166,12 @@ export function Alertas() {
     return (
       <div
         key={a.id}
-        className={`alerta-card alerta-${a.tipo} ${esPago ? 'alerta-card-pago' : ''} ${yaVencio ? 'alerta-vencida' : ''}`}
+        className={`alerta-card alerta-${a.tipo} ${esPago ? 'alerta-card-pago' : ''} ${yaVencio ? 'alerta-vencida' : ''} ${nuevasEnEstaVisita.has(a.id) ? 'alerta-card--nueva' : ''}`}
       >
         <div className="alerta-card-top">
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+              {nuevasEnEstaVisita.has(a.id) && <span className="alerta-punto-nueva" title="Nueva: no la habías visto" aria-label="Nueva" />}
               <span className="alerta-tipo">{tipoLabel[a.tipo] ?? a.tipo}</span>
               <span className="alerta-sector-tag">{sector.label}</span>
             </div>

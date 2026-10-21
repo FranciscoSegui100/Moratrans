@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { MessageCircle, Pause, Play, UserPlus, Search, Wallet, Clock, X, Pin } from 'lucide-react';
+import { MessageCircle, Pause, Play, UserPlus, Search, Wallet, Clock, X } from 'lucide-react';
 import { useConversaciones, Conversacion } from '../hooks/useConversaciones';
 import { RoleGate } from '../components/RoleGate';
 import { ChatAsesor } from '../components/ChatAsesor';
@@ -146,18 +146,19 @@ function ConversacionItem({
   activo,
   onSelect,
   onResponderAhora,
-  onToggleFijado,
 }: {
   c: Conversacion;
   activo: boolean;
   onSelect: () => void;
   onResponderAhora: () => void;
-  onToggleFijado: () => void;
 }) {
   const espera = useTiempoEspera(c.escalado_en ?? c.asignado_en);
+  // El chat abierto ya se está leyendo: no se marca como no leído aunque el
+  // número tarde un instante en volver a 0.
+  const noLeido = c.no_leidos > 0 && !activo;
   return (
     <div
-      className={`asesoria-item ${activo ? 'active' : ''} ${c.modo_humano ? 'asesoria-item--alerta' : ''} ${c.fijado ? 'asesoria-item--fijado' : ''}`}
+      className={`asesoria-item ${activo ? 'active' : ''} ${c.modo_humano ? 'asesoria-item--alerta' : ''} ${noLeido ? 'asesoria-item--no-leido' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onSelect}
@@ -169,17 +170,14 @@ function ConversacionItem({
           <div className="asesoria-item-nombre">{c.nombre ?? c.telefono}</div>
           {c.nombre && <div className="asesoria-item-tel">{c.telefono}</div>}
         </div>
-        <span className="asesoria-item-time">{formatHora(c.ultimo_en)}</span>
-        <button
-          type="button"
-          className={`asesoria-item-fijar ${c.fijado ? 'is-fijado' : ''}`}
-          onClick={(e) => { e.stopPropagation(); onToggleFijado(); }}
-          title={c.fijado ? 'Desfijar (solo para vos)' : 'Fijar arriba (solo para vos)'}
-          aria-label={c.fijado ? 'Desfijar chat' : 'Fijar chat'}
-          aria-pressed={c.fijado}
-        >
-          <Pin size={13} strokeWidth={2} fill={c.fijado ? 'currentColor' : 'none'} />
-        </button>
+        <div className="asesoria-item-lado">
+          <span className="asesoria-item-time">{formatHora(c.ultimo_en)}</span>
+          {noLeido && (
+            <span className="asesoria-item-noleidos" aria-label={`${c.no_leidos} mensaje(s) sin leer`}>
+              {c.no_leidos >= 99 ? '99+' : c.no_leidos}
+            </span>
+          )}
+        </div>
       </div>
       <p className="asesoria-item-msg">
         {origenPreviewPrefix[c.ultimo_origen]}{c.ultimo_mensaje}
@@ -208,7 +206,7 @@ function ConversacionItem({
 
 /** Vista general: TODAS las conversaciones del bot (no solo las que piden asesor), con hilo completo y pausa manual. */
 export function Conversaciones() {
-  const { conversaciones, setModoHumano, reclamar, setFijado } = useConversaciones();
+  const { conversaciones, setModoHumano, reclamar, marcarLeido } = useConversaciones();
   const { user } = useAuth();
   const { show } = useToast();
   // Deep-link desde la Bandeja de alertas (ver rutaAlerta en Alertas.tsx):
@@ -226,6 +224,23 @@ export function Conversaciones() {
   }, []);
 
   const activa = conversaciones.find((c) => c.telefono === seleccionado) ?? null;
+
+  // El chat abierto queda leído (para este usuario) al abrirlo y cada vez que
+  // le llega un mensaje nuevo mientras está abierto — pero solo si la pestaña
+  // está a la vista: con el panel en otra pestaña del navegador, lo que llega
+  // sigue contando como no leído hasta que vuelva.
+  const telefonoActivo = activa?.telefono ?? null;
+  const noLeidosActivo = activa?.no_leidos ?? 0;
+  useEffect(() => {
+    if (!telefonoActivo) return;
+    const marcarSiVisible = () => {
+      if (document.visibilityState === 'visible' && noLeidosActivo > 0) marcarLeido(telefonoActivo);
+    };
+    marcarSiVisible();
+    document.addEventListener('visibilitychange', marcarSiVisible);
+    return () => document.removeEventListener('visibilitychange', marcarSiVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [telefonoActivo, noLeidosActivo]);
   const ventanaActiva = useVentanaWhatsapp(activa?.ultimo_cliente_en ?? null);
 
   const requierenVos = conversaciones.filter((c) => c.modo_humano);
@@ -240,18 +255,7 @@ export function Conversaciones() {
   // Una conversación que pide asesor se MUEVE a "Necesitan asesor": deja de
   // aparecer en "Todas" hasta que se resuelva o se libere (modo_humano false).
   const sinAsesor = conversaciones.filter((c) => !c.modo_humano);
-  // Los chats que fijó este usuario van arriba en las dos listas (sort estable:
-  // dentro de fijados / no fijados se mantiene el orden de cada lista).
-  const visiblesPorFiltro = [...(filtro === 'requieren' ? requierenVosOrdenadas : sinAsesor)]
-    .sort((a, b) => Number(b.fijado) - Number(a.fijado));
-
-  async function toggleFijado(c: Conversacion) {
-    try {
-      await setFijado(c.telefono, !c.fijado);
-    } catch (err: any) {
-      show('error', 'No se pudo fijar el chat', err.response?.data?.error);
-    }
-  }
+  const visiblesPorFiltro = filtro === 'requieren' ? requierenVosOrdenadas : sinAsesor;
   const visibles = busqueda.trim()
     ? visiblesPorFiltro.filter((c) => {
         const q = busqueda.trim().toLowerCase();
@@ -394,7 +398,6 @@ export function Conversaciones() {
                 activo={c.telefono === seleccionado}
                 onSelect={() => setSeleccionado(c.telefono)}
                 onResponderAhora={() => responderAhora(c.telefono)}
-                onToggleFijado={() => toggleFijado(c)}
               />
             ))}
           </div>

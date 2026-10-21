@@ -52,9 +52,11 @@ const ROLES_ADJUNTOS: Rol[] = ['admin', 'operador', 'finanzas'];
  *  - `chofer_nombre`: esta lista mezcla charlas con clientes Y con choferes
  *    (ambos le escriben al mismo bot) — sin esto no había forma de saber,
  *    de un vistazo, si una fila era un chofer y no un cliente común.
- *  - `fijado`/`fijado_en`: si el usuario logueado fijó este chat (cada uno
- *    fija los suyos, ver chats_fijados). Los fijados entran siempre, aunque
- *    queden fuera de los 200 más recientes.
+ *  - `no_leidos`: mensajes del cliente que el usuario logueado todavía no
+ *    leyó (posteriores a su chats_leidos.leido_en; cada operador tiene el
+ *    suyo). Sin fila = nunca abrió ese chat: cuenta desde que se creó su
+ *    usuario, para que alguien nuevo no arranque con todo el historial "sin
+ *    leer". Tope 99 (el panel muestra "99+").
  */
 chatRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query(
@@ -69,14 +71,21 @@ chatRouter.get('/', async (req: Request, res: Response) => {
             (s.contexto->>'asignadoA')::uuid AS asignado_a,
             asig.nombre AS asignado_a_nombre,
             (s.contexto->>'asignadoEn')::timestamptz AS asignado_en,
-            (f.telefono IS NOT NULL) AS fijado,
-            f.fijado_en
+            nl.no_leidos
        FROM (
          SELECT DISTINCT ON (telefono) telefono, texto, origen, creado_en
            FROM mensajes_chat
           ORDER BY telefono, creado_en DESC
        ) m
-       LEFT JOIN chats_fijados f ON f.telefono = m.telefono AND f.usuario_id = $1
+       LEFT JOIN chats_leidos l ON l.telefono = m.telefono AND l.usuario_id = $1
+       CROSS JOIN LATERAL (
+         SELECT count(*)::int AS no_leidos FROM (
+           SELECT 1 FROM mensajes_chat mc
+            WHERE mc.telefono = m.telefono AND mc.origen = 'cliente'
+              AND mc.creado_en > COALESCE(l.leido_en, (SELECT creado_en FROM usuarios WHERE id = $1))
+            LIMIT 99
+         ) x
+       ) nl
        LEFT JOIN sesiones_chat s ON s.telefono = m.telefono
        LEFT JOIN clientes c ON c.telefono = m.telefono
        LEFT JOIN choferes ch ON ch.telefono = m.telefono
@@ -96,31 +105,24 @@ chatRouter.get('/', async (req: Request, res: Response) => {
           ORDER BY a.creado_en DESC LIMIT 1
        ) al ON true
        LEFT JOIN usuarios asig ON asig.id = (s.contexto->>'asignadoA')::uuid
-      ORDER BY (f.telefono IS NOT NULL) DESC, m.creado_en DESC
+      ORDER BY m.creado_en DESC
       LIMIT 200`,
     [req.user!.id],
   );
   res.json(rows);
 });
 
-const fijarSchema = z.object({ fijado: z.boolean() });
-
 /**
- * PUT /api/chat/:telefono/fijado — fija o desfija un chat SOLO para el
- * usuario logueado (los demás operadores no lo ven fijado).
+ * PUT /api/chat/:telefono/leido — el usuario logueado abrió (o tiene abierto)
+ * este chat: todo lo que mandó el cliente hasta ahora queda leído PARA ÉL.
  */
-chatRouter.put('/:telefono/fijado', async (req: Request, res: Response) => {
-  const parsed = fijarSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  if (parsed.data.fijado) {
-    await query(
-      'INSERT INTO chats_fijados (usuario_id, telefono) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-      [req.user!.id, req.params.telefono],
-    );
-  } else {
-    await query('DELETE FROM chats_fijados WHERE usuario_id = $1 AND telefono = $2', [req.user!.id, req.params.telefono]);
-  }
-  res.json({ ok: true, fijado: parsed.data.fijado });
+chatRouter.put('/:telefono/leido', async (req: Request, res: Response) => {
+  await query(
+    `INSERT INTO chats_leidos (usuario_id, telefono, leido_en) VALUES ($1, $2, now())
+     ON CONFLICT (usuario_id, telefono) DO UPDATE SET leido_en = now()`,
+    [req.user!.id, req.params.telefono],
+  );
+  res.json({ ok: true });
 });
 
 /**
@@ -245,6 +247,12 @@ chatRouter.post('/:telefono', requireRol('admin', 'operador'), async (req: Reque
     });
   }
   await logMensaje(telefono, 'operador', parsed.data.texto, req.user!.id);
+  // Contestar implica haber leído: lo que mandó el cliente hasta acá queda leído para quien respondió.
+  await query(
+    `INSERT INTO chats_leidos (usuario_id, telefono, leido_en) VALUES ($1, $2, now())
+     ON CONFLICT (usuario_id, telefono) DO UPDATE SET leido_en = now()`,
+    [req.user!.id, telefono],
+  ).catch((e) => console.error('Error marcando chat leído:', e));
 
   res.json({ ok: true });
 });

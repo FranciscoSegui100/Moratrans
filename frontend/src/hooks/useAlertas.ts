@@ -70,6 +70,17 @@ export function useAlertas() {
     };
   }, [queryClient]);
 
+  /**
+   * Pasa TODAS las alertas 'nueva' a 'vista' en la base (un solo request).
+   * Lo llama la bandeja al abrirse y cuando entra una nueva con la bandeja
+   * abierta. Otras pestañas/operadores se enteran por 'alerta_actualizada'.
+   */
+  async function marcarVistas() {
+    await api.patch('/api/alertas/marcar-vistas').catch(() => {});
+    queryClient.setQueryData<Alerta[]>(ALERTAS_KEY, (prev = []) =>
+      prev.map((a) => (a.estado === 'nueva' ? { ...a, estado: 'vista' } : a)));
+  }
+
   async function resolver(id: string) {
     await api.patch(`/api/alertas/${id}`, { estado: 'resuelta' });
     queryClient.setQueryData<Alerta[]>(ALERTAS_KEY, (prev = []) => prev.filter((a) => a.id !== id));
@@ -108,5 +119,5 @@ export function useAlertas() {
     quitarAlerta('confirmar_retiro', numeroContenedor);
   }
 
-  return { alertas, resolver, validarPago, rechazarPago, confirmarRetiro };
+  return { alertas, resolver, validarPago, rechazarPago, confirmarRetiro, marcarVistas };
 }
