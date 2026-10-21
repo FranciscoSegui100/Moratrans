@@ -118,10 +118,12 @@ async function convertirAudioAMp3(blob: Blob): Promise<Blob> {
 function GrabadorAudio({
   telefono,
   disabled,
+  disabledTitle,
   onEnviado,
 }: {
   telefono: string;
   disabled: boolean;
+  disabledTitle?: string;
   onEnviado: () => void;
 }) {
   const { show } = useToast();
@@ -227,7 +229,7 @@ function GrabadorAudio({
       className="btn btn-ghost btn-sm"
       onClick={iniciarGrabacion}
       disabled={disabled}
-      title="Grabar y enviar una nota de voz por WhatsApp"
+      title={disabled ? (disabledTitle ?? 'No disponible') : 'Grabar y enviar una nota de voz por WhatsApp'}
     >
       <Mic size={15} strokeWidth={2} /> Nota de voz
     </button>
@@ -235,7 +237,7 @@ function GrabadorAudio({
 }
 
 /** Hilo de conversación + cuadro de respuesta libre para la alerta "pide asesor". */
-export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ventanaCerrada?: boolean }) {
+export function ChatAsesor({ telefono, ventanaCerrada, modoHumano }: { telefono: string; ventanaCerrada?: boolean; modoHumano: boolean }) {
   const [mensajes, setMensajes] = useState<MensajeChat[]>([]);
   const [texto, setTexto] = useState('');
   const [enviando, setEnviando] = useState(false);
@@ -369,7 +371,12 @@ export function ChatAsesor({ telefono, ventanaCerrada }: { telefono: string; ven
         </button>
         <GrabadorAudio
           telefono={telefono}
-          disabled={!!ventanaCerrada}
+          disabled={!!ventanaCerrada || !modoHumano}
+          disabledTitle={
+            !modoHumano
+              ? 'Primero pausá el bot ("Pausar bot y responder yo") para poder mandar un audio'
+              : 'Ventana de 24hs cerrada'
+          }
           onEnviado={cargar}
         />
       </div>

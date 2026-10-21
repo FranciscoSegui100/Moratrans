@@ -364,7 +364,13 @@ chatRouter.get('/mensaje/:id/audio', requireRol(...ROLES_ADJUNTOS), async (req: 
  * POST /api/chat/:telefono/audio — el asesor envía una nota de voz por WhatsApp.
  * Recibe el archivo via multipart (campo "audio"), lo sube a Storage cifrado,
  * lo envía a Meta y lo loguea en el hilo como 'operador'.
- * Mismo bloqueo de reclamo que el POST de texto: no pisa a otro operador.
+ *
+ * A diferencia del POST de texto (que reclama la charla de una si hace
+ * falta), un audio NO puede ser lo que recién activa el modo asesor — a
+ * pedido del usuario, el bot se tiene que pausar a mano primero (botón
+ * "Pausar bot y responder yo" / "Reclamar") y recién ahí se puede mandar un
+ * audio. Una vez que ya está en modo humano, sí reclama para este operador
+ * con el mismo bloqueo que el texto: no pisa a otro operador que ya la tenga.
  */
 chatRouter.post(
   '/:telefono/audio',
@@ -377,6 +383,13 @@ chatRouter.post(
     if (req.file.mimetype.includes('webm')) {
       return res.status(400).json({
         error: 'Tu navegador tiene una versión en caché que envía WebM. Por favor recargá la página con Cmd + Shift + R.',
+      });
+    }
+
+    const sesionActual = await getSesion(telefono);
+    if (!sesionActual.contexto?.modoHumano) {
+      return res.status(409).json({
+        error: 'Primero pausá el bot ("Pausar bot y responder yo") para poder mandar un audio.',
       });
     }
 

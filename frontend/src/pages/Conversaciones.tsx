@@ -432,7 +432,7 @@ export function Conversaciones() {
               </div>
 
               <RoleGate roles={['admin', 'operador']}>
-                <ChatAsesor telefono={activa.telefono} ventanaCerrada={ventanaActiva.cerrada} />
+                <ChatAsesor telefono={activa.telefono} ventanaCerrada={ventanaActiva.cerrada} modoHumano={activa.modo_humano} />
               </RoleGate>
             </>
           ) : seleccionado ? (
