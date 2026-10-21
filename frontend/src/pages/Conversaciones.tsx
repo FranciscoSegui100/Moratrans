@@ -214,6 +214,10 @@ export function Conversaciones() {
   const [searchParams] = useSearchParams();
   const [seleccionado, setSeleccionado] = useState<string | null>(() => searchParams.get('tel'));
   const [filtro, setFiltro] = useState<'todas' | 'requieren'>('todas');
+  // Separa choferes de clientes (cuenta corriente + comunes) en la lista —
+  // comparten el mismo bot y antes quedaban mezclados, solo diferenciados
+  // por el chip chico de ChipTipoContacto.
+  const [tipoContacto, setTipoContacto] = useState<'todos' | 'clientes' | 'choferes'>('todos');
   const [busqueda, setBusqueda] = useState('');
   // Fuerza un re-render por minuto para que los chips de "ventana cerrada" de
   // la lista se actualicen solos aunque no llegue ningún mensaje nuevo.
@@ -256,12 +260,18 @@ export function Conversaciones() {
   // aparecer en "Todas" hasta que se resuelva o se libere (modo_humano false).
   const sinAsesor = conversaciones.filter((c) => !c.modo_humano);
   const visiblesPorFiltro = filtro === 'requieren' ? requierenVosOrdenadas : sinAsesor;
+  const cantChoferes = visiblesPorFiltro.filter((c) => !!c.chofer_nombre).length;
+  const cantClientes = visiblesPorFiltro.length - cantChoferes;
+  const visiblesPorTipo =
+    tipoContacto === 'choferes' ? visiblesPorFiltro.filter((c) => !!c.chofer_nombre)
+    : tipoContacto === 'clientes' ? visiblesPorFiltro.filter((c) => !c.chofer_nombre)
+    : visiblesPorFiltro;
   const visibles = busqueda.trim()
-    ? visiblesPorFiltro.filter((c) => {
+    ? visiblesPorTipo.filter((c) => {
         const q = busqueda.trim().toLowerCase();
         return c.telefono.includes(q) || (c.nombre?.toLowerCase().includes(q) ?? false);
       })
-    : visiblesPorFiltro;
+    : visiblesPorTipo;
 
   // Si no hay ninguna conversación elegida todavía, autoseleccioná la
   // primera. Si SÍ hay una elegida pero no está en la lista, la dejamos tal
@@ -377,12 +387,35 @@ export function Conversaciones() {
             </button>
           </div>
 
+          <div className="conv-filtros conv-filtros--tipo">
+            <button
+              className={`conv-filtro ${tipoContacto === 'todos' ? 'active' : ''}`}
+              onClick={() => setTipoContacto('todos')}
+            >
+              Todos <b>{visiblesPorFiltro.length}</b>
+            </button>
+            <button
+              className={`conv-filtro ${tipoContacto === 'clientes' ? 'active' : ''}`}
+              onClick={() => setTipoContacto('clientes')}
+            >
+              👤 Clientes <b>{cantClientes}</b>
+            </button>
+            <button
+              className={`conv-filtro ${tipoContacto === 'choferes' ? 'active' : ''}`}
+              onClick={() => setTipoContacto('choferes')}
+            >
+              🚚 Choferes <b>{cantChoferes}</b>
+            </button>
+          </div>
+
           <div className="asesoria-lista">
             {visibles.length === 0 && (
               <div className="empty-state">
                 <div className="empty-state-icon"><MessageCircle strokeWidth={1.5} /></div>
                 <div className="empty-state-title">
-                  {filtro === 'requieren' ? 'Nadie te está esperando' : 'Sin conversaciones todavía'}
+                  {tipoContacto === 'choferes' ? 'Ningún chofer por acá'
+                    : tipoContacto === 'clientes' ? 'Ningún cliente por acá'
+                    : filtro === 'requieren' ? 'Nadie te está esperando' : 'Sin conversaciones todavía'}
                 </div>
                 <div className="empty-state-text">
                   {filtro === 'requieren'
