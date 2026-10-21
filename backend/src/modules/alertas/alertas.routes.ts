@@ -34,6 +34,23 @@ alertasRouter.get('/', async (req: Request, res: Response) => {
   res.json(rows);
 });
 
+/**
+ * PATCH /api/alertas/marcar-vistas — el usuario entró a la bandeja: todas
+ * las 'nueva' pasan a 'vista' en un solo UPDATE. Separa "¿la vio alguien?"
+ * (el contador del sidebar, que ahora baja de verdad en la base y no solo
+ * en memoria) de "¿está resuelta?" (sigue en la lista hasta resolverla).
+ * Se avisa por socket con el mismo 'alerta_actualizada' que ya usa
+ * 'resuelta', así otras pestañas/operadores lo ven en vivo. Va ANTES de
+ * '/:id' para que Express no tome "marcar-vistas" como un id.
+ */
+alertasRouter.patch('/marcar-vistas', async (_req: Request, res: Response) => {
+  const rows = await query<{ tipo: string; referencia_id: string; estado: string }>(
+    `UPDATE alertas SET estado = 'vista' WHERE estado = 'nueva' RETURNING tipo, referencia_id, estado`,
+  );
+  for (const r of rows) emitAlertaActualizada(r);
+  res.json({ ok: true, marcadas: rows.length });
+});
+
 /** PATCH /api/alertas/:id — cambia estado (vista/resuelta). Solo roles que pueden operar sobre lo que la alerta representa (pago, asesoría, etc.), no lectura. */
 alertasRouter.patch('/:id', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const estado = req.body?.estado as string;

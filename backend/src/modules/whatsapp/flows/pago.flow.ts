@@ -64,6 +64,23 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     return manejarEleccionPedidoEfectivo(m, sesion);
   }
 
+  // Ya eligió "Transferencia" y estamos esperando la foto/PDF: un texto
+  // ("ok", "ya te lo mando", "¿cuál era el alias?") NO reinicia el pago —
+  // antes caía al bloque de abajo y le volvía a preguntar "¿Cómo vas a
+  // pagar?". Se le recuerda qué falta (con los datos bancarios de nuevo, por
+  // si los perdió) y sigue en el mismo paso; tras varios intentos
+  // manejarRespuestaInvalida le ofrece un asesor. Para cambiar la forma de
+  // pago está el botón "Enviar comprobante" (messageRouter lo procesa antes
+  // y reinicia a propósito).
+  if (sesion.paso === 'esperando_comprobante' && m.tipo === 'text') {
+    await manejarRespuestaInvalida(
+      m,
+      `📎 Estoy esperando la *foto o PDF* del comprobante.\n\n${datosBancarios()}\n\n` +
+        '_Si querés cambiar la forma de pago, tocá *Enviar comprobante* de nuevo, o escribí *menú* para volver al inicio._',
+    );
+    return;
+  }
+
   // Si el usuario escribió "Ya pagué" (o "pago"/"pagar"/etc, ver messageRouter)
   // sin adjuntar nada aún: antes de pedirle el comprobante, preguntamos cómo
   // va a pagar — pero "Cuenta corriente" solo se ofrece a quien ya la tiene

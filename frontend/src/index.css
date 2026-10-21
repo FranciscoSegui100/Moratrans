@@ -855,6 +855,41 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   display: flex;
   flex-direction: column;
 }
+.activity-day {
+  display: flex;
+  flex-direction: column;
+}
+/* Encabezado de día: etiqueta + cantidad y una línea que ocupa el resto, para
+   que cada jornada se lea como un bloque aparte dentro del mismo feed. */
+.activity-day-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 0 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.activity-day:first-child .activity-day-label {
+  padding-top: 4px;
+}
+.activity-day-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.activity-day-count {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 1px 7px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
 .activity-item {
   display: flex;
   align-items: center;
@@ -1317,6 +1352,13 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   background: rgba(255, 255, 255, 0.08);
 }
 
+/* Alerta que no se había visto (estaba 'nueva' al abrir la bandeja): punto
+   y borde de acento durante esta visita. En la base ya pasó a 'vista'. */
+.alerta-punto-nueva {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.alerta-card--nueva { box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm); }
 .alerta-card-top {
   display: flex;
   align-items: center;
@@ -1417,20 +1459,19 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   white-space: nowrap;
 }
 .asesoria-item-time { font-size: 0.68rem; color: var(--text-muted); flex-shrink: 0; }
-/* Fijar chat (solo para el usuario logueado): discreto hasta pasar el mouse
-   por la fila; fijado queda siempre visible, en el color de acento. */
-.asesoria-item-fijar {
-  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px;
-  background: transparent; color: var(--text-muted); cursor: pointer; opacity: 0;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
+/* Leído / no leído (por usuario, ver chats_leidos). No leído: nombre y
+   último mensaje en negrita y color pleno, hora en acento y una burbuja con
+   la cantidad, igual que WhatsApp. Leído: el último mensaje queda apagado. */
+.asesoria-item-lado { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+.asesoria-item-noleidos {
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--accent); color: #fff;
+  font-size: 0.66rem; font-weight: 700; line-height: 18px; text-align: center;
 }
-.asesoria-item:hover .asesoria-item-fijar,
-.asesoria-item-fijar:focus-visible,
-.asesoria-item-fijar.is-fijado { opacity: 1; }
-.asesoria-item-fijar:hover { background: var(--bg-card-hover); color: var(--text-primary); }
-.asesoria-item-fijar.is-fijado { color: var(--accent); }
-@media (hover: none) { .asesoria-item-fijar { opacity: 1; } }
+.asesoria-item:not(.asesoria-item--no-leido) .asesoria-item-msg { color: var(--text-muted); }
+.asesoria-item--no-leido .asesoria-item-nombre { font-weight: 800; }
+.asesoria-item--no-leido .asesoria-item-msg { color: var(--text-primary); font-weight: 600; }
+.asesoria-item--no-leido .asesoria-item-time { color: var(--accent); font-weight: 700; }
 .asesoria-item-pie { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .asesoria-item-asignado { font-size: 0.68rem; color: var(--text-muted); }
 /* Botón chico dentro de la fila (que ahora es un div, no un button, para

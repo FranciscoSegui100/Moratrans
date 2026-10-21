@@ -108,6 +108,29 @@ const accionPagoLabels: Record<string, string> = {
   rechazado: 'tiene un pago rechazado',
 };
 
+function etiquetaDia(iso: string): string {
+  const fecha = new Date(iso);
+  const hoy = new Date();
+  if (fecha.toDateString() === hoy.toDateString()) return 'Hoy';
+  const ayer = new Date(hoy);
+  ayer.setDate(hoy.getDate() - 1);
+  if (fecha.toDateString() === ayer.toDateString()) return 'Ayer';
+  return fecha.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+// El feed ya viene ordenado por fecha DESC desde el backend, así que basta
+// con cortar cada vez que cambia el día (sin reordenar nada).
+function agruparPorDia(items: ActividadItem[]): { etiqueta: string; items: ActividadItem[] }[] {
+  const grupos: { etiqueta: string; items: ActividadItem[] }[] = [];
+  for (const item of items) {
+    const etiqueta = etiquetaDia(item.fecha);
+    const ultimo = grupos[grupos.length - 1];
+    if (ultimo?.etiqueta === etiqueta) ultimo.items.push(item);
+    else grupos.push({ etiqueta, items: [item] });
+  }
+  return grupos;
+}
+
 function KpiCard({
   icon: Icon, tint, fg, label, value, formato = 'entero', trend, caption, sparkline,
 }: {
@@ -403,31 +426,39 @@ export function Dashboard() {
            {actividad.length === 0 ? (
              <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>No hay actividad reciente.</div>
            ) : (
-             actividad.map((act, i) => {
-               const esPago = act.tipo === 'pago';
-               const texto = esPago
-                 ? (accionPagoLabels[act.accion] ?? `pago ${act.accion}`)
-                 : `${accionContenedorLabels[act.accion] ?? act.accion.replace('_', ' ')} el contenedor ${act.entidad_id}`;
-               const actorNode = act.cliente_telefono ? (
-                 <Link to={`/clientes/${encodeURIComponent(act.cliente_telefono)}`} style={{ fontWeight: 600, color: 'inherit' }}>
-                   {act.actor}
-                 </Link>
-               ) : (
-                 <strong>{act.actor}</strong>
-               );
-               return (
-                 <div key={i} className="activity-item">
-                   <div className="activity-dot" style={{ background: esPago ? 'var(--warning)' : 'var(--success)' }} />
-                   <div className="activity-text">
-                     {actorNode} {texto}
-                     {esPago && act.detalle && <span className="text-muted"> · {act.detalle}</span>}
-                   </div>
-                   <div className="activity-time">
-                     {new Date(act.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
-                   </div>
+             agruparPorDia(actividad).map((grupo) => (
+               <div key={grupo.etiqueta} className="activity-day">
+                 <div className="activity-day-label">
+                   <span>{grupo.etiqueta}</span>
+                   <span className="activity-day-count">{grupo.items.length}</span>
                  </div>
-               );
-             })
+                 {grupo.items.map((act, i) => {
+                   const esPago = act.tipo === 'pago';
+                   const texto = esPago
+                     ? (accionPagoLabels[act.accion] ?? `pago ${act.accion}`)
+                     : `${accionContenedorLabels[act.accion] ?? act.accion.replace('_', ' ')} el contenedor ${act.entidad_id}`;
+                   const actorNode = act.cliente_telefono ? (
+                     <Link to={`/clientes/${encodeURIComponent(act.cliente_telefono)}`} style={{ fontWeight: 600, color: 'inherit' }}>
+                       {act.actor}
+                     </Link>
+                   ) : (
+                     <strong>{act.actor}</strong>
+                   );
+                   return (
+                     <div key={`${grupo.etiqueta}-${i}`} className="activity-item">
+                       <div className="activity-dot" style={{ background: esPago ? 'var(--warning)' : 'var(--success)' }} />
+                       <div className="activity-text">
+                         {actorNode} {texto}
+                         {esPago && act.detalle && <span className="text-muted"> · {act.detalle}</span>}
+                       </div>
+                       <div className="activity-time">
+                         {new Date(act.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                       </div>
+                     </div>
+                   );
+                 })}
+               </div>
+             ))
            )}
          </div>
       </div>

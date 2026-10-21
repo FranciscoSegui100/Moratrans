@@ -24,9 +24,8 @@ export interface Conversacion {
   cuenta_corriente_estado: 'sin_pedir' | 'pendiente' | 'aprobada' | 'rechazada' | null;
   /** Si no es null, esta conversación es con un CHOFER (no un cliente) — la lista mezcla ambos. */
   chofer_nombre: string | null;
-  /** Lo fijó el usuario logueado (cada uno fija los suyos, no se comparte). */
-  fijado: boolean;
-  fijado_en: string | null;
+  /** Mensajes del cliente que el usuario logueado todavía no leyó (cada operador tiene los suyos; tope 99). */
+  no_leidos: number;
 }
 
 interface MensajeChatSocket {
@@ -45,6 +44,9 @@ interface ConversacionActualizadaSocket {
 }
 
 const CONVERSACIONES_KEY = ['conversaciones'];
+
+/** Evento de ventana que dispara marcarLeido (lo escucha el badge del sidebar). */
+export const EVENTO_CHAT_LEIDO = 'moratrans:chat-leido';
 
 /** Carga TODAS las conversaciones (no solo las escaladas a "asesor") y las mantiene al día por Socket.io. */
 export function useConversaciones() {
@@ -81,8 +83,10 @@ export function useConversaciones() {
             asignado_en: actual?.asignado_en ?? null,
             cuenta_corriente_estado: actual?.cuenta_corriente_estado ?? null,
             chofer_nombre: actual?.chofer_nombre ?? null,
-            fijado: actual?.fijado ?? false,
-            fijado_en: actual?.fijado_en ?? null,
+            // Solo un mensaje DEL CLIENTE cuenta como no leído (lo que manda
+            // el bot o un operador no). Si el chat está abierto, Conversaciones
+            // lo vuelve a marcar leído enseguida (ver marcarLeido).
+            no_leidos: m.origen === 'cliente' ? (actual?.no_leidos ?? 0) + 1 : actual?.no_leidos ?? 0,
           },
           ...resto,
         ];
@@ -162,21 +166,17 @@ export function useConversaciones() {
       ));
   }
 
-  /** Fija/desfija un chat solo para el usuario logueado. Optimista: si falla, vuelve como estaba y tira. */
-  async function setFijado(telefono: string, fijado: boolean) {
-    const aplicar = (valor: boolean) =>
-      queryClient.setQueryData<Conversacion[]>(CONVERSACIONES_KEY, (prev = []) =>
-        prev.map((c) =>
-          c.telefono === telefono ? { ...c, fijado: valor, fijado_en: valor ? new Date().toISOString() : null } : c,
-        ));
-    aplicar(fijado);
-    try {
-      await api.put(`/api/chat/${encodeURIComponent(telefono)}/fijado`, { fijado });
-    } catch (err) {
-      aplicar(!fijado);
-      throw err;
-    }
+  /**
+   * El usuario abrió (o tiene abierto) este chat: queda leído PARA ÉL en la
+   * base. Optimista. Avisa con un evento de ventana para que el badge de
+   * "Conversaciones" del sidebar (Layout.tsx) lo descuente sin otro request.
+   */
+  async function marcarLeido(telefono: string) {
+    queryClient.setQueryData<Conversacion[]>(CONVERSACIONES_KEY, (prev = []) =>
+      prev.map((c) => (c.telefono === telefono ? { ...c, no_leidos: 0 } : c)));
+    window.dispatchEvent(new CustomEvent(EVENTO_CHAT_LEIDO, { detail: { telefono } }));
+    await api.put(`/api/chat/${encodeURIComponent(telefono)}/leido`).catch(() => {});
   }
 
-  return { conversaciones, setModoHumano, reclamar, setFijado };
+  return { conversaciones, setModoHumano, reclamar, marcarLeido };
 }
