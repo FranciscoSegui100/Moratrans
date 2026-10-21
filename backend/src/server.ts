@@ -5,6 +5,7 @@ import { initSocket } from './config/socket';
 import { iniciarCronAlertas } from './jobs/alertas.cron';
 import { iniciarCronLimpieza } from './jobs/limpieza.cron';
 import { iniciarCronInactividadChat } from './jobs/inactividadChat.cron';
+import { iniciarCronDespachoRutas } from './jobs/despachoRutas.cron';
 
 // Red de seguridad: nada de lo que pasa fuera del ciclo request/response de
 // Express (ej. una promesa suelta sin .catch en el cron) debe poder tirar
@@ -22,6 +23,7 @@ initSocket(server);
 iniciarCronAlertas();
 iniciarCronLimpieza();
 iniciarCronInactividadChat();
+iniciarCronDespachoRutas();
 
 server.listen(env.PORT, () => {
   console.log(`🚀 Backend en http://localhost:${env.PORT}`);

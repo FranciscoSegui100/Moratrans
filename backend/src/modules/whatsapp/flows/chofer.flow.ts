@@ -221,7 +221,7 @@ async function handleRutaDeHoy(to: string, choferId: string, choferNombre: strin
         AND v.estado IN ('programado', 'en_curso') AND v.completada_en IS NULL
         AND (
           v.ruta_id IS NULL
-          OR (v.ruta_confirmada_en IS NOT NULL AND NOT EXISTS (
+          OR (v.ruta_confirmada_en IS NOT NULL AND v.chofer_notificado_en IS NOT NULL AND NOT EXISTS (
                 SELECT 1 FROM viajes v2
                  WHERE v2.ruta_id = v.ruta_id AND v2.orden < v.orden AND v2.completada_en IS NULL
               ))
