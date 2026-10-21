@@ -61,7 +61,7 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
             v.destino_lat, v.destino_lng, v.horario_preferido, v.hora_estimada,
             v.cliente_telefono, v.notas, c.nombre AS chofer_nombre, v.chofer_id, v.patente, v.grupo_id,
             v.remito, v.importe, v.ubicacion_id, v.ubicacion_direccion, v.ruta_id, v.orden,
-            v.ruta_confirmada_en, v.completada_en,
+            v.ruta_confirmada_en, v.completada_en, v.chofer_notificado_en,
             v.es_cuenta_corriente, v.pago_id,
             -- Origen/destino final del viaje: la entrega sale del depósito
             -- (ubicacion_direccion) y llega a lo del cliente (destino_direccion);
@@ -392,6 +392,11 @@ export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Prom
       const v = entrega ?? retiro!;
       await avisarChoferViaje(choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, v.hora_estimada, v.pago_id);
     }
+
+    await query(
+      `UPDATE viajes SET chofer_notificado_en = now() WHERE id = ANY($1)`,
+      [visita.map((v) => v.id)],
+    );
 
     // Notificación automática al cliente: chofer en camino
     const viajeCliente = entrega ?? retiro;

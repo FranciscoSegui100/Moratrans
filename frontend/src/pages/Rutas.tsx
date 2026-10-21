@@ -243,6 +243,7 @@ interface ParadaViaje {
   notas: string | null;
   completada_en: string | null;
   ruta_confirmada_en: string | null;
+  chofer_notificado_en?: string | null;
   disponibles?: string[];
 }
 interface ParadaVaciado {
@@ -615,11 +616,35 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     }
   }
 
+  const [despachando, setDespachando] = useState(false);
+
+  async function despacharAhora() {
+    if (!confirm('¿Enviar la primera parada de la ruta al chofer por WhatsApp ahora?')) return;
+    setDespachando(true);
+    try {
+      const { data } = await api.post<{ ok: boolean; despachada: boolean }>(`/api/rutas/${rutaId}/despachar`);
+      cargar();
+      if (data.despachada) {
+        show('success', 'Ruta despachada', 'Se envió la primera parada al chofer por WhatsApp.');
+      } else {
+        show('info', 'Nada para despachar', 'El chofer ya tiene su parada asignada o no hay paradas pendientes.');
+      }
+    } catch (err: any) {
+      show('error', 'Error al despachar', err.response?.data?.error || 'No se pudo enviar el aviso');
+    } finally {
+      setDespachando(false);
+    }
+  }
+
   async function confirmarRuta() {
-    if (!confirm('¿Confirmar la ruta? Se reservan las paradas nuevas y se avisa al chofer por WhatsApp. Podés volver a confirmar más tarde si entra trabajo nuevo.')) return;
+    const esFutura = ruta && ruta.fecha > hoyISO();
+    const confirmMsg = esFutura
+      ? `¿Confirmar la ruta para el ${formatearFecha(ruta.fecha)}? Se reservan los contenedores. El chofer recibirá su primera parada automáticamente a las 07:30 hs del día del reparto.`
+      : '¿Confirmar la ruta? Se reservan las paradas nuevas y se avisa al chofer por WhatsApp. Podés volver a confirmar más tarde si entra trabajo nuevo.';
+    if (!confirm(confirmMsg)) return;
     setConfirmando(true);
     try {
-      const { data } = await api.post<{ confirmadas: number; pendientes: string[] }>(`/api/rutas/${rutaId}/confirmar`);
+      const { data } = await api.post<{ confirmadas: number; pendientes: string[]; despachada?: boolean }>(`/api/rutas/${rutaId}/confirmar`);
       cargar();
       if (data.pendientes.length > 0) {
         show(
@@ -628,7 +653,11 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
           data.pendientes.join(' · '),
         );
       } else if (data.confirmadas > 0) {
-        show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'Se avisó al chofer por WhatsApp.');
+        if (data.despachada) {
+          show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'Se avisó al chofer por WhatsApp.');
+        } else {
+          show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'Contenedores reservados. El chofer recibirá su primera parada a las 07:30 hs.');
+        }
       } else {
         show('success', 'Ya estaba todo confirmado', 'No había paradas nuevas para reservar.');
       }
@@ -703,8 +732,25 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
             <div className="rc-warn confirmar-pendiente" style={{ marginTop: '10px', marginBottom: '8px', background: 'var(--warning-bg)', padding: '8px 12px', borderRadius: 'var(--radius)' }}>
               <AlertTriangle size={14} strokeWidth={2} />
               {paradasSinConfirmar.length === 1
-                ? '1 parada sin confirmar — confirmá la ruta para reservar y avisarle al chofer.'
-                : `${paradasSinConfirmar.length} paradas sin confirmar — confirmá la ruta para reservar y avisarle al chofer.`}
+                ? (ruta.fecha > hoyISO() ? '1 parada sin confirmar — confirmá la ruta para reservar contenedores.' : '1 parada sin confirmar — confirmá la ruta para reservar y avisarle al chofer.')
+                : (ruta.fecha > hoyISO() ? `${paradasSinConfirmar.length} paradas sin confirmar — confirmá la ruta para reservar contenedores.` : `${paradasSinConfirmar.length} paradas sin confirmar — confirmá la ruta para reservar y avisarle al chofer.`)}
+            </div>
+          )}
+
+          {!hayCambiosSinConfirmar && visitas.length > 0 && ruta.fecha > hoyISO() && (
+            <div style={{ marginTop: '10px', marginBottom: '8px', background: 'var(--bg-surface)', border: '1px solid var(--border)', padding: '8px 12px', borderRadius: 'var(--radius)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--text-muted)' }}>
+                ⏰ Ruta confirmada para el {formatearFecha(ruta.fecha)}. El chofer recibirá su primera parada automáticamente a las 07:30 hs.
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={despacharAhora}
+                disabled={despachando}
+                title="Enviar la primera parada al chofer ahora mismo sin esperar a mañana"
+              >
+                🚀 {despachando ? 'Despachando…' : 'Despachar ahora'}
+              </button>
             </div>
           )}
 

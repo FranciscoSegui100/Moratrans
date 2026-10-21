@@ -12,6 +12,8 @@ import { notificarClientePedidoConfirmado } from '../whatsapp/notificacionesClie
 import { motivoErrorWa, sendText } from '../whatsapp/graphApi';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitRecursoActualizado } from '../../config/socket';
+import { despacharPrimeraParada } from '../../services/despachoRutas.service';
+import { hoyMendozaISO } from '../../services/fechas.service';
 
 export const rutasRouter = Router();
 rutasRouter.use(requireAuth);
@@ -94,6 +96,7 @@ interface ViajeParada {
   origen: 'planificada' | 'agregada_en_dia';
   completada_en: string | null;
   ruta_confirmada_en: string | null;
+  chofer_notificado_en: string | null;
   pago_id: string | null;
 }
 
@@ -128,7 +131,7 @@ async function calcularDisponibilidadRuta(
     ejecutar(
       `SELECT id, orden, tipo, contenedor_numero, destino_direccion, destino_lat, destino_lng,
               horario_preferido, hora_estimada, zona, cliente_telefono,
-              grupo_id, estado, notas, ubicacion_id, origen, completada_en, ruta_confirmada_en, pago_id
+              grupo_id, estado, notas, ubicacion_id, origen, completada_en, ruta_confirmada_en, chofer_notificado_en, pago_id
          FROM viajes WHERE ruta_id = $1 ORDER BY orden`,
       [rutaId],
     ) as Promise<ViajeParada[]>,
@@ -476,6 +479,7 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
       origen: v.origen,
       completada_en: v.completada_en,
       ruta_confirmada_en: v.ruta_confirmada_en,
+      chofer_notificado_en: v.chofer_notificado_en,
       // Solo tiene sentido ofrecer opciones en la mitad "entrega": la mitad
       // "retiro" siempre trae su propio contenedor (el lleno del cliente).
       disponibles: v.tipo === 'entrega' ? (porOrden.get(v.orden) ?? []) : undefined,
@@ -1145,71 +1149,54 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
     emitRecursoActualizado('viajes');
     emitRecursoActualizado('contenedores');
 
-    // Aviso por WhatsApp fuera de la transacción (no bloqueante) — SOLO de la
-    // primera parada todavía pendiente de toda la ruta, no de todo lo que se
-    // confirma en esta corrida: mandarle al chofer los 5 avisos de una ruta
-    // de un saque lo confundía. El resto se va destapando de a uno, cuando
-    // termina la parada anterior (ver avisarSiguienteParadaRuta, llamada
-    // desde chofer.flow.ts al marcar "ya entregué"/"ya retiré").
-    const porOrdenVisita = new Map<number, ViajeParada[]>();
+    // Si la ruta es para HOY (o del pasado), se despacha la primera parada al chofer de inmediato.
+    // Si la ruta es para MAÑANA (o fecha futura), se confirma y reserva todo el stock,
+    // pero el aviso al chofer se posterga para la mañana del día del reparto (a las 07:30 AM vía cron).
+    const esRutaHoy = resultado.fecha <= hoyMendozaISO();
+    if (esRutaHoy) {
+      await despacharPrimeraParada(rutaId, resultado.choferId);
+    } else {
+      console.log(`[rutas] Ruta ${rutaId} para el ${resultado.fecha} confirmada. El chofer recibirá su primera parada a las 07:30 AM.`);
+    }
+
+    // Notificación automática a los clientes con paradas recién confirmadas: pedido confirmado con fecha pactada
     for (const v of resultado.confirmadasAhora) {
-      const lista = porOrdenVisita.get(v.orden) ?? [];
-      lista.push(v);
-      porOrdenVisita.set(v.orden, lista);
-    }
-    const [primeraPendiente] = await query<{ orden: number | null }>(
-      `SELECT MIN(orden) AS orden FROM viajes
-        WHERE ruta_id = $1 AND ruta_confirmada_en IS NOT NULL
-          AND estado IN ('programado', 'en_curso') AND completada_en IS NULL`,
-      [rutaId],
-    );
-    const ordenAAvisar = primeraPendiente?.orden;
-    const visita = ordenAAvisar != null ? porOrdenVisita.get(ordenAAvisar) : undefined;
-    if (visita) {
-      const entrega = visita.find((v) => v.tipo === 'entrega');
-      const retiro = visita.find((v) => v.tipo === 'retiro');
-      let aviso: Promise<void>;
-      let referenciaId: string;
-      if (entrega?.grupo_id && retiro) {
-        // Recambio: un solo aviso consolidado (mismo criterio que POST /api/viajes).
-        aviso = avisarChoferRecambio(
-          resultado.choferId, retiro.contenedor_numero!, entrega.contenedor_numero, entrega.ubicacion_id, entrega.destino_direccion,
-          entrega.cliente_telefono ?? retiro.cliente_telefono, undefined, retiro.pago_id ?? entrega.pago_id,
-        );
-        referenciaId = retiro.id;
-      } else {
-        const v = entrega ?? retiro!;
-        aviso = avisarChoferViaje(resultado.choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, undefined, v.pago_id);
-        referenciaId = v.id;
-      }
-      aviso.catch((e: any) => {
-        const motivo = motivoErrorWa(e);
-        console.error('Error avisando al chofer la ruta confirmada:', motivo);
-        notificarEnvioFallido(referenciaId, `chofer de la ruta ${rutaId}`, 'aviso de ruta confirmada', motivo).catch(
-          (e2) => console.error('Error registrando alerta de envío fallido:', e2),
-        );
-      });
-
-      // Notificación automática al cliente de la primera parada: pedido
-      // confirmado (NO "chofer en camino" — confirmar la ruta no significa
-      // que el chofer ya salió, puede ser con días de anticipación; ver
-      // notificarClientePedidoConfirmado).
-      const viajeCliente = entrega ?? retiro;
-      if (viajeCliente?.cliente_telefono) {
+      if (v.cliente_telefono) {
         notificarClientePedidoConfirmado({
-          clienteTelefono: viajeCliente.cliente_telefono,
-          tipo: viajeCliente.tipo,
-          destinoDireccion: viajeCliente.destino_direccion,
+          clienteTelefono: v.cliente_telefono,
+          tipo: v.tipo,
+          destinoDireccion: v.destino_direccion,
           fecha: resultado.fecha,
-        }).catch((e) => console.error('Error notificando pedido confirmado al cliente (primera parada):', e));
+        }).catch((e) => console.error('Error notificando pedido confirmado al cliente:', e));
       }
     }
 
-    res.json({ ok: true, confirmadas: resultado.confirmadasAhora.length, pendientes: resultado.pendientes });
+    res.json({
+      ok: true,
+      confirmadas: resultado.confirmadasAhora.length,
+      pendientes: resultado.pendientes,
+      despachada: esRutaHoy,
+      fechaRuta: resultado.fecha,
+    });
   } catch (error: any) {
     if (error.status) res.status(error.status).json({ error: error.message });
     else throw error;
   }
+});
+
+/**
+ * POST /api/rutas/:id/despachar — despacho manual inmediato de la primera parada al chofer
+ * (por si el operador quiere forzar el despacho antes del cron de las 07:30 AM).
+ */
+rutasRouter.post('/:id/despachar', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const { id: rutaId } = req.params;
+  const [ruta] = await query<{ id: string; chofer_id: string }>(
+    'SELECT id, chofer_id FROM rutas WHERE id = $1',
+    [rutaId],
+  );
+  if (!ruta) fail('Ruta no encontrada.', 404);
+  const ok = await despacharPrimeraParada(ruta.id, ruta.chofer_id);
+  res.json({ ok, despachada: ok });
 });
 
 /**
