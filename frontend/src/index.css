@@ -1981,6 +1981,11 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .route-card:active { transform: translateY(-2px) scale(0.99); }
 .route-card.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .route-card.warn { border-color: rgba(173,127,36,0.35); }
+/* Ruta con paradas sin confirmar: franja + fondo tenue en rojo para que se note
+   de entrada, sin tener que leer el badge chico del encabezado (ver feedback:
+   "no se diferencia una ruta confirmada de una recién puesta sin confirmar"). */
+.route-card.sin-confirmar { border-left: 3px solid var(--danger); background: var(--danger-bg); }
+.route-card.sin-confirmar:hover { border-color: var(--danger); }
 .rc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .rc-av { width: 34px; height: 34px; border-radius: 50%; background: var(--accent-tint); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 0.78rem; font-weight: 700; flex-shrink: 0; }
 .rc-nm { font-size: 0.9rem; font-weight: 600; line-height: 1.15; color: var(--text-primary); }
@@ -2128,6 +2133,10 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   background: var(--accent-tint);
   box-shadow: 0 0 0 1px var(--accent-tint-strong);
 }
+/* Esta parada puntual todavía no se confirmó (recién agregada a una ruta que
+   ya estaba confirmada, por ejemplo) — mismo color que el badge "Sin
+   confirmar" de la ruta, para que se note sin tener que mirar el encabezado. */
+.stop.sin-confirmar { border-color: var(--danger); background: var(--danger-bg); }
 
 /* Badge de ruta con paradas todavía sin confirmar: color de alerta (no el
    mismo ámbar que "En curso", que es un estado normal y esperado) — mientras

@@ -777,11 +777,18 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                 v.vaciado.contenedor_estado !== 'entregado'
               );
               const bloqueada = finalizada || enCurso || vaciadoResuelto;
+              // Esta parada puntual (no la ruta entera) todavía no se mandó al
+              // chofer: por ejemplo recién se agregó desde la bolsa a una ruta que
+              // ya estaba confirmada. Los vaciados no pasan por este confirmado
+              // explícito (ver paradasSinConfirmar más arriba), por eso solo mira
+              // entrega/retiro.
+              const entregaORetiro = v.entrega ?? v.retiro ?? null;
+              const sinConfirmarAqui = !finalizada && !enCurso && !!entregaORetiro && entregaORetiro.ruta_confirmada_en == null;
               return (
                 <div
                   key={`${v.tipoParada}-${v.id}`}
                   data-flip-key={`${v.tipoParada}-${v.id}`}
-                  className={`stop${finalizada || vaciadoResuelto ? ' finalizada' : ''}${enCurso ? ' en-curso-bloqueada' : ''}${dragIdx === idx ? ' dragging' : ''}${overIdx === idx && dragIdx !== null && dragIdx !== idx ? ' drop-target' : ''}${insertIdx === idx ? ' insert-antes' : ''}`}
+                  className={`stop${finalizada || vaciadoResuelto ? ' finalizada' : ''}${enCurso ? ' en-curso-bloqueada' : ''}${sinConfirmarAqui ? ' sin-confirmar' : ''}${dragIdx === idx ? ' dragging' : ''}${overIdx === idx && dragIdx !== null && dragIdx !== idx ? ' drop-target' : ''}${insertIdx === idx ? ' insert-antes' : ''}`}
                   onDragOver={(e) => {
                     if (dragIdx !== null) {
                       e.preventDefault();
@@ -839,6 +846,11 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                     {enCurso && (
                       <div className="stop-sub" style={{ color: 'var(--accent)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
                         🚚 En camino (chofer realizando esta parada)
+                      </div>
+                    )}
+                    {sinConfirmarAqui && (
+                      <div className="stop-sub" style={{ color: 'var(--danger)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <AlertTriangle size={12} strokeWidth={2.5} /> Sin confirmar — el chofer todavía no se enteró
                       </div>
                     )}
                     {v.vaciado && (
@@ -2145,7 +2157,7 @@ export function Rutas() {
                 return (
                   <button
                     key={chofer.id}
-                    className={`route-card${sel ? ' sel' : ''}${stats.warn ? ' warn' : ''}${dropChofer === chofer.id ? ' drop-activo' : ''}${choferesDestello.has(chofer.id) ? ' destello' : ''}`}
+                    className={`route-card${sel ? ' sel' : ''}${stats.warn ? ' warn' : ''}${estado.clase === 'sin_confirmar' ? ' sin-confirmar' : ''}${dropChofer === chofer.id ? ' drop-activo' : ''}${choferesDestello.has(chofer.id) ? ' destello' : ''}`}
                     onClick={() => setRutaSeleccionada(ruta.id)}
                     {...propsDropChofer(chofer.id)}
                   >
