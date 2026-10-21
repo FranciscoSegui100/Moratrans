@@ -25,6 +25,16 @@ export function formatearFecha(fecha?: string | Date | null): string {
   });
 }
 
+/** Suma (o resta, con `dias` negativo) días a una fecha tipo calendario (YYYY-MM-DD), sin desfasajes horarios. */
+export function sumarDias(fecha: string, dias: number): string {
+  const [anio, mes, dia] = fecha.slice(0, 10).split('-').map(Number);
+  const d = new Date(anio, mes - 1, dia + dias);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export function formatearFechaHora(fecha?: string | Date | null): string {
   if (!fecha) return '—';
   const d = typeof fecha === 'string' ? new Date(fecha) : fecha;

@@ -1,13 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown } from 'lucide-react';
+import { AlertTriangle, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
 import { PedidoDetalleModal } from '../components/PedidoDetalleModal';
-import { formatearFecha } from '../lib/fechas';
+import { formatearFecha, sumarDias } from '../lib/fechas';
 import { hoyISO } from '../lib/viajes';
 
 interface Ruta {
@@ -1835,10 +1835,16 @@ export function Rutas() {
             <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <span>📦 Pedidos sin rutear</span>
               <div className="date-pick" style={{ fontWeight: 500, fontSize: '0.78rem' }}>
+                <button type="button" className="date-pick-arrow" onClick={() => irAFecha(sumarDias(fecha, -1))} title="Día anterior">
+                  <ChevronLeft size={14} strokeWidth={2.5} />
+                </button>
                 <input type="date" value={fecha} onChange={(e) => {
                   setFecha(e.target.value);
                   setFormViaje((fv) => ({ ...fv, fecha: e.target.value }));
                 }} />
+                <button type="button" className="date-pick-arrow" onClick={() => irAFecha(sumarDias(fecha, 1))} title="Día siguiente">
+                  <ChevronRight size={14} strokeWidth={2.5} />
+                </button>
               </div>
               <RoleGate roles={['admin', 'operador']}>
                 <button
