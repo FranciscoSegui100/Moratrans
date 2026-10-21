@@ -292,10 +292,10 @@ export function Conversaciones() {
     }
   }
 
-  /** "Tomar igual": para un chat que quedó "atendido por" alguien que ya no está con el panel abierto. */
-  async function manejarTomarIgual() {
+  /** Para un chat que quedó "atendido por" alguien que ya no está con el panel abierto: te la reasigna de todas formas. */
+  async function manejarTomarDeTodasFormas() {
     if (!activa) return;
-    if (!confirm(`${activa.asignado_a_nombre ?? 'Otro operador'} tiene esta conversación asignada. ¿Tomarla igual?`)) return;
+    if (!confirm(`${activa.asignado_a_nombre ?? 'Otro operador'} tiene esta conversación asignada. ¿Tomarla de todas formas?`)) return;
     try {
       await reclamar(activa.telefono, true);
     } catch (err: any) {
@@ -304,9 +304,9 @@ export function Conversaciones() {
   }
 
   /** Devuelve el chat al bot aunque esté asignado a otro operador — mismo caso de destrabe. */
-  async function manejarReactivarBotIgual() {
+  async function manejarReactivarBotDeTodasFormas() {
     if (!activa) return;
-    if (!confirm(`${activa.asignado_a_nombre ?? 'Otro operador'} tiene esta conversación asignada. ¿Reactivar el bot igual?`)) return;
+    if (!confirm(`${activa.asignado_a_nombre ?? 'Otro operador'} tiene esta conversación asignada. ¿Reactivar el bot de todas formas?`)) return;
     try {
       await setModoHumano(activa.telefono, false);
     } catch (err: any) {
@@ -433,11 +433,11 @@ export function Conversaciones() {
                   {activa.modo_humano && activa.asignado_a && activa.asignado_a !== user?.id && (
                     <div className="asesoria-atendida-por-bloque">
                       <span className="asesoria-atendida-por">Atendida por {activa.asignado_a_nombre}</span>
-                      <button onClick={manejarTomarIgual} className="btn btn-ghost btn-sm" title="Por si el otro operador no está disponible">
-                        <UserPlus strokeWidth={2} /> Tomar igual
+                      <button onClick={manejarTomarDeTodasFormas} className="btn btn-ghost btn-sm" title="Por si el otro operador no está disponible">
+                        <UserPlus strokeWidth={2} /> Tomar de todas formas
                       </button>
-                      <button onClick={manejarReactivarBotIgual} className="btn btn-ghost btn-sm" title="Por si el otro operador no está disponible">
-                        <Play strokeWidth={2} /> Reactivar bot igual
+                      <button onClick={manejarReactivarBotDeTodasFormas} className="btn btn-ghost btn-sm" title="Por si el otro operador no está disponible">
+                        <Play strokeWidth={2} /> Reactivar bot de todas formas
                       </button>
                     </div>
                   )}
