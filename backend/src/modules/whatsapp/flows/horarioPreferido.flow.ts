@@ -10,6 +10,15 @@ export const OPCIONES_HORARIO = [
   { id: 'horario_tarde', title: '🕐 Tarde (12-15hs)' },
 ];
 
-export async function pedirHorarioPreferido(to: string, mensaje: string): Promise<void> {
-  await sendButtons(to, mensaje, OPCIONES_HORARIO);
+export async function pedirHorarioPreferido(to: string, mensaje: string, fechaISO?: string): Promise<void> {
+  let opciones = OPCIONES_HORARIO;
+  if (fechaISO) {
+    const ahoraMendoza = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    const hoyISO = ahoraMendoza.toISOString().slice(0, 10);
+    if (fechaISO === hoyISO && ahoraMendoza.getUTCHours() >= 12) {
+      // Si ya pasó el mediodía en Mendoza y es para hoy, solo queda la franja tarde
+      opciones = OPCIONES_HORARIO.filter((o) => o.id === 'horario_tarde');
+    }
+  }
+  await sendButtons(to, mensaje, opciones);
 }

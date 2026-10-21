@@ -9,6 +9,8 @@ import { hoyMendozaISO } from '../../../services/fechas.service';
 import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
 import { opcionesMetodoPago, tieneCuentaCorrienteAprobada, pedidosAbiertos, ofrecerPedidoPendiente } from './pago.flow';
 import { reverseGeocode } from '../../../services/geocoding.service';
+import { proximosDiasHabiles, formatearFechaLarga } from '../../../services/diasHabiles.service';
+import { CANTIDAD_DIAS_HABILES_A_OFRECER } from '../../../config/bot.config';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
 import {
@@ -52,7 +54,7 @@ import type { Sesion } from '../session.store';
  * elegir_metodo_ubicacion_recambio -> [ubicacion_pin_recambio [->
  * confirmar_departamento_pin_recambio] | ubicacion_texto_recambio] ->
  * confirmar_ubicacion_recambio_nueva (capa 4) -> indicacion_recambio] ->
- * horario_recambio -> [confirmar_resumen_recambio -> [pedir_nombre_recambio,
+ * dia_recambio -> horario_recambio -> [confirmar_resumen_recambio -> [pedir_nombre_recambio,
  * si es la primera vez que este teléfono confirma un pedido], si no es
  * cuenta corriente] -> pago.
  */
@@ -88,6 +90,9 @@ export async function handleRecambio(m: MensajeEntrante, sesion: Sesion): Promis
   }
   if (sesion.paso === 'indicacion_recambio') {
     return manejarIndicacion(m, sesion);
+  }
+  if (sesion.paso === 'dia_recambio') {
+    return manejarDiaRecambio(m, sesion);
   }
   if (sesion.paso === 'horario_recambio') {
     return manejarHorario(m, sesion);
@@ -222,8 +227,34 @@ async function manejarConfirmacionUbicacion(m: MensajeEntrante, sesion: Sesion):
     await manejarRespuestaInvalida(m, 'Elegí "✅ Sí, es correcta" o "↩️ Corregirla".\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
-  await pedirHorarioPreferido(to, '🕐 ¿En qué franja horaria preferís que coordinemos el recambio?');
-  await setSesion({ ...sesion, paso: 'horario_recambio' });
+  await pedirDiaRecambio(to, sesion);
+}
+
+async function pedirDiaRecambio(to: string, sesion: Sesion): Promise<void> {
+  const dias = proximosDiasHabiles(CANTIDAD_DIAS_HABILES_A_OFRECER, { incluirHoy: true });
+  await sendList(
+    to,
+    '📅 Día del recambio',
+    '¿Qué día preferís que coordinemos el recambio?',
+    'Ver días',
+    dias.map((d) => ({ id: `dia_rec:${d.fecha}`, title: d.etiqueta })),
+  );
+  await setSesion({ ...sesion, paso: 'dia_recambio' });
+}
+
+async function manejarDiaRecambio(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  if (!m.seleccionId?.startsWith('dia_rec:')) {
+    await manejarRespuestaInvalida(m, 'Por favor, elegí uno de los días de la lista. 👆\n\n_Escribí *menú* para volver al inicio._');
+    return;
+  }
+  const fechaRecambio = m.seleccionId.replace('dia_rec:', '');
+  await pedirHorarioPreferido(
+    to,
+    `🕐 ¿En qué franja horaria preferís que coordinemos el recambio el ${formatearFechaLarga(fechaRecambio)}?`,
+    fechaRecambio,
+  );
+  await setSesion({ ...sesion, paso: 'horario_recambio', contexto: { ...sesion.contexto, fechaRecambio } });
 }
 
 async function pedirUbicacionNueva(to: string, sesion: Sesion): Promise<void> {
@@ -263,9 +294,10 @@ async function manejarMetodoUbicacion(m: MensajeEntrante, sesion: Sesion): Promi
 }
 
 async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const fechaRecambio = sesion.contexto.fechaRecambio as string | undefined;
   const opcion = OPCIONES_HORARIO.find((o) => o.id === m.seleccionId);
   if (!opcion) {
-    await pedirHorarioPreferido(m.from, 'Por favor, elegí una de las siguientes opciones. 👇');
+    await pedirHorarioPreferido(m.from, 'Por favor, elegí una de las siguientes opciones. 👇', fechaRecambio);
     return;
   }
   await confirmarYPedirPago(m, { ...sesion, contexto: { ...sesion.contexto, horarioPreferido: opcion.title } });
@@ -438,8 +470,7 @@ async function manejarIndicacion(m: MensajeEntrante, sesion: Sesion): Promise<vo
   }
   const indicacion = normalizarIndicacion(m.texto);
   const destinoDireccion = combinarDireccionConIndicacion(sesion.contexto.destinoDireccion as string | null, indicacion);
-  await pedirHorarioPreferido(to, '🕐 ¿En qué franja horaria preferís que coordinemos el recambio?');
-  await setSesion({ ...sesion, paso: 'horario_recambio', contexto: { ...sesion.contexto, destinoDireccion } });
+  await pedirDiaRecambio(to, { ...sesion, contexto: { ...sesion.contexto, destinoDireccion } });
 }
 
 async function confirmarYPedirPago(m: MensajeEntrante, sesion: Sesion): Promise<void> {
@@ -479,6 +510,7 @@ async function mostrarResumenYConfirmarRecambio(to: string, sesion: Sesion, prec
   const destino = (sesion.contexto.destinoDireccion as string | null) ?? null;
   const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
   const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
+  const fechaRecambio = sesion.contexto.fechaRecambio as string | undefined;
   const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
   const resumenDireccion = destino != null && destinoLat == null && destinoLng == null ? `*${destino}*` : destino;
 
@@ -488,8 +520,9 @@ async function mostrarResumenYConfirmarRecambio(to: string, sesion: Sesion, prec
       `Contenedor: *${numero}*\n` +
       (resumenDireccion ? `Dirección: ${resumenDireccion}\n` : '') +
       `Zona: *${zona}*\n` +
-      `Precio del flete: *ARS ${Number(precio).toLocaleString('es-AR')}*\n` +
+      (fechaRecambio ? `Fecha: *${formatearFechaLarga(fechaRecambio)}*\n` : '') +
       (horarioPreferido ? `Franja horaria: ${horarioPreferido}\n` : '') +
+      `Precio del flete: *ARS ${Number(precio).toLocaleString('es-AR')}*\n` +
       `\n¿Confirmás el recambio?`,
     [
       { id: 'resumen_recambio_si', title: '✅ Sí, confirmar' },
@@ -540,13 +573,14 @@ async function finalizarRecambioPago(m: MensajeEntrante, sesion: Sesion): Promis
   const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
   const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
   const direccionVerificada = (sesion.contexto.direccionVerificada as boolean | undefined) ?? true;
+  const fechaRecambio = (sesion.contexto.fechaRecambio as string | null) ?? null;
   const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
   const precio = sesion.contexto.precio as string;
 
   await query(
-    `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, tipo, contenedor_recambio_numero)
-     VALUES ($1,$2,$3,$4,'confirmado',$5,$6,$7,$8,$9,'recambio',$10)`,
-    [to, m.nombrePerfil ?? null, zona, precio, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, numero],
+    `INSERT INTO pedidos (cliente_telefono, cliente_nombre, zona, precio, estado, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, tipo, contenedor_recambio_numero, fecha_entrega)
+     VALUES ($1,$2,$3,$4,'confirmado',$5,$6,$7,$8,$9,'recambio',$10,$11)`,
+    [to, m.nombrePerfil ?? null, zona, precio, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, numero, fechaRecambio],
   );
 
   await sendButtons(
@@ -577,22 +611,22 @@ async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: s
   const destinoLat = (sesion.contexto.destinoLat as number | null) ?? null;
   const destinoLng = (sesion.contexto.destinoLng as number | null) ?? null;
   const direccionVerificada = (sesion.contexto.direccionVerificada as boolean | undefined) ?? true;
+  const fechaRecambio = (sesion.contexto.fechaRecambio as string | undefined) ?? hoyMendozaISO();
   const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
 
   const grupoId = randomUUID();
   const vaciadero = await resolverUbicacion('vaciadero');
   const deposito = await resolverUbicacion('deposito');
-  const hoy = hoyMendozaISO();
 
   await query(
     `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
      VALUES ('retiro', $12, $1, $2, $3, $4, $5, $6, $7, $8, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
-    [numero, to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, hoy],
+    [numero, to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, fechaRecambio],
   );
   await query(
     `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, importe, es_cuenta_corriente, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
      VALUES ('entrega', $12, $1, $2, $3, $4, $5, $6, $7, $8, TRUE, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
-    [to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, precio, grupoId, deposito?.id ?? null, deposito?.direccion ?? null, hoy],
+    [to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, precio, grupoId, deposito?.id ?? null, deposito?.direccion ?? null, fechaRecambio],
   );
 
   const [alerta] = await query(
@@ -608,7 +642,7 @@ async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: s
   await clearSesion(to);
   await sendText(
     to,
-    `✅ ¡Recambio confirmado! Costo: *ARS ${Number(precio).toLocaleString('es-AR')}* — se agregó a tu cuenta corriente.\n\n` +
+    `✅ ¡Recambio confirmado para el *${formatearFechaLarga(fechaRecambio)}*! Costo: *ARS ${Number(precio).toLocaleString('es-AR')}* — se agregó a tu cuenta corriente.\n\n` +
       'En breve te asignamos chofer para coordinarlo.\n\n' +
       '¡Gracias por confiar en *MoraTrans*! 🚚\n\n' +
       '_Si en un rato no tenés novedades, escribí *asesor*._',
