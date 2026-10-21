@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { finalizarRetiro } from '../../services/retiro.service';
+import { hoyMendozaISO } from '../../services/fechas.service';
 
 export const contenedoresRouter = Router();
 contenedoresRouter.use(requireAuth);
@@ -25,9 +26,15 @@ contenedoresRouter.get('/', async (_req: Request, res: Response) => {
                 SELECT 1 FROM viajes v
                  WHERE v.contenedor_numero = c.numero AND v.tipo = 'retiro' AND v.estado = 'en_curso'
               ) THEN 'yendo_a_vaciar'
+              -- "Para retirar" es solo cuando el retiro ya está próximo/vencido
+              -- (fecha <= hoy) — desde que el retiro automático por
+              -- vencimiento se crea con anticipación (ver jobs/alertas.cron.ts),
+              -- existe un viaje 'retiro' programado desde el día que se
+              -- entrega, y sin este filtro un contenedor recién alquilado ya
+              -- aparecía "para retirar" aunque faltaran semanas.
               WHEN EXISTS (
                 SELECT 1 FROM viajes v
-                 WHERE v.contenedor_numero = c.numero AND v.tipo = 'retiro' AND v.estado = 'programado'
+                 WHERE v.contenedor_numero = c.numero AND v.tipo = 'retiro' AND v.estado = 'programado' AND v.fecha <= $1::date
               ) THEN 'para_retirar'
               WHEN c.estado = 'entregado' AND c.vence_en IS NOT NULL AND c.vence_en < now() THEN 'vencido'
               WHEN c.estado = 'entregado' THEN 'alquilado'
@@ -68,6 +75,7 @@ contenedoresRouter.get('/', async (_req: Request, res: Response) => {
        LEFT JOIN choferes vch ON vch.id = va.chofer_id
        LEFT JOIN clientes cl ON cl.telefono = va.cliente_telefono
       ORDER BY c.actualizado_en DESC`,
+    [hoyMendozaISO()],
   );
   res.json(rows);
 });

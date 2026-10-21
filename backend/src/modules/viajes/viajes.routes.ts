@@ -12,6 +12,7 @@ import { emitRecursoActualizado } from '../../config/socket';
 import { avisoPagoChofer } from '../whatsapp/avisoEfectivo';
 import { formatearTelefonoLegible } from '../../services/telefono.service';
 import { notificarClienteChoferEnCamino } from '../whatsapp/notificacionesCliente';
+import { hoyMendozaISO } from '../../services/fechas.service';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -56,6 +57,8 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
   if (rutaId === 'null') conds.push(`v.ruta_id IS NULL`);
   else if (rutaId) { params.push(rutaId); conds.push(`v.ruta_id = $${params.length}`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  params.push(hoyMendozaISO());
+  const hoyParam = `$${params.length}`;
   const rows = await query(
     `SELECT v.id, v.tipo, v.fecha, v.estado, v.zona, v.contenedor_numero, v.destino_direccion,
             v.destino_lat, v.destino_lng, v.horario_preferido, v.hora_estimada,
@@ -76,9 +79,11 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
                 SELECT 1 FROM viajes v2
                  WHERE v2.contenedor_numero = v.contenedor_numero AND v2.tipo = 'retiro' AND v2.estado = 'en_curso'
               ) THEN 'yendo_a_vaciar'
+              -- "Para retirar" es solo cuando el retiro ya está próximo/vencido
+              -- (fecha <= hoy) — ver mismo comentario en contenedores.routes.ts.
               WHEN EXISTS (
                 SELECT 1 FROM viajes v2
-                 WHERE v2.contenedor_numero = v.contenedor_numero AND v2.tipo = 'retiro' AND v2.estado = 'programado'
+                 WHERE v2.contenedor_numero = v.contenedor_numero AND v2.tipo = 'retiro' AND v2.estado = 'programado' AND v2.fecha <= ${hoyParam}::date
               ) THEN 'para_retirar'
               WHEN ct.estado = 'entregado' AND ct.vence_en IS NOT NULL AND ct.vence_en < now() THEN 'vencido'
               WHEN ct.estado = 'entregado' THEN 'alquilado'
