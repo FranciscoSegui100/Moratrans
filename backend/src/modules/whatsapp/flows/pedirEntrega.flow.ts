@@ -245,6 +245,7 @@ async function pedirConfirmacion(
     [
       { id: 'entrega_cliente_si', title: '✅ Sí, es correcta' },
       { id: 'entrega_cliente_no', title: '↩️ Volver a enviar' },
+      { id: 'entrega_cambiar_depto', title: '🧮 Cambiar depto.' },
     ],
   );
   await setSesion({
@@ -263,8 +264,16 @@ async function manejarConfirmacion(m: MensajeEntrante, sesion: Sesion): Promise<
     await pedirMetodoUbicacion(to, departamento);
     return;
   }
+  if (m.seleccionId === 'entrega_cambiar_depto') {
+    if (!(await pedirDepartamento(to, '🧮 Elegí el *departamento* correcto:'))) {
+      await clearSesion(to);
+      return;
+    }
+    await setSesion({ telefono: to, flujo: 'pedir_entrega', paso: 'elegir_departamento_entrega', contexto: {} });
+    return;
+  }
   if (m.seleccionId !== 'entrega_cliente_si') {
-    await manejarRespuestaInvalida(m, 'Elegí "✅ Sí, es correcta" o "↩️ Volver a enviar".\n\n_Escribí *menú* para volver al inicio._');
+    await manejarRespuestaInvalida(m, 'Elegí "✅ Sí, es correcta", "↩️ Volver a enviar" o "🧮 Cambiar depto.".\n\n_Escribí *menú* para volver al inicio._');
     return;
   }
 

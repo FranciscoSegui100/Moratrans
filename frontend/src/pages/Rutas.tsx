@@ -243,6 +243,7 @@ interface ParadaViaje {
   notas: string | null;
   completada_en: string | null;
   ruta_confirmada_en: string | null;
+  chofer_notificado_en?: string | null;
   disponibles?: string[];
 }
 interface ParadaVaciado {
@@ -615,11 +616,35 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     }
   }
 
+  const [despachando, setDespachando] = useState(false);
+
+  async function despacharAhora() {
+    if (!confirm('¿Enviar la primera parada de la ruta al chofer por WhatsApp ahora?')) return;
+    setDespachando(true);
+    try {
+      const { data } = await api.post<{ ok: boolean; despachada: boolean }>(`/api/rutas/${rutaId}/despachar`);
+      cargar();
+      if (data.despachada) {
+        show('success', 'Ruta despachada', 'Se envió la primera parada al chofer por WhatsApp.');
+      } else {
+        show('info', 'Nada para despachar', 'El chofer ya tiene su parada asignada o no hay paradas pendientes.');
+      }
+    } catch (err: any) {
+      show('error', 'Error al despachar', err.response?.data?.error || 'No se pudo enviar el aviso');
+    } finally {
+      setDespachando(false);
+    }
+  }
+
   async function confirmarRuta() {
-    if (!confirm('¿Confirmar la ruta? Se reservan las paradas nuevas y se avisa al chofer por WhatsApp. Podés volver a confirmar más tarde si entra trabajo nuevo.')) return;
+    const esFutura = ruta && ruta.fecha > hoyISO();
+    const confirmMsg = esFutura
+      ? `¿Confirmar la ruta para el ${formatearFecha(ruta.fecha)}? Se reservan los contenedores. El chofer recibirá su primera parada automáticamente a las 07:30 hs del día del reparto.`
+      : '¿Confirmar la ruta? Se reservan las paradas nuevas y se avisa al chofer por WhatsApp. Podés volver a confirmar más tarde si entra trabajo nuevo.';
+    if (!confirm(confirmMsg)) return;
     setConfirmando(true);
     try {
-      const { data } = await api.post<{ confirmadas: number; pendientes: string[] }>(`/api/rutas/${rutaId}/confirmar`);
+      const { data } = await api.post<{ confirmadas: number; pendientes: string[]; despachada?: boolean }>(`/api/rutas/${rutaId}/confirmar`);
       cargar();
       if (data.pendientes.length > 0) {
         show(
@@ -628,7 +653,11 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
           data.pendientes.join(' · '),
         );
       } else if (data.confirmadas > 0) {
-        show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'Se avisó al chofer por WhatsApp.');
+        if (data.despachada) {
+          show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'Se avisó al chofer por WhatsApp.');
+        } else {
+          show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'Contenedores reservados. El chofer recibirá su primera parada a las 07:30 hs.');
+        }
       } else {
         show('success', 'Ya estaba todo confirmado', 'No había paradas nuevas para reservar.');
       }
@@ -703,8 +732,25 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
             <div className="rc-warn confirmar-pendiente" style={{ marginTop: '10px', marginBottom: '8px', background: 'var(--warning-bg)', padding: '8px 12px', borderRadius: 'var(--radius)' }}>
               <AlertTriangle size={14} strokeWidth={2} />
               {paradasSinConfirmar.length === 1
-                ? '1 parada sin confirmar — confirmá la ruta para reservar y avisarle al chofer.'
-                : `${paradasSinConfirmar.length} paradas sin confirmar — confirmá la ruta para reservar y avisarle al chofer.`}
+                ? (ruta.fecha > hoyISO() ? '1 parada sin confirmar — confirmá la ruta para reservar contenedores.' : '1 parada sin confirmar — confirmá la ruta para reservar y avisarle al chofer.')
+                : (ruta.fecha > hoyISO() ? `${paradasSinConfirmar.length} paradas sin confirmar — confirmá la ruta para reservar contenedores.` : `${paradasSinConfirmar.length} paradas sin confirmar — confirmá la ruta para reservar y avisarle al chofer.`)}
+            </div>
+          )}
+
+          {!hayCambiosSinConfirmar && visitas.length > 0 && ruta.fecha > hoyISO() && (
+            <div style={{ marginTop: '10px', marginBottom: '8px', background: 'var(--bg-surface)', border: '1px solid var(--border)', padding: '8px 12px', borderRadius: 'var(--radius)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--text-muted)' }}>
+                ⏰ Ruta confirmada para el {formatearFecha(ruta.fecha)}. El chofer recibirá su primera parada automáticamente a las 07:30 hs.
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={despacharAhora}
+                disabled={despachando}
+                title="Enviar la primera parada al chofer ahora mismo sin esperar a mañana"
+              >
+                🚀 {despachando ? 'Despachando…' : 'Despachar ahora'}
+              </button>
             </div>
           )}
 
@@ -1196,11 +1242,19 @@ export function Rutas() {
   const rutasAbiertasAnteriores = rutasConPendientes.filter((r) => r.fecha < fecha);
 
   const visitasPendientes = agruparPendientes(cola);
-  // Pedidos sin rutear que deben verse en la bolsa: los del día seleccionado MÁS
-  // todos los atrasados de días anteriores que hayan quedado colgados sin rutear.
-  const pedidosAtrasados = visitasPendientes.filter((v) => v.fecha < fecha);
-  const pedidosDelDia = visitasPendientes.filter((v) => v.fecha === fecha);
-  const pedidosBolsa = visitasPendientes.filter((v) => v.fecha <= fecha);
+  // Un pedido sin rutear "vive" en la bolsa de su fecha EFECTIVA, no la
+  // original: mientras no pasó su fecha, esa fecha es la suya; en cuanto se
+  // pasó (quedó atrasado), su fecha efectiva pasa a ser HOY y ahí se queda —
+  // nunca vuelve a aparecer en la bolsa de su día original ni de ningún otro
+  // día ya pasado. Antes un pedido atrasado seguía viviendo en su propio día
+  // viejo: con las flechitas para moverse de día, eso dejaba armar una ruta
+  // fechada ese día que ya pasó, y el aviso al chofer/cliente terminaba
+  // mencionando una fecha vencida sin sentido.
+  const hoy = hoyISO();
+  const fechaEfectiva = (f: string) => (f < hoy ? hoy : f);
+  const pedidosBolsa = visitasPendientes.filter((v) => fechaEfectiva(v.fecha) === fecha);
+  const pedidosAtrasados = pedidosBolsa.filter((v) => v.fecha < hoy);
+  const pedidosDelDia = pedidosBolsa.filter((v) => v.fecha === fecha);
   const sinAsignarDelDia = pedidosDelDia.length;
   const atrasadosSinRutear = pedidosAtrasados.length;
   const totalBolsa = pedidosBolsa.length;
@@ -1497,9 +1551,12 @@ export function Rutas() {
    * hasta que se cierre el aviso o se vuelva a auto-armar.
    */
   async function autoArmarRutas() {
-    const visitasParaArmar = agruparPendientes(cola).filter((v) => v.fecha <= fecha && (v.entrega?.id ?? v.retiro?.id));
+    // Mismo criterio que la bolsa (fecha efectiva): no arma rutas fechadas en el pasado.
+    const visitasParaArmar = agruparPendientes(cola).filter(
+      (v) => fechaEfectiva(v.fecha) === fecha && (v.entrega?.id ?? v.retiro?.id),
+    );
     if (visitasParaArmar.length === 0) {
-      show('info', 'Nada para armar', 'No hay pedidos sin rutear para este día ni atrasados.');
+      show('info', 'Nada para armar', fecha === hoy ? 'No hay pedidos sin rutear para hoy ni atrasados.' : 'No hay pedidos sin rutear para este día.');
       return;
     }
     if (choferes.length === 0) {
@@ -1831,13 +1888,28 @@ export function Rutas() {
             <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <span>📦 Pedidos sin rutear</span>
               <div className="date-pick" style={{ fontWeight: 500, fontSize: '0.78rem' }}>
-                <button type="button" className="date-pick-arrow" onClick={() => irAFecha(sumarDias(fecha, -1))} title="Día anterior">
+                <button
+                  type="button"
+                  className="date-pick-arrow"
+                  onClick={() => irAFecha(sumarDias(fecha, -1))}
+                  disabled={fecha <= hoy}
+                  title={fecha <= hoy ? 'No se puede ir antes de hoy: los pedidos atrasados ya se ven acá' : 'Día anterior'}
+                >
                   <ChevronLeft size={14} strokeWidth={2.5} />
                 </button>
-                <input type="date" value={fecha} onChange={(e) => {
-                  setFecha(e.target.value);
-                  setFormViaje((fv) => ({ ...fv, fecha: e.target.value }));
-                }} />
+                <input
+                  type="date"
+                  value={fecha}
+                  min={hoy}
+                  title="No se puede elegir una fecha pasada: los pedidos atrasados ya se ven en el día de hoy"
+                  onChange={(e) => {
+                    // El atributo min bloquea el calendario nativo, pero algunos
+                    // navegadores igual permiten tipear una fecha pasada a mano.
+                    const f = e.target.value < hoy ? hoy : e.target.value;
+                    setFecha(f);
+                    setFormViaje((fv) => ({ ...fv, fecha: f }));
+                  }}
+                />
                 <button type="button" className="date-pick-arrow" onClick={() => irAFecha(sumarDias(fecha, 1))} title="Día siguiente">
                   <ChevronRight size={14} strokeWidth={2.5} />
                 </button>
@@ -1864,7 +1936,9 @@ export function Rutas() {
           </div>
 
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
-            Mostrando pedidos de la fecha y pedidos atrasados acumulados. Tocá un pedido para ver el detalle. Arrastralo sobre un chofer (abajo) para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
+            {fecha === hoy
+              ? 'Mostrando los pedidos de hoy y los atrasados acumulados de días anteriores.'
+              : 'Mostrando solo los pedidos de este día.'} Tocá un pedido para ver el detalle. Arrastralo sobre un chofer (abajo) para asignarlo, o arrastrá una parada de una ruta hasta acá para sacarla.
           </div>
 
           {proximaFechaConPedidos && (
@@ -1900,10 +1974,12 @@ export function Rutas() {
           )}
 
           {totalBolsa === 0 ? (
-            <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>No hay pedidos pendientes para este día ni atrasados.</div>
+            <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>
+              {fecha === hoy ? 'No hay pedidos pendientes para hoy ni atrasados.' : 'No hay pedidos pendientes para este día.'}
+            </div>
           ) : visiblesEnBolsa === 0 ? (
             <div className="rc-empty" style={{ textAlign: 'center', padding: '20px 0' }}>
-              No hay {ETIQUETA_TIPO_VISITA[filtroTipoBolsa as TipoVisita].toLowerCase()} sin rutear para este día ni atrasados.
+              No hay {ETIQUETA_TIPO_VISITA[filtroTipoBolsa as TipoVisita].toLowerCase()} sin rutear para {fecha === hoy ? 'hoy ni atrasados' : 'este día'}.
             </div>
           ) : (
             // Se ven ~2 filas de tarjetas; si hay más, scroll vertical acá adentro
@@ -1994,9 +2070,16 @@ export function Rutas() {
                               </span>
                             </div>
                           </div>
-                          <span className={`tag ${visita.entrega && visita.retiro ? 'recambio' : visita.entrega ? 'entrega' : 'retiro'}`} style={{ fontSize: '0.68rem', padding: '2px 6px', flexShrink: 0 }}>
-                            {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
-                          </span>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', flexShrink: 0 }}>
+                            <span className={`tag ${visita.entrega && visita.retiro ? 'recambio' : visita.entrega ? 'entrega' : 'retiro'}`} style={{ fontSize: '0.68rem', padding: '2px 6px' }}>
+                              {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
+                            </span>
+                            {categoriaDia(dias) === 'atrasado' && (
+                              <span style={{ fontSize: '0.63rem', fontWeight: 700, color: '#fff', background: 'var(--danger)', padding: '2px 6px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap' }}>
+                                ⚠️ Atrasado
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>

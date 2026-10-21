@@ -387,6 +387,7 @@ async function avanzarACapaCuatroRecambio(
     [
       { id: 'ubicacion_es_destino', title: '✅ Sí, es correcta' },
       { id: 'ubicacion_no', title: '↩️ Mandar otra' },
+      { id: 'ubicacion_cambiar_depto', title: '🧮 Cambiar depto.' },
     ],
   );
   await setSesion({
@@ -405,10 +406,18 @@ async function manejarConfirmacionUbicacionNueva(m: MensajeEntrante, sesion: Ses
     await pedirMetodoUbicacion(to, departamento);
     return;
   }
+  if (m.seleccionId === 'ubicacion_cambiar_depto') {
+    if (!(await pedirDepartamento(to, '🧮 Elegí el *departamento* correcto:'))) {
+      await clearSesion(to);
+      return;
+    }
+    await setSesion({ ...sesion, paso: 'elegir_departamento_recambio' });
+    return;
+  }
   if (m.seleccionId !== 'ubicacion_es_destino') {
     await manejarRespuestaInvalida(
       m,
-      'Elegí "✅ Sí, es correcta" o "↩️ Mandar otra".\n\n_Escribí *menú* para volver al inicio._',
+      'Elegí "✅ Sí, es correcta", "↩️ Mandar otra" o "🧮 Cambiar depto.".\n\n_Escribí *menú* para volver al inicio._',
     );
     return;
   }
