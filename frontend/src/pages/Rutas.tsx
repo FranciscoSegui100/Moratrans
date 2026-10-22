@@ -2037,11 +2037,12 @@ export function Rutas() {
                     const nombrePedido = detalleBase?.cliente_nombre;
                     const importePedido = detalleBase?.importe != null && detalleBase.importe !== ''
                       ? Number(detalleBase.importe) : null;
+                    const tipoVisitaCard = visita.entrega && visita.retiro ? 'recambio' : visita.entrega ? 'entrega' : 'retiro';
 
                     return (
                       <div
                         key={visita.id}
-                        className={`qrow${dragVisita?.id === visita.id ? ' dragging' : ''}`}
+                        className={`qrow qrow--${tipoVisitaCard}${dragVisita?.id === visita.id ? ' dragging' : ''}`}
                         draggable
                         role="button"
                         tabIndex={0}
@@ -2068,8 +2069,8 @@ export function Rutas() {
                             </div>
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', flexShrink: 0 }}>
-                            <span className={`tag ${visita.entrega && visita.retiro ? 'recambio' : visita.entrega ? 'entrega' : 'retiro'}`} style={{ fontSize: '0.68rem', padding: '2px 6px' }}>
-                              {visita.entrega && visita.retiro ? 'Recambio' : visita.entrega ? 'Entrega' : 'Retiro'}
+                            <span className={`tag ${tipoVisitaCard}`} style={{ fontSize: '0.68rem', padding: '2px 6px' }}>
+                              {tipoVisitaCard === 'recambio' ? 'Recambio' : tipoVisitaCard === 'entrega' ? 'Entrega' : 'Retiro'}
                             </span>
                             {categoriaDia(dias) === 'atrasado' && (
                               <span style={{ fontSize: '0.63rem', fontWeight: 700, color: '#fff', background: 'var(--danger)', padding: '2px 6px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap' }}>
