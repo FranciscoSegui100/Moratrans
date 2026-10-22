@@ -2054,13 +2054,15 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .qrow { border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 11px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; background: var(--bg-card); }
 .qrow .cli { font-size: 0.8rem; font-weight: 500; color: var(--text-primary); }
 .qrow .sub { font-size: 0.72rem; color: var(--text-muted); margin-top: 1px; }
-/* Tarjetas de la bolsa de pedidos: fondo tenue según el tipo (mismo color que
-   ya usa el tag Entrega/Retiro/Recambio) para que se distingan de un vistazo
-   en vez de ser todas iguales — franja a la izquierda del mismo color, un
-   poco más marcada, como acento. */
-.qrow--entrega { background: var(--accent-tint); border-left: 3px solid var(--accent); }
-.qrow--retiro { background: var(--warning-bg); border-left: 3px solid var(--warning); }
-.qrow--recambio { background: var(--purple-bg); border-left: 3px solid var(--purple); }
+/* Tarjetas de la bolsa de pedidos: fondo según el tipo (mismo color que ya
+   usa el tag Entrega/Retiro/Recambio) para que se distingan de un vistazo.
+   color-mix() en vez de los tokens *-tint/-bg (pensados para un chip chico,
+   casi imperceptibles como fondo de una tarjeta entera): mezcla el color
+   sólido directo sobre --bg-card, así da un tinte parejo y bien visible en
+   los dos temas en vez de una transparencia que depende de qué hay detrás. */
+.qrow--entrega { background: color-mix(in srgb, var(--accent) 20%, var(--bg-card)); border-left: 3px solid var(--accent); }
+.qrow--retiro { background: color-mix(in srgb, var(--warning) 20%, var(--bg-card)); border-left: 3px solid var(--warning); }
+.qrow--recambio { background: color-mix(in srgb, var(--purple) 20%, var(--bg-card)); border-left: 3px solid var(--purple); }
 .tag { font-size: 0.66rem; padding: 2px 8px; border-radius: 99px; font-weight: 600; white-space: nowrap; }
 .tag.entrega { background: var(--accent-tint); color: var(--accent); }
 .tag.retiro { background: var(--warning-bg); color: var(--warning); }
