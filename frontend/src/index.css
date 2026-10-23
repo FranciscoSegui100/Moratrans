@@ -563,6 +563,40 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 }
 .topbar-menu-item:hover { background: var(--bg-surface); color: var(--danger); }
 
+/* Combobox de cliente de "Programar nuevo viaje" (Rutas.tsx) — mismo look
+   que .topbar-menu, para no inventar un segundo lenguaje visual de dropdown. */
+.combobox-lista {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px;
+  z-index: 50;
+  animation: scaleIn .16s var(--ease-pop) both;
+  transform-origin: top;
+}
+.combobox-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+.combobox-item:hover { background: var(--bg-surface); color: var(--text-primary); }
+.combobox-item--crear { color: var(--accent); font-weight: 600; border-top: 1px solid var(--border); margin-top: 4px; padding-top: 10px; text-decoration: none; }
+.combobox-item--crear:hover { color: var(--accent-dark); background: var(--accent-tint); }
+.combobox-vacio { padding: 7px 10px; font-size: 0.8rem; color: var(--text-muted); }
+
 /* ===== OCULTAR / MOSTRAR SIDEBAR ===== */
 /* Botón siempre visible: pegado al borde derecho del sidebar cuando está
    abierto (zona libre del header), arriba a la izquierda cuando está oculto. */

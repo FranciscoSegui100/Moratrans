@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { Download, Pencil, Plus, MessageCircle, ArrowUpDown } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
@@ -32,10 +32,13 @@ export function Clientes() {
   const navigate = useNavigate();
   const puedeEditarPlan = tieneRol(user, 'admin', 'operador', 'finanzas');
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const [editandoPlan, setEditandoPlan] = useState<string | null>(null);
   const [planForm, setPlanForm] = useState('');
   const [pestana, setPestana] = useState<Pestana>('cuenta_corriente');
-  const [mostrarAlta, setMostrarAlta] = useState(false);
+  // ?nuevo=1 abre el alta directo — lo usa "Programar nuevo viaje" en
+  // Rutas.tsx cuando el cliente que se busca todavía no existe.
+  const [mostrarAlta, setMostrarAlta] = useState(() => searchParams.get('nuevo') === '1');
   const [altaForm, setAltaForm] = useState<{ nombre: string; telefono: string; tipo: 'cuenta_corriente' | 'ocasional' }>(
     { nombre: '', telefono: '', tipo: 'cuenta_corriente' },
   );

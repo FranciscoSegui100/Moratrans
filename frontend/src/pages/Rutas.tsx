@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { AlertTriangle, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown, ChevronLeft, ChevronRight, Search, UserPlus } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -22,7 +22,9 @@ interface Ruta {
 }
 interface Chofer { id: string; nombre: string; activo: boolean; }
 interface Ubicacion { id: string; tipo: 'deposito' | 'vaciadero'; nombre: string; activo: boolean; }
-interface Tarifa { departamento: string; activo: boolean; }
+interface Tarifa { departamento: string; precio: string; activo: boolean; }
+/** Contenedores que un cliente tiene entregados ahora mismo — ver GET /api/clientes/:telefono/contenedores. */
+interface ContenedorCliente { numero: string; }
 
 // Mismas franjas que OPCIONES_HORARIO en horarioPreferido.flow.ts — el bot
 // guarda exactamente estos textos en viajes.horario_preferido, así que un
@@ -33,6 +35,7 @@ const OPCIONES_HORARIO_SUGERIDO = ['🌅 Mañana (8-12hs)', '🕐 Tarde (12-15hs
 const formViajeInicial = {
   tipo: 'entrega', fecha: '', horario_preferido: '', zona: '',
   destino_direccion: '', importe: '', ubicacion_id: '', cliente_telefono: '',
+  contenedor_numero: '',
 };
 
 interface ViajePendiente {
@@ -1203,6 +1206,13 @@ export function Rutas() {
   const [formViaje, setFormViaje] = useState(() => ({ ...formViajeInicial, fecha: paramFecha || hoyISO() }));
   const [mostrarFormViaje, setMostrarFormViaje] = useState(() => paramNuevo === '1');
   const [creandoViaje, setCreandoViaje] = useState(false);
+  // Combobox de cliente del form: texto que se ve en el input (no
+  // necesariamente igual al cliente elegido mientras se está buscando) y si
+  // la lista de resultados está abierta. Separado de formViaje.cliente_telefono
+  // porque ese guarda el teléfono (lo que manda el POST), no lo que se tipea.
+  const [clienteQuery, setClienteQuery] = useState('');
+  const [clienteListaAbierta, setClienteListaAbierta] = useState(false);
+  const clienteBoxRef = useRef<HTMLDivElement>(null);
   const [autoArmando, setAutoArmando] = useState(false);
   // Último auto-armado, para poder deshacerlo: el aviso queda fijo hasta cerrarlo o volver a auto-armar.
   const [ultimoAutoArmado, setUltimoAutoArmado] = useState<{
@@ -1239,6 +1249,15 @@ export function Rutas() {
   const { data: clientesForm = [] } = useQuery({
     queryKey: ['clientes'],
     queryFn: () => api.get<ClienteBasico[]>('/api/clientes').then((r) => r.data),
+  });
+  // Solo para retiro/recambio: de qué contenedor(es) puede elegir — el mismo
+  // criterio que usa el bot (ver contenedorCliente.service.ts), para que acá
+  // no se pueda armar un retiro de un contenedor que el cliente nunca tuvo.
+  const necesitaContenedorCliente = formViaje.tipo === 'retiro' || formViaje.tipo === 'recambio';
+  const { data: contenedoresCliente = [] } = useQuery({
+    queryKey: ['clientes', formViaje.cliente_telefono, 'contenedores'],
+    queryFn: () => api.get<ContenedorCliente[]>(`/api/clientes/${encodeURIComponent(formViaje.cliente_telefono)}/contenedores`).then((r) => r.data),
+    enabled: necesitaContenedorCliente && !!formViaje.cliente_telefono,
   });
   const { data: rutas = [] } = useQuery({
     queryKey: ['rutas', fecha],
@@ -1329,6 +1348,17 @@ export function Rutas() {
     if (!rutas.some((r) => r.id === rutaSeleccionada)) setRutaSeleccionada(rutas[0].id);
   }, [rutas, rutaSeleccionada]);
 
+  // Cierra la lista de resultados del combobox de cliente al clickear afuera
+  // (mismo patrón que el menú de usuario en Layout.tsx).
+  useEffect(() => {
+    if (!clienteListaAbierta) return;
+    const onClick = (e: MouseEvent) => {
+      if (clienteBoxRef.current && !clienteBoxRef.current.contains(e.target as Node)) setClienteListaAbierta(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [clienteListaAbierta]);
+
   const recargarListas = () => {
     queryClient.invalidateQueries({ queryKey: ['rutas', fecha] });
     queryClient.invalidateQueries({ queryKey: ['rutas', 'bolsa'] });
@@ -1354,6 +1384,20 @@ export function Rutas() {
   const tipoUbicacionViaje = formViaje.tipo === 'entrega' ? 'deposito' : 'vaciadero';
   const ubicacionesElegiblesViaje = ubicacionesViaje.filter((u) => u.tipo === tipoUbicacionViaje);
 
+  // Combobox de cliente: filtra por nombre o teléfono, como cualquier otro
+  // buscador del panel (ver Conversaciones.tsx) — con muchos clientes el
+  // <select> plano de antes se vuelve inusable.
+  const clienteQueryNorm = clienteQuery.trim().toLowerCase();
+  const clientesFiltrados = clienteQueryNorm
+    ? clientesForm.filter((c) => c.nombre.toLowerCase().includes(clienteQueryNorm) || c.telefono.includes(clienteQueryNorm)).slice(0, 8)
+    : clientesForm.slice(0, 8);
+
+  function elegirClienteForm(c: ClienteBasico) {
+    setFormViaje({ ...formViaje, cliente_telefono: c.telefono, contenedor_numero: '' });
+    setClienteQuery(`${c.nombre} — ${c.telefono}`);
+    setClienteListaAbierta(false);
+  }
+
   /** Programa un viaje (o recambio) nuevo — cae directo a la bolsa sin rutear. */
   async function crearViaje(e: React.FormEvent) {
     e.preventDefault();
@@ -1367,8 +1411,10 @@ export function Rutas() {
         importe: formViaje.importe || undefined,
         ubicacion_id: formViaje.ubicacion_id || undefined,
         horario_preferido: formViaje.horario_preferido || undefined,
+        contenedor_numero: formViaje.contenedor_numero || undefined,
       });
       setFormViaje(formViajeInicial);
+      setClienteQuery('');
       recargarListas();
       queryClient.invalidateQueries({ queryKey: ['viajes'] });
       show('success', formViaje.tipo === 'recambio' ? 'Recambio programado correctamente' : 'Viaje programado correctamente');
@@ -1763,27 +1809,73 @@ export function Rutas() {
               <select
                 className="form-select"
                 value={formViaje.tipo}
-                onChange={(e) => setFormViaje({ ...formViaje, tipo: e.target.value, ubicacion_id: '' })}
+                onChange={(e) => setFormViaje({ ...formViaje, tipo: e.target.value, ubicacion_id: '', contenedor_numero: '' })}
               >
                 <option value="entrega">Entrega</option>
                 <option value="retiro">Retiro</option>
                 <option value="recambio">Recambio</option>
               </select>
             </div>
-            <div className="form-group">
+            <div className="form-group" ref={clienteBoxRef} style={{ position: 'relative' }}>
               <label className="form-label">Cliente</label>
-              <select
-                className="form-select"
-                value={formViaje.cliente_telefono}
-                required
-                onChange={(e) => setFormViaje({ ...formViaje, cliente_telefono: e.target.value })}
-              >
-                <option value="">— Elegir cliente —</option>
-                {clientesForm.map((c) => (
-                  <option key={c.telefono} value={c.telefono}>{c.nombre} — {c.telefono}</option>
-                ))}
-              </select>
+              <div style={{ position: 'relative' }}>
+                <Search size={13} strokeWidth={2} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+                <input
+                  className="form-input"
+                  style={{ paddingLeft: 28 }}
+                  placeholder="Buscar por nombre o teléfono..."
+                  value={clienteQuery}
+                  required={!formViaje.cliente_telefono}
+                  onFocus={() => setClienteListaAbierta(true)}
+                  onChange={(e) => {
+                    setClienteQuery(e.target.value);
+                    setClienteListaAbierta(true);
+                    if (formViaje.cliente_telefono) setFormViaje({ ...formViaje, cliente_telefono: '', contenedor_numero: '' });
+                  }}
+                />
+              </div>
+              {clienteListaAbierta && (
+                <div className="combobox-lista">
+                  {clientesFiltrados.length > 0 ? clientesFiltrados.map((c) => (
+                    <div key={c.telefono} className="combobox-item" onClick={() => elegirClienteForm(c)}>
+                      {c.nombre} — {c.telefono}
+                    </div>
+                  )) : (
+                    <div className="combobox-vacio">Sin resultados.</div>
+                  )}
+                  <a
+                    className="combobox-item combobox-item--crear"
+                    href="/clientes?nuevo=1"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setClienteListaAbierta(false)}
+                  >
+                    <UserPlus size={13} strokeWidth={2} /> Crear nuevo cliente
+                  </a>
+                </div>
+              )}
             </div>
+            {necesitaContenedorCliente && (
+              <div className="form-group">
+                <label className="form-label">Contenedor a retirar</label>
+                {formViaje.cliente_telefono && contenedoresCliente.length === 0 ? (
+                  <div className="text-muted" style={{ fontSize: '0.78rem', maxWidth: 220 }}>
+                    Este cliente no tiene ningún contenedor entregado ahora mismo.
+                  </div>
+                ) : (
+                  <select
+                    className="form-select"
+                    value={formViaje.contenedor_numero}
+                    required
+                    disabled={!formViaje.cliente_telefono}
+                    onChange={(e) => setFormViaje({ ...formViaje, contenedor_numero: e.target.value })}
+                  >
+                    <option value="">— Elegir contenedor —</option>
+                    {contenedoresCliente.map((c) => <option key={c.numero} value={c.numero}>{c.numero}</option>)}
+                  </select>
+                )}
+              </div>
+            )}
             {ubicacionesElegiblesViaje.length > 1 && (
               <div className="form-group">
                 <label className="form-label">{formViaje.tipo === 'entrega' ? 'Sale de' : 'Se descarga en'}</label>
@@ -1824,7 +1916,14 @@ export function Rutas() {
                 className="form-select"
                 value={formViaje.zona}
                 required={formViaje.tipo === 'recambio'}
-                onChange={(e) => setFormViaje({ ...formViaje, zona: e.target.value })}
+                onChange={(e) => {
+                  const zona = e.target.value;
+                  // La tarifa de la zona completa el importe sola — mismo
+                  // precio que usa el bot para cotizar (ver tarifaDeZona en
+                  // cotizacion.flow.ts). Se puede ajustar a mano después.
+                  const tarifa = zonasTarifas.find((z) => z.departamento === zona);
+                  setFormViaje({ ...formViaje, zona, importe: tarifa ? tarifa.precio : formViaje.importe });
+                }}
               >
                 <option value="">— Elegir zona —</option>
                 {zonasTarifas.map((z) => <option key={z.departamento} value={z.departamento}>{z.departamento}</option>)}
@@ -1851,7 +1950,11 @@ export function Rutas() {
                 onChange={(e) => setFormViaje({ ...formViaje, importe: e.target.value })}
               />
             </div>
-            <button type="submit" className="btn btn-primary" disabled={creandoViaje}>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={creandoViaje || (necesitaContenedorCliente && !formViaje.contenedor_numero)}
+            >
               {creandoViaje ? 'Guardando...' : 'Programar viaje'}
             </button>
           </form>

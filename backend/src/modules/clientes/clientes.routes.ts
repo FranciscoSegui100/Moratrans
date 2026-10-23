@@ -210,6 +210,18 @@ clientesRouter.get('/:telefono/resumen-chat', async (req: Request, res: Response
   });
 });
 
+/**
+ * GET /api/clientes/:telefono/contenedores — contenedores que este cliente
+ * tiene entregados ahora mismo (misma fuente de verdad que usa el bot para
+ * ofrecer retiro/recambio/alargue, ver contenedorCliente.service.ts). Lo usa
+ * "Programar nuevo viaje" en Rutas.tsx: un retiro/recambio armado a mano
+ * desde el panel solo puede elegir un contenedor que el cliente realmente
+ * tiene, mismo criterio que ya fuerza el bot.
+ */
+clientesRouter.get('/:telefono/contenedores', async (req: Request, res: Response) => {
+  res.json(await contenedoresDelCliente(req.params.telefono));
+});
+
 const viajeManualSchema = z.object({
   tipo: z.enum(['entrega', 'recambio', 'alargue_retiro']),
   fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida'),

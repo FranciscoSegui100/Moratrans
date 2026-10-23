@@ -13,6 +13,7 @@ import { avisoPagoChofer } from '../whatsapp/avisoEfectivo';
 import { formatearTelefonoLegible } from '../../services/telefono.service';
 import { notificarClienteChoferEnCamino } from '../whatsapp/notificacionesCliente';
 import { hoyMendozaISO } from '../../services/fechas.service';
+import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -125,10 +126,13 @@ const nuevoSchema = z.object({
   tipo: z.enum(['entrega', 'retiro', 'recambio']),
   fecha: z.string(), // YYYY-MM-DD
   chofer_id: z.string().uuid().optional(),
-  // retiro: el contenedor que se retira. entrega: el que se entrega.
-  // recambio: el lleno que se retira, si ya se sabe. Si no se manda, la pata
-  // 'retiro' queda sin contenedor para que el operador lo asigne después
-  // (misma UI "Asignar" que ya existe en la tabla de Viajes).
+  // entrega: el que se entrega, opcional (si no se manda, se asigna después
+  // con la UI "Asignar" de la tabla de Viajes). retiro/recambio: el lleno
+  // que se retira — acá SÍ es obligatorio (validado más abajo, no con
+  // .optional() porque además hay que chequear contra la DB que el
+  // contenedor está de verdad entregado a este cliente, ver
+  // contenedorCliente.service.ts) — sin esto se podía armar un retiro de un
+  // contenedor que el cliente nunca tuvo.
   contenedor_numero: z.string().optional(),
   // Solo recambio: el vacío que se deja. Si no se manda, la pata 'entrega'
   // queda sin contenedor para que el operador lo asigne después (misma UI
@@ -513,6 +517,23 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
   const parsed = nuevoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
   const v = parsed.data;
+
+  // Retiro/recambio sin esta validación se podía armar para cualquier
+  // contenedor "entregado" que hubiera, sin importar a quién — mismo
+  // criterio que ya usa el bot (pedirRetiro.flow.ts, recambio.flow.ts) vía
+  // contenedoresDelCliente(), acá reforzado también del lado servidor (no
+  // solo limitando las opciones del selector en el panel).
+  if (v.tipo === 'retiro' || v.tipo === 'recambio') {
+    if (!v.contenedor_numero) {
+      return res.status(400).json({ error: 'Para un retiro o recambio hace falta elegir qué contenedor se retira.' });
+    }
+    const propios = await contenedoresDelCliente(v.cliente_telefono);
+    if (!propios.some((c) => c.numero === v.contenedor_numero)) {
+      return res.status(409).json({
+        error: `El contenedor ${v.contenedor_numero} no figura entregado a este cliente — elegí uno de los que tiene, o revisá el teléfono.`,
+      });
+    }
+  }
 
   // Depósito para una entrega, vaciadero para un retiro. Si no se especificó
   // uno y hay más de una ubicación activa de ese tipo, hace falta que el
