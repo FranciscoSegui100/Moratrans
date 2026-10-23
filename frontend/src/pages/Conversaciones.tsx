@@ -263,21 +263,6 @@ export function Conversaciones() {
       })
     : visiblesPorTipo;
 
-  // Si no hay ninguna conversación elegida todavía, autoseleccioná la
-  // primera. Si SÍ hay una elegida pero no está en la lista, la dejamos tal
-  // cual en vez de reemplazarla por otra — pasa con el atajo de chat desde
-  // Clientes/Contenedores cuando ese cliente todavía nunca le escribió al
-  // bot: antes esto pisaba el ?tel= del deep-link con la primera conversación
-  // de la lista sin avisar, mostrando el chat de OTRO cliente como si fuera
-  // el que se pidió. Ahora en ese caso "activa" queda en null y la pantalla
-  // lo deja claro (ver más abajo) en vez de mentir.
-  useEffect(() => {
-    if (conversaciones.length > 0 && seleccionado === null) {
-      setSeleccionado(conversaciones[0]?.telefono ?? null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversaciones.map((c) => c.telefono).join(',')]);
-
   async function manejarReclamar() {
     if (!activa) return;
     try {
