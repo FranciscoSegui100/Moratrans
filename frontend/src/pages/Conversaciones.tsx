@@ -145,12 +145,10 @@ function ConversacionItem({
   c,
   activo,
   onSelect,
-  onResponderAhora,
 }: {
   c: Conversacion;
   activo: boolean;
   onSelect: () => void;
-  onResponderAhora: () => void;
 }) {
   const espera = useTiempoEspera(c.escalado_en ?? c.asignado_en);
   // El chat abierto ya se está leyendo: no se marca como no leído aunque el
@@ -191,14 +189,6 @@ function ConversacionItem({
           </span>
         )}
         {c.asignado_a_nombre && <span className="asesoria-item-asignado">👤 {c.asignado_a_nombre}</span>}
-        {!c.modo_humano && (
-          <button
-            className="btn-responder-ahora"
-            onClick={(e) => { e.stopPropagation(); onResponderAhora(); }}
-          >
-            Responder ahora
-          </button>
-        )}
       </div>
     </div>
   );
@@ -287,15 +277,6 @@ export function Conversaciones() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversaciones.map((c) => c.telefono).join(',')]);
-
-  async function responderAhora(telefono: string) {
-    setSeleccionado(telefono);
-    try {
-      await setModoHumano(telefono, true);
-    } catch (err: any) {
-      show('error', 'No se pudo tomar la conversación', err.response?.data?.error || 'Error desconocido');
-    }
-  }
 
   async function manejarReclamar() {
     if (!activa) return;
@@ -430,7 +411,6 @@ export function Conversaciones() {
                 c={c}
                 activo={c.telefono === seleccionado}
                 onSelect={() => setSeleccionado(c.telefono)}
-                onResponderAhora={() => responderAhora(c.telefono)}
               />
             ))}
           </div>

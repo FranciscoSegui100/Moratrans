@@ -618,8 +618,8 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 }
 .page-header h2 {
   font-family: var(--font-display);
-  font-size: 1.9rem;
-  font-weight: 400;
+  font-size: 2.4rem;
+  font-weight: 500;
   color: var(--text-primary);
   letter-spacing: -0.01em;
   display: flex;
@@ -1465,29 +1465,15 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .asesoria-item-lado { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
 .asesoria-item-noleidos {
   min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
-  background: var(--accent); color: #fff;
+  background: var(--danger); color: #fff;
   font-size: 0.66rem; font-weight: 700; line-height: 18px; text-align: center;
 }
 .asesoria-item:not(.asesoria-item--no-leido) .asesoria-item-msg { color: var(--text-muted); }
 .asesoria-item--no-leido .asesoria-item-nombre { font-weight: 800; }
 .asesoria-item--no-leido .asesoria-item-msg { color: var(--text-primary); font-weight: 600; }
-.asesoria-item--no-leido .asesoria-item-time { color: var(--accent); font-weight: 700; }
+.asesoria-item--no-leido .asesoria-item-time { color: var(--danger); font-weight: 700; }
 .asesoria-item-pie { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .asesoria-item-asignado { font-size: 0.68rem; color: var(--text-muted); }
-/* Botón chico dentro de la fila (que ahora es un div, no un button, para
-   poder anidarlo sin romper semántica HTML) — toma la conversación en un
-   solo click sin tener que entrar al panel de detalle primero. */
-.btn-responder-ahora {
-  margin-left: auto;
-  font-size: 0.66rem;
-  font-weight: 600;
-  color: var(--accent);
-  background: var(--accent-tint);
-  border: 1px solid var(--accent-tint-strong);
-  border-radius: var(--radius-sm);
-  padding: 3px 8px;
-}
-.btn-responder-ahora:hover { background: var(--accent-tint-strong); }
 .asesoria-motivo {
   font-size: 0.8rem;
   color: var(--warning);
