@@ -1254,7 +1254,7 @@ export function Rutas() {
   // criterio que usa el bot (ver contenedorCliente.service.ts), para que acá
   // no se pueda armar un retiro de un contenedor que el cliente nunca tuvo.
   const necesitaContenedorCliente = formViaje.tipo === 'retiro' || formViaje.tipo === 'recambio';
-  const { data: contenedoresCliente = [] } = useQuery({
+  const { data: contenedoresCliente = [], isLoading: cargandoContenedoresCliente } = useQuery({
     queryKey: ['clientes', formViaje.cliente_telefono, 'contenedores'],
     queryFn: () => api.get<ContenedorCliente[]>(`/api/clientes/${encodeURIComponent(formViaje.cliente_telefono)}/contenedores`).then((r) => r.data),
     enabled: necesitaContenedorCliente && !!formViaje.cliente_telefono,
@@ -1858,7 +1858,9 @@ export function Rutas() {
             {necesitaContenedorCliente && (
               <div className="form-group">
                 <label className="form-label">Contenedor a retirar</label>
-                {formViaje.cliente_telefono && contenedoresCliente.length === 0 ? (
+                {formViaje.cliente_telefono && cargandoContenedoresCliente ? (
+                  <div className="text-muted" style={{ fontSize: '0.78rem' }}>Buscando...</div>
+                ) : formViaje.cliente_telefono && contenedoresCliente.length === 0 ? (
                   <div className="text-muted" style={{ fontSize: '0.78rem', maxWidth: 220 }}>
                     Este cliente no tiene ningún contenedor entregado ahora mismo.
                   </div>
