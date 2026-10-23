@@ -24,7 +24,7 @@ interface Chofer { id: string; nombre: string; activo: boolean; }
 interface Ubicacion { id: string; tipo: 'deposito' | 'vaciadero'; nombre: string; activo: boolean; }
 interface Tarifa { departamento: string; precio: string; activo: boolean; }
 /** Contenedores que un cliente tiene entregados ahora mismo — ver GET /api/clientes/:telefono/contenedores. */
-interface ContenedorCliente { numero: string; destino_direccion: string | null; }
+interface ContenedorCliente { numero: string; zona: string | null; destino_direccion: string | null; }
 
 // Mismas franjas que OPCIONES_HORARIO en horarioPreferido.flow.ts — el bot
 // guarda exactamente estos textos en viajes.horario_preferido, así que un
@@ -1873,12 +1873,17 @@ export function Rutas() {
                     onChange={(e) => {
                       const numero = e.target.value;
                       const elegido = contenedoresCliente.find((c) => c.numero === numero);
+                      const zona = elegido?.zona || formViaje.zona;
+                      const tarifa = zonasTarifas.find((z) => z.departamento === zona);
                       setFormViaje({
                         ...formViaje,
                         contenedor_numero: numero,
                         // Mismo criterio que usa el bot (ver recambio.flow.ts / pedirRetiro.flow.ts):
-                        // retirar o recambiar un contenedor va a buscarlo donde ya está entregado.
+                        // retirar o recambiar un contenedor va a buscarlo donde ya está entregado,
+                        // con la misma zona (y tarifa) de esa entrega.
                         destino_direccion: elegido?.destino_direccion || formViaje.destino_direccion,
+                        zona,
+                        importe: elegido?.zona && tarifa ? tarifa.precio : formViaje.importe,
                       });
                     }}
                   >
