@@ -155,18 +155,26 @@ if (chofer.length === 0) {
     return;
   }
 
-  const [alerta] = await query(
-    `INSERT INTO alertas (tipo, referencia_id, mensaje)
-     VALUES ('chofer_necesita_ayuda', $1, $2)
-     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [chofer[0].id, `${chofer[0].nombre} no está pudiendo avanzar en el bot (varios mensajes sin reconocer).`],
-  );
-  if (alerta) emitAlerta(alerta);
-  await sendText(
-    to,
-    `🚚 Ya le avisé a alguien del equipo que estás con problemas, ${chofer[0].nombre}. Te van a contactar. Mientras tanto, escribí *ruta* para ver qué tenés pendiente.`,
-  );
+  // Solo se avisa (alerta al panel + mensaje al chofer) la PRIMERA vez que
+  // cruza el límite — antes esto corría en cada mensaje sin reconocer que
+  // llegara DESPUÉS de la escalación, y como intentos_invalidos no se resetea
+  // hasta una transición válida, un chofer trabado mandando varios mensajes
+  // seguidos recibía el mismo "ya avisé al equipo" una y otra vez, de verdad,
+  // por WhatsApp.
+  if (intentosFallidos === LIMITE_INTENTOS_INVALIDOS) {
+    const [alerta] = await query(
+      `INSERT INTO alertas (tipo, referencia_id, mensaje)
+       VALUES ('chofer_necesita_ayuda', $1, $2)
+       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+      [chofer[0].id, `${chofer[0].nombre} no está pudiendo avanzar en el bot (varios mensajes sin reconocer).`],
+    );
+    if (alerta) emitAlerta(alerta);
+    await sendText(
+      to,
+      `🚚 Ya le avisé a alguien del equipo que estás con problemas, ${chofer[0].nombre}. Te van a contactar. Mientras tanto, escribí *ruta* para ver qué tenés pendiente.`,
+    );
+  }
   return menuChofer(to, chofer[0].nombre);
 }
 
@@ -677,27 +685,32 @@ async function aplicarEstado(
   // deja un viaje 'retiro' en curso.
   if (estado === 'retirado') {
     try {
-      // Dirección/zona del cliente: se copian de la entrega de este contenedor
-      const [entrega] = await query<{ destino_direccion: string | null; zona: string | null }>(
-        `SELECT destino_direccion, zona FROM viajes
-          WHERE contenedor_numero = $1 AND tipo = 'entrega'
-          ORDER BY creado_en DESC LIMIT 1`,
-        [numero],
-      );
-      const vaciadero = await resolverUbicacion('vaciadero');
-
-      // Tiene que existir un viaje de retiro real (pedido por el cliente,
-      // o generado por un recambio) — no se acepta "ya retiré" ad-hoc sin
-      // que nadie lo haya solicitado, mismo criterio que para el resto de
-      // los estados (ver elegirContenedor, que ya filtra por esto para no
-      // ofrecerlo como opción en primer lugar; esto es la segunda barrera
-      // por si igual llega un id de contenedor que no corresponde).
-      const [retiroExistente] = await query<{ id: string; completada_en: string | null }>(
-        `SELECT id, completada_en FROM viajes
-          WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
-          ORDER BY creado_en DESC LIMIT 1`,
-        [numero],
-      );
+      // Los 3 reads de acá abajo son independientes entre sí (ninguno usa el
+      // resultado de otro) — en paralelo, aunque en los dos casos de salida
+      // temprana de más abajo (sin retiro pedido / doble toque) terminen sin
+      // usarse: sigue siendo 1 round-trip en vez de 3 en el camino feliz.
+      const [[entrega], vaciadero, [retiroExistente]] = await Promise.all([
+        // Dirección/zona del cliente: se copian de la entrega de este contenedor
+        query<{ destino_direccion: string | null; zona: string | null }>(
+          `SELECT destino_direccion, zona FROM viajes
+            WHERE contenedor_numero = $1 AND tipo = 'entrega'
+            ORDER BY creado_en DESC LIMIT 1`,
+          [numero],
+        ),
+        resolverUbicacion('vaciadero'),
+        // Tiene que existir un viaje de retiro real (pedido por el cliente,
+        // o generado por un recambio) — no se acepta "ya retiré" ad-hoc sin
+        // que nadie lo haya solicitado, mismo criterio que para el resto de
+        // los estados (ver elegirContenedor, que ya filtra por esto para no
+        // ofrecerlo como opción en primer lugar; esto es la segunda barrera
+        // por si igual llega un id de contenedor que no corresponde).
+        query<{ id: string; completada_en: string | null }>(
+          `SELECT id, completada_en FROM viajes
+            WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
+            ORDER BY creado_en DESC LIMIT 1`,
+          [numero],
+        ),
+      ]);
       if (!retiroExistente) {
         await sendText(to, `🙁 El contenedor ${numero} todavía no tiene un retiro solicitado, no se puede marcar como retirado.`);
         await clearSesion(to);
@@ -732,19 +745,22 @@ async function aplicarEstado(
           contenedorNumero: numero,
         }).catch((e) => console.error('Error enviando encuesta de retiro al cliente:', e));
       }
-      await query(
-        `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
-        [numero, `chofer:${choferId}`],
-      );
-      // Visibilidad para el panel (ya no bloquea nada — se resuelve sola
-      // cuando el chofer marca "vaciado", ver retiro.service.ts).
-      const [alerta] = await query(
-        `INSERT INTO alertas (tipo, referencia_id, mensaje)
-         VALUES ('confirmar_retiro', $1, $2)
-         ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-         RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-        [numero, `${choferNombre} retiró el contenedor ${numero} del cliente, va camino al vaciadero.`],
-      );
+      // Tablas distintas, ninguna lee el resultado de la otra — en paralelo.
+      const [, [alerta]] = await Promise.all([
+        query(
+          `UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`,
+          [numero, `chofer:${choferId}`],
+        ),
+        // Visibilidad para el panel (ya no bloquea nada — se resuelve sola
+        // cuando el chofer marca "vaciado", ver retiro.service.ts).
+        query(
+          `INSERT INTO alertas (tipo, referencia_id, mensaje)
+           VALUES ('confirmar_retiro', $1, $2)
+           ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+           RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+          [numero, `${choferNombre} retiró el contenedor ${numero} del cliente, va camino al vaciadero.`],
+        ),
+      ]);
       if (alerta) emitAlerta(alerta);
       // Si este lleno es parte de un recambio y el vacío pareja ya está
       // asignado y en 'reservado', se entrega en el mismo momento — así no
@@ -808,11 +824,25 @@ async function aplicarEstado(
     // días de alquiler estándar contados desde AHORA, el momento real de la
     // entrega — no la fecha programada del viaje: si se entregó antes o
     // después de lo previsto, el vencimiento tiene que correrse con él.
-    await query(
-      `UPDATE contenedores SET estado = $1, vence_en = now() + make_interval(days => $2), actualizado_por = $3
-        WHERE numero = $4`,
-      [estado, DIAS_ALQUILER_ANTES_RETIRO, `chofer:${choferId}`, numero],
-    );
+    // Escrituras a tablas distintas, ninguna lee el resultado de la otra —
+    // en paralelo. La marca de la parada de entrega (alimenta la vista día:
+    // "marcó hace X min" por chofer) solo aplica acá — 'retirado' ya se
+    // marca más arriba, donde crea/actualiza su propia fila de viajes.
+    const [, entregasCompletadas] = await Promise.all([
+      query(
+        `UPDATE contenedores SET estado = $1, vence_en = now() + make_interval(days => $2), actualizado_por = $3
+          WHERE numero = $4`,
+        [estado, DIAS_ALQUILER_ANTES_RETIRO, `chofer:${choferId}`, numero],
+      ),
+      estado === 'entregado'
+        ? query<{ id: string; cliente_telefono: string | null }>(
+            `UPDATE viajes SET completada_en = now()
+              WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
+              RETURNING id, cliente_telefono`,
+            [numero, choferId],
+          )
+        : [],
+    ]);
     // El trigger fn_auditar_contenedor ya audita este cambio en historial_contenedores
     // (con chofer_id resuelto desde actualizado_por) — no duplicar el insert acá.
     // Este cambio viene del webhook de WhatsApp, no de la API del panel, así
@@ -822,17 +852,6 @@ async function aplicarEstado(
     // La pestaña Viajes ahora muestra el estado del contenedor asociado
     // (join en GET /api/viajes), así que también tiene que refrescarse sola.
     emitRecursoActualizado('viajes');
-    // Marca la parada de entrega como hecha (alimenta la vista día: "marcó
-    // hace X min" por chofer). Solo aplica acá — 'retirado' ya se marca más
-    // arriba, donde crea/actualiza su propia fila de viajes.
-    const entregasCompletadas = estado === 'entregado'
-      ? await query<{ id: string; cliente_telefono: string | null }>(
-          `UPDATE viajes SET completada_en = now()
-            WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
-            RETURNING id, cliente_telefono`,
-          [numero, choferId],
-        )
-      : [];
     for (const ec of entregasCompletadas) {
       if (ec.cliente_telefono) {
         notificarClienteServicioFinalizado({
@@ -844,23 +863,27 @@ async function aplicarEstado(
     }
     // Si esto es el vacío de un recambio y el lleno pareja ya está listo
     // (entregado), se retira en el mismo momento (yendo a vaciar) — así no
-    // importa si el chofer marca primero el vacío o el lleno.
-    const { texto: extra, siguienteEnviada: siguienteCascada } = await cascadearParejaRecambio(numero, choferId, choferNombre);
+    // importa si el chofer marca primero el vacío o el lleno. Corre en
+    // paralelo con el chequeo de pago en efectivo de abajo: ninguno de los
+    // dos lee el resultado del otro, y "pagoEfectivo" no hace falta hasta
+    // después de mandar el mensaje de confirmación.
+    const [{ texto: extra, siguienteEnviada: siguienteCascada }, [pagoEfectivo]] = await Promise.all([
+      cascadearParejaRecambio(numero, choferId, choferNombre),
+      // Verificar si el viaje tiene pago en efectivo pendiente de cobrar
+      query<{ pago_id: string; monto: string | null }>(
+        `SELECT p.id AS pago_id, COALESCE(p.monto, pe.precio)::text AS monto
+           FROM viajes v
+           JOIN pagos p ON p.id = v.pago_id
+           LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+          WHERE v.id = $1
+            AND p.medio_pago = 'efectivo'
+            AND p.efectivo_cobrado = FALSE`,
+        [entregaAsignada.id],
+      ),
+    ]);
     if (siguienteCascada) siguienteEnviada = true;
     await clearSesion(to);
     await sendText(to, `✅ Registrado. Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
-
-    // Verificar si el viaje tiene pago en efectivo pendiente de cobrar
-    const [pagoEfectivo] = await query<{ pago_id: string; monto: string | null }>(
-      `SELECT p.id AS pago_id, COALESCE(p.monto, pe.precio)::text AS monto
-         FROM viajes v
-         JOIN pagos p ON p.id = v.pago_id
-         LEFT JOIN pedidos pe ON pe.id = p.pedido_id
-        WHERE v.id = $1
-          AND p.medio_pago = 'efectivo'
-          AND p.efectivo_cobrado = FALSE`,
-      [entregaAsignada.id],
-    );
 
     if (pagoEfectivo) {
       const montoTxt = pagoEfectivo.monto ? ` por *$${Number(pagoEfectivo.monto).toLocaleString('es-AR')}*` : '';
