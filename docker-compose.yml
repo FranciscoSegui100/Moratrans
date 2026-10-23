@@ -44,9 +44,9 @@ services:
       # `openssl rand -hex 32` la primera vez que levantes el stack local, y
       # nunca reutilices esos valores en Railway/producción.
       JWT_SECRET: ${JWT_SECRET}
-      JWT_ACCESS_EXPIRES: 8h
-      REFRESH_TTL_DIAS: 30
-      REFRESH_TTL_RECORDAR_DIAS: 90
+      JWT_ACCESS_EXPIRES: 2h
+      REFRESH_TTL_DIAS: 7
+      REFRESH_TTL_RECORDAR_DIAS: 30
       SYNC_API_KEY: ${SYNC_API_KEY}
       # Email transaccional (Resend): cargado desde el .env de la raíz (gitignored).
       RESEND_API_KEY: ${RESEND_API_KEY}
