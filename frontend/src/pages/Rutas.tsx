@@ -32,7 +32,7 @@ const OPCIONES_HORARIO_SUGERIDO = ['🌅 Mañana (8-12hs)', '🕐 Tarde (12-15hs
 
 const formViajeInicial = {
   tipo: 'entrega', fecha: '', horario_preferido: '', zona: '',
-  destino_direccion: '', importe: '', ubicacion_id: '',
+  destino_direccion: '', importe: '', ubicacion_id: '', cliente_telefono: '',
 };
 
 interface ViajePendiente {
@@ -77,6 +77,11 @@ interface VisitaPendiente {
   chofer_id: string | null;
   entrega?: ViajePendiente;
   retiro?: ViajePendiente;
+}
+/** Para el selector de cliente de "Programar nuevo viaje" — mismos campos que ya trae GET /api/clientes. */
+interface ClienteBasico {
+  nombre: string;
+  telefono: string;
 }
 type TipoVisita = 'entrega' | 'retiro' | 'recambio';
 const ETIQUETA_TIPO_VISITA: Record<TipoVisita, string> = { entrega: 'Entregas', retiro: 'Retiros', recambio: 'Recambios' };
@@ -1229,6 +1234,12 @@ export function Rutas() {
     queryKey: ['ubicaciones'],
     queryFn: () => api.get<Ubicacion[]>('/api/ubicaciones').then((r) => r.data.filter((u) => u.activo)),
   });
+  // Mismo query key que Clientes.tsx: si esa pantalla ya se visitó en esta
+  // sesión, sale de caché sin otro request.
+  const { data: clientesForm = [] } = useQuery({
+    queryKey: ['clientes'],
+    queryFn: () => api.get<ClienteBasico[]>('/api/clientes').then((r) => r.data),
+  });
   const { data: rutas = [] } = useQuery({
     queryKey: ['rutas', fecha],
     queryFn: () => api.get<Ruta[]>(`/api/rutas?fecha=${fecha}`).then((r) => r.data),
@@ -1757,6 +1768,20 @@ export function Rutas() {
                 <option value="entrega">Entrega</option>
                 <option value="retiro">Retiro</option>
                 <option value="recambio">Recambio</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Cliente</label>
+              <select
+                className="form-select"
+                value={formViaje.cliente_telefono}
+                required
+                onChange={(e) => setFormViaje({ ...formViaje, cliente_telefono: e.target.value })}
+              >
+                <option value="">— Elegir cliente —</option>
+                {clientesForm.map((c) => (
+                  <option key={c.telefono} value={c.telefono}>{c.nombre} — {c.telefono}</option>
+                ))}
               </select>
             </div>
             {ubicacionesElegiblesViaje.length > 1 && (

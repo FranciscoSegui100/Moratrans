@@ -134,7 +134,11 @@ const nuevoSchema = z.object({
   // queda sin contenedor para que el operador lo asigne después (misma UI
   // "Asignar" que ya existe en la tabla de Viajes).
   contenedor_numero_entrega: z.string().optional(),
-  cliente_telefono: z.string().optional(),
+  // Obligatorio: sin esto el viaje queda sin dueño — no dispara los avisos
+  // al cliente por WhatsApp, no aparece en su ficha (ClienteDetalle) ni en
+  // su cuenta corriente, un registro muerto para todo el resto del panel
+  // (ver "Programar nuevo viaje" en Rutas.tsx, único caller de este POST).
+  cliente_telefono: z.string().min(1, 'Falta el cliente'),
   zona: z.string().optional(),
   destino_direccion: z.string().optional(),
   notas: z.string().optional(),
