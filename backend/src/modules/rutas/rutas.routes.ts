@@ -89,6 +89,7 @@ interface ViajeParada {
   hora_estimada: string | null;
   zona: string | null;
   cliente_telefono: string | null;
+  cliente_nombre?: string | null;
   grupo_id: string | null;
   estado: string;
   notas: string | null;
@@ -98,6 +99,11 @@ interface ViajeParada {
   ruta_confirmada_en: string | null;
   chofer_notificado_en: string | null;
   pago_id: string | null;
+  remito?: string | null;
+  importe?: number | null;
+  es_cuenta_corriente?: boolean;
+  medio_pago?: string | null;
+  pago_estado?: string | null;
 }
 
 interface VaciadoParada {
@@ -129,10 +135,16 @@ async function calcularDisponibilidadRuta(
   // ida y vuelta de red que se ahorra acá se multiplica varias veces.
   const [viajes, vaciadosRows, disponiblesRows, capacidadRows] = await Promise.all([
     ejecutar(
-      `SELECT id, orden, tipo, contenedor_numero, destino_direccion, destino_lat, destino_lng,
-              horario_preferido, hora_estimada, zona, cliente_telefono,
-              grupo_id, estado, notas, ubicacion_id, origen, completada_en, ruta_confirmada_en, chofer_notificado_en, pago_id
-         FROM viajes WHERE ruta_id = $1 ORDER BY orden`,
+      `SELECT v.id, v.orden, v.tipo, v.contenedor_numero, v.destino_direccion, v.destino_lat, v.destino_lng,
+              v.horario_preferido, v.hora_estimada, v.zona, v.cliente_telefono,
+              v.grupo_id, v.estado, v.notas, v.ubicacion_id, v.origen, v.completada_en, v.ruta_confirmada_en, v.chofer_notificado_en, v.pago_id,
+              v.remito, v.importe, v.es_cuenta_corriente,
+              NULLIF(cl.nombre, 'Sin nombre') AS cliente_nombre,
+              p.medio_pago, p.estado AS pago_estado
+         FROM viajes v
+         LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
+         LEFT JOIN pagos p ON p.id = v.pago_id
+        WHERE v.ruta_id = $1 ORDER BY v.orden`,
       [rutaId],
     ) as Promise<ViajeParada[]>,
     ejecutar(
@@ -197,9 +209,9 @@ async function calcularDisponibilidadRuta(
     })),
     ...vaciados.map((v) => ({ orden: v.orden, tipoParada: 'vaciado' as const })),
   ];
-  const { porOrden, liberadosPor, advertencias } = simularDisponibilidad(paradasSimuladas, disponiblesAlInicio, capacidad);
+  const { porOrden, liberadosPor, advertencias, estadoCamionPorOrden, estadoCamionInicial } = simularDisponibilidad(paradasSimuladas, disponiblesAlInicio, capacidad);
 
-  return { viajes, vaciados, porOrden, liberadosPor, advertencias, disponiblesAlInicio };
+  return { viajes, vaciados, porOrden, liberadosPor, advertencias, disponiblesAlInicio, estadoCamionPorOrden, estadoCamionInicial, capacidad };
 }
 
 /** Prioridad de tie-break cuando dos paradas comparten `orden` (recambio): entrega antes que retiro. */
@@ -457,7 +469,11 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
     ),
   ]);
 
-  const { viajes, vaciados, porOrden, advertencias, disponiblesAlInicio } = disponibilidad;
+  const { viajes, vaciados, porOrden, advertencias, disponiblesAlInicio, estadoCamionPorOrden, estadoCamionInicial, capacidad } = disponibilidad;
+
+  const estadoCamionObj = Object.fromEntries(
+    Array.from(estadoCamionPorOrden.entries())
+  );
 
   const paradas = [
     ...viajes.map((v) => ({
@@ -473,6 +489,7 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
       hora_estimada: v.hora_estimada,
       zona: v.zona,
       cliente_telefono: v.cliente_telefono,
+      cliente_nombre: v.cliente_nombre ?? null,
       grupo_id: v.grupo_id,
       estado: v.estado,
       notas: v.notas,
@@ -480,6 +497,13 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
       completada_en: v.completada_en,
       ruta_confirmada_en: v.ruta_confirmada_en,
       chofer_notificado_en: v.chofer_notificado_en,
+      remito: v.remito ?? null,
+      importe: v.importe != null ? Number(v.importe) : null,
+      es_cuenta_corriente: v.es_cuenta_corriente ?? false,
+      medio_pago: v.medio_pago ?? null,
+      pago_estado: v.pago_estado ?? null,
+      pago_id: v.pago_id,
+      estado_camion: estadoCamionObj[v.orden] ?? null,
       // Solo tiene sentido ofrecer opciones en la mitad "entrega": la mitad
       // "retiro" siempre trae su propio contenedor (el lleno del cliente).
       disponibles: v.tipo === 'entrega' ? (porOrden.get(v.orden) ?? []) : undefined,
@@ -493,6 +517,7 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
       notas: v.notas,
       contenedor_numero: v.contenedor_numero,
       contenedor_estado: v.contenedor_estado,
+      estado_camion: estadoCamionObj[v.orden] ?? null,
     })),
   ].sort((a, b) => {
     if (a.orden !== b.orden) return a.orden - b.orden;
@@ -506,9 +531,15 @@ rutasRouter.get('/:id', async (req: Request, res: Response) => {
   // tal cual para no inflar el número con contenedores que no va a poder
   // asignar.
   res.json({
-    ...ruta, paradas, advertencias, stock_deposito: disponiblesAlInicio,
+    ...ruta,
+    paradas,
+    advertencias,
+    stock_deposito: disponiblesAlInicio,
     contenedores_pendientes_vaciar: pendientesDeVaciar.map((p) => p.contenedor_numero),
     contenedores_comprometidos_otra_ruta: comprometidosOtraRuta,
+    estado_camion: estadoCamionObj,
+    estado_camion_inicial: estadoCamionInicial,
+    capacidad_camion: capacidad,
   });
 });
 
@@ -1227,6 +1258,113 @@ rutasRouter.post('/:id/despachar', requireRol('admin', 'operador'), async (req: 
   if (!ruta) fail('Ruta no encontrada.', 404);
   const ok = await despacharPrimeraParada(ruta.id, ruta.chofer_id);
   res.json({ ok, despachada: ok });
+});
+
+/**
+ * POST /api/rutas/:id/reenviar-chofer
+ * Reenvía la parada activa en curso y el resumen de la hoja de ruta al chofer por WhatsApp.
+ * Ideal si el chofer perdió el mensaje, reinició su teléfono o necesita refrescar sus tareas.
+ */
+rutasRouter.post('/:id/reenviar-chofer', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const { id: rutaId } = req.params;
+
+  try {
+    const [ruta] = await query<{ id: string; fecha: string; chofer_id: string; chofer_nombre: string | null; chofer_telefono: string | null; patente: string | null }>(
+      `SELECT r.id, r.fecha, r.chofer_id, r.patente, c.nombre AS chofer_nombre, c.telefono AS chofer_telefono
+         FROM rutas r
+         LEFT JOIN choferes c ON c.id = r.chofer_id
+        WHERE r.id = $1`,
+      [rutaId],
+    );
+
+    if (!ruta) fail('Ruta no encontrada.', 404);
+    if (!ruta.chofer_telefono) fail('El chofer no tiene un teléfono de WhatsApp registrado.', 400);
+
+    const viajes = await query<ViajeParada>(
+      `SELECT v.id, v.orden, v.tipo, v.contenedor_numero, v.destino_direccion, v.destino_lat, v.destino_lng,
+              v.horario_preferido, v.hora_estimada, v.zona, v.cliente_telefono,
+              v.grupo_id, v.estado, v.notas, v.ubicacion_id, v.origen, v.completada_en, v.ruta_confirmada_en, v.pago_id,
+              v.remito, v.importe, v.es_cuenta_corriente,
+              NULLIF(cl.nombre, 'Sin nombre') AS cliente_nombre,
+              p.medio_pago, p.estado AS pago_estado
+         FROM viajes v
+         LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
+         LEFT JOIN pagos p ON p.id = v.pago_id
+        WHERE v.ruta_id = $1
+        ORDER BY v.orden`,
+      [rutaId],
+    );
+
+    if (viajes.length === 0) fail('La ruta no tiene paradas asignadas.', 400);
+
+    // Buscar la parada activa: primera parada pendiente (completada_en IS NULL)
+    const pendientes = viajes.filter((v) => v.completada_en == null && v.estado !== 'cancelado');
+    if (pendientes.length === 0) {
+      return res.json({ ok: true, mensaje: 'Todas las paradas ya fueron completadas por el chofer.' });
+    }
+
+    const menorOrden = Math.min(...pendientes.map((p) => p.orden));
+    const visitaActiva = viajes.filter((v) => v.orden === menorOrden);
+    const entrega = visitaActiva.find((v) => v.tipo === 'entrega');
+    const retiro = visitaActiva.find((v) => v.tipo === 'retiro');
+
+    // 1) Enviar la parada interactiva con botones
+    let avisoParada: Promise<void>;
+    if (entrega?.grupo_id && retiro) {
+      avisoParada = avisarChoferRecambio(
+        ruta.chofer_id,
+        retiro.contenedor_numero!,
+        entrega.contenedor_numero,
+        entrega.ubicacion_id,
+        entrega.destino_direccion,
+        entrega.cliente_telefono ?? retiro.cliente_telefono,
+        undefined,
+        retiro.pago_id ?? entrega.pago_id,
+      );
+    } else {
+      const v = entrega ?? retiro!;
+      avisoParada = avisarChoferViaje(
+        ruta.chofer_id,
+        v.tipo,
+        v.contenedor_numero,
+        v.destino_direccion,
+        v.cliente_telefono,
+        undefined,
+        v.pago_id,
+      );
+    }
+
+    await avisoParada;
+
+    // 2) Enviar resumen de la hoja de ruta
+    const lineasResumen = viajes.map((v, i) => {
+      const tag = v.tipo === 'entrega' ? '📦 Entrega' : '📥 Retiro';
+      const cont = v.contenedor_numero ? `(Cont. #${v.contenedor_numero})` : '';
+      const cobro = v.importe && v.medio_pago === 'efectivo' && v.pago_estado !== 'aprobado' ? `💵 Cobrar: $${v.importe}` : '';
+      const estado = v.completada_en ? '✅ Completada' : v.orden === menorOrden ? '🚚 En camino' : '⏳ Pendiente';
+      return `${i + 1}. [${estado}] ${tag} ${cont}\n   📍 ${v.destino_direccion ?? 'Sin dir.'} ${cobro ? `\n   ${cobro}` : ''}`;
+    });
+
+    const textoResumen =
+      `📋 *HOJA DE RUTA ACTUALIZADA - MORATRANS*\n` +
+      `📅 Fecha: ${ruta.fecha} | Patente: ${ruta.patente ?? '—'}\n` +
+      `Hola ${ruta.chofer_nombre ?? 'Chofer'} 👋 Te reenviamos el detalle de tu recorrido:\n\n` +
+      lineasResumen.join('\n\n') +
+      `\n\n_Tenés activa la parada #${menorOrden}. Podés marcarla con el botón interactivo que te enviamos recién._`;
+
+    sendText(ruta.chofer_telefono, textoResumen).catch((err) =>
+      console.error('[reenviar-chofer] Error enviando resumen texto:', err.message),
+    );
+
+    res.json({
+      ok: true,
+      mensaje: `Parada activa y hoja de ruta reenviadas con éxito a ${ruta.chofer_nombre ?? 'chofer'}.`,
+      parada_activa_orden: menorOrden,
+    });
+  } catch (error: any) {
+    if (error.status) res.status(error.status).json({ error: error.message });
+    else throw error;
+  }
 });
 
 /**

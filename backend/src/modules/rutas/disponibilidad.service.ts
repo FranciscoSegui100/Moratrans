@@ -48,6 +48,13 @@ export interface AdvertenciaCapacidad {
   mensaje: string;
 }
 
+export interface EstadoCamionPaso {
+  orden: number;
+  llenos: number;
+  vacios: number;
+  capacidad: CapacidadCamion;
+}
+
 export interface ResultadoDisponibilidad {
   /** Para cada `orden` de una parada de entrega (o la mitad-entrega de un recambio): los contenedores asignables ahí. */
   porOrden: Map<number, string[]>;
@@ -55,6 +62,10 @@ export interface ResultadoDisponibilidad {
   liberadosPor: Map<string, number>;
   /** Avisos de capacidad del camión — no bloquean el armado de la ruta. */
   advertencias: AdvertenciaCapacidad[];
+  /** Estado de carga física del camión en cada parada ordenada. */
+  estadoCamionPorOrden: Map<number, EstadoCamionPaso>;
+  /** Estado de carga inicial al salir del depósito antes de la parada 1. */
+  estadoCamionInicial: { llenos: number; vacios: number; capacidad: CapacidadCamion };
 }
 
 const PRIORIDAD_VIAJE_TIPO: Record<'entrega' | 'retiro', number> = { entrega: 0, retiro: 1 };
@@ -95,6 +106,7 @@ export function simularDisponibilidad(
   const liberadosPor = new Map<string, number>();
   const porOrden = new Map<number, string[]>();
   const advertencias: AdvertenciaCapacidad[] = [];
+  const estadoCamionPorOrden = new Map<number, EstadoCamionPaso>();
 
   // Vacíos físicamente a bordo de ESTE camión para ESTA ruta — no confundir
   // con `disponibles`, que es el stock del depósito ofrecido como candidato
@@ -102,7 +114,14 @@ export function simularDisponibilidad(
   // este camión). Arranca en la cantidad de entregas de la ruta (cada una
   // necesita cargar un vacío de salida) y se repone con lo que se vacía en
   // una parada de vaciado; una entrega lo baja al dejarlo en destino.
-  let vaciosABordo = ordenadas.filter((p) => p.tipoParada === 'viaje' && p.viajeTipo !== 'retiro').length;
+  const vaciosIniciales = ordenadas.filter((p) => p.tipoParada === 'viaje' && p.viajeTipo !== 'retiro').length;
+  let vaciosABordo = vaciosIniciales;
+
+  const estadoCamionInicial = {
+    llenos: 0,
+    vacios: vaciosIniciales,
+    capacidad,
+  };
 
   const chequearVacios = (orden: number) => {
     if (vaciosABordo > capacidad.vacios) {
@@ -123,6 +142,12 @@ export function simularDisponibilidad(
       vaciosABordo += pendientesDeVaciar.size;
       pendientesDeVaciar.clear();
       chequearVacios(parada.orden);
+      estadoCamionPorOrden.set(parada.orden, {
+        orden: parada.orden,
+        llenos: pendientesDeVaciar.size,
+        vacios: vaciosABordo,
+        capacidad,
+      });
       continue;
     }
 
@@ -155,6 +180,12 @@ export function simularDisponibilidad(
         pendientesDeVaciar.add(parada.contenedorNumero);
         liberadosPor.set(parada.contenedorNumero, parada.orden);
       }
+      estadoCamionPorOrden.set(parada.orden, {
+        orden: parada.orden,
+        llenos: pendientesDeVaciar.size,
+        vacios: vaciosABordo,
+        capacidad,
+      });
       continue;
     }
 
@@ -168,7 +199,14 @@ export function simularDisponibilidad(
     );
     if (parada.contenedorNumero) disponibles.delete(parada.contenedorNumero);
     vaciosABordo -= 1; // nunca puede superar la capacidad acá: solo baja hasta el próximo vaciado
+
+    estadoCamionPorOrden.set(parada.orden, {
+      orden: parada.orden,
+      llenos: pendientesDeVaciar.size,
+      vacios: vaciosABordo,
+      capacidad,
+    });
   }
 
-  return { porOrden, liberadosPor, advertencias };
+  return { porOrden, liberadosPor, advertencias, estadoCamionPorOrden, estadoCamionInicial };
 }

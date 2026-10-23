@@ -181,5 +181,22 @@ describe('simularDisponibilidad', () => {
       const { advertencias } = simularDisponibilidad(paradas, []);
       expect(advertencias.some((a) => a.orden === 8 && a.tipo === 'vacios_exceso')).toBe(true);
     });
+
+    it('calcula correctamente el estado de carga del camión en cada parada y al inicio', () => {
+      const paradas: ParadaSimulada[] = [
+        { orden: 1, tipoParada: 'viaje', viajeTipo: 'entrega', contenedorNumero: 'V1' },
+        { orden: 2, tipoParada: 'viaje', viajeTipo: 'retiro', contenedorNumero: 'L1' },
+        { orden: 3, tipoParada: 'vaciado' },
+      ];
+      const res = simularDisponibilidad(paradas, ['V1'], { llenos: 1, vacios: 6 });
+      expect(res.estadoCamionInicial).toEqual({ llenos: 0, vacios: 1, capacidad: { llenos: 1, vacios: 6 } });
+      // Parada 1: baja 1 vacío, quedan 0 vacíos y 0 llenos
+      expect(res.estadoCamionPorOrden.get(1)).toEqual({ orden: 1, llenos: 0, vacios: 0, capacidad: { llenos: 1, vacios: 6 } });
+      // Parada 2: sube 1 lleno, quedan 0 vacíos y 1 lleno
+      expect(res.estadoCamionPorOrden.get(2)).toEqual({ orden: 2, llenos: 1, vacios: 0, capacidad: { llenos: 1, vacios: 6 } });
+      // Parada 3 (vaciado): se descarga el lleno y se convierte en vacío a bordo
+      expect(res.estadoCamionPorOrden.get(3)).toEqual({ orden: 3, llenos: 0, vacios: 1, capacidad: { llenos: 1, vacios: 6 } });
+    });
   });
 });
+
