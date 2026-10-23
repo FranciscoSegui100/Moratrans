@@ -681,12 +681,15 @@ async function finalizarPedidoCuentaCorriente(
     [to, pedido.id],
   );
 
-  const [result] = await query<{ ticket_id: string; contenedor: string | null; reservado_ahora: boolean }>(
-    'SELECT * FROM fn_validar_pago($1, NULL, NULL)',
-    [pago.id],
-  );
-
-  const ubicacion = await resolverUbicacion('deposito');
+  // resolverUbicacion no depende de fn_validar_pago (ni al revés) — en
+  // paralelo, aunque fn_validar_pago sí necesita el pago.id de arriba.
+  const [[result], ubicacion] = await Promise.all([
+    query<{ ticket_id: string; contenedor: string | null; reservado_ahora: boolean }>(
+      'SELECT * FROM fn_validar_pago($1, NULL, NULL)',
+      [pago.id],
+    ),
+    resolverUbicacion('deposito'),
+  ]);
   await query(
     `INSERT INTO viajes (
        tipo, fecha, contenedor_numero, cliente_telefono, zona, importe, estado, notas,

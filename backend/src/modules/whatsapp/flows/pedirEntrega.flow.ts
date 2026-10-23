@@ -381,23 +381,25 @@ async function manejarConfirmacionResumen(m: MensajeEntrante, sesion: Sesion): P
   // resto de los flujos del bot, ver ubicaciones.service.ts).
   const deposito = await resolverUbicacion('deposito');
 
-  const [viaje] = await query<{ id: string }>(
-    `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, importe, es_cuenta_corriente, estado, notas, ubicacion_id, ubicacion_direccion)
-     VALUES ('entrega', $1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, 'programado', $10, $11, $12)
-     RETURNING id`,
+  // El viaje y su alerta en una sola ida y vuelta (CTE: la alerta toma el id
+  // del viaje recién insertado) — antes eran dos round trips seguidos porque
+  // la alerta depende del id generado por el insert anterior.
+  const [alerta] = await query<{ id: string; tipo: string; referencia_id: string; mensaje: string; estado: string; creado_en: string }>(
+    `WITH viaje AS (
+       INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, importe, es_cuenta_corriente, estado, notas, ubicacion_id, ubicacion_direccion)
+       VALUES ('entrega', $1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, 'programado', $10, $11, $12)
+       RETURNING id
+     )
+     INSERT INTO alertas (tipo, referencia_id, mensaje)
+     SELECT 'entrega_solicitada', viaje.id::text, $13 FROM viaje
+     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
     [
       fechaEntrega, to, departamento, destinoDireccion, destinoLat, destinoLng, direccionVerificada, horarioPreferido, precio,
       'Pedido de entrega por WhatsApp (cuenta corriente).',
       deposito?.id ?? null, deposito?.direccion ?? null,
+      `${to} pidió una entrega por cuenta corriente`,
     ],
-  );
-
-  const [alerta] = await query(
-    `INSERT INTO alertas (tipo, referencia_id, mensaje)
-     VALUES ('entrega_solicitada', $1, $2)
-     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [viaje.id, `${to} pidió una entrega por cuenta corriente`],
   );
   if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
   emitRecursoActualizado('viajes');

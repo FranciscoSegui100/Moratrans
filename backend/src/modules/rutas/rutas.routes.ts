@@ -536,24 +536,28 @@ rutasRouter.post('/:id/paradas', requireRol('admin', 'operador'), async (req: Re
       const ruta = rutaRows[0];
       if (!ruta) fail('Ruta no encontrada.', 404);
 
-      const origen = (await rutaYaEnCurso(c, rutaId)) ? 'agregada_en_dia' : 'planificada';
-
-      const { rows: ordenRows } = await c.query<{ max: number | null }>(
-        `SELECT MAX(orden) AS max FROM (
-           SELECT orden FROM viajes WHERE ruta_id = $1
-           UNION ALL SELECT orden FROM ruta_vaciados WHERE ruta_id = $1
-         ) t`,
+      // Las 3 lecturas de más abajo (¿ya arrancó?, orden máximo actual, orden
+      // máximo ya finalizado) son independientes entre sí — mismo rutaId, pero
+      // ninguna depende del resultado de otra — así que van en un solo
+      // round-trip en vez de tres (dentro de la transacción, sobre el mismo
+      // `c`: un Promise.all acá no paralelizaría de verdad, pg serializa los
+      // query() de un mismo client; esto sí ahorra el viaje de red real).
+      const { rows: [combo] } = await c.query<{ en_curso: boolean; max_orden: number | null; max_completada: number | null }>(
+        `SELECT
+           EXISTS(SELECT 1 FROM viajes WHERE ruta_id = $1 AND ruta_confirmada_en IS NOT NULL) AS en_curso,
+           (SELECT MAX(orden) FROM (
+              SELECT orden FROM viajes WHERE ruta_id = $1
+              UNION ALL SELECT orden FROM ruta_vaciados WHERE ruta_id = $1
+            ) t) AS max_orden,
+           (SELECT MAX(orden) FROM viajes WHERE ruta_id = $1 AND completada_en IS NOT NULL) AS max_completada`,
         [rutaId],
       );
-      const maxOrden = ordenRows[0]?.max ?? 0;
+      const origen = combo.en_curso ? 'agregada_en_dia' : 'planificada';
+      const maxOrden = combo.max_orden ?? 0;
       // Una parada nueva no se puede colar antes (ni en el lugar) de una parada
       // que el chofer ya terminó: esas mantienen su `orden`. El piso es la
       // posición justo después de la última finalizada.
-      const { rows: finRows } = await c.query<{ max: number | null }>(
-        `SELECT MAX(orden) AS max FROM viajes WHERE ruta_id = $1 AND completada_en IS NOT NULL`,
-        [rutaId],
-      );
-      const pisoOrden = (finRows[0]?.max ?? 0) + 1;
+      const pisoOrden = (combo.max_completada ?? 0) + 1;
       // Posición destino: la pedida (acotada a [pisoOrden, maxOrden+1]) o el final.
       const nuevoOrden = ordenPedido != null
         ? Math.min(Math.max(pisoOrden, ordenPedido), maxOrden + 1)

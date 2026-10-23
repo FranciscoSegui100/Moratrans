@@ -615,50 +615,56 @@ async function registrarRecambioCC(m: MensajeEntrante, sesion: Sesion, precio: s
   const horarioPreferido = (sesion.contexto.horarioPreferido as string | null) ?? null;
 
   const grupoId = randomUUID();
-  const vaciadero = await resolverUbicacion('vaciadero');
-  const deposito = await resolverUbicacion('deposito');
+  // Los 3 reads de acá abajo son independientes entre sí — en paralelo.
+  const [vaciadero, deposito, [retiroExistente]] = await Promise.all([
+    resolverUbicacion('vaciadero'),
+    resolverUbicacion('deposito'),
+    // ¿Ya había un retiro activo para este contenedor (típicamente el
+    // automático por vencimiento, ver jobs/alertas.cron.ts)? Se adopta como
+    // la mitad "retiro" de este recambio en vez de insertar uno nuevo — sin
+    // esto, el INSERT de abajo violaba el índice único
+    // ux_viajes_activo_por_tipo (un solo viaje activo por contenedor+tipo) y
+    // el recambio quedaba a medias (la entrega del vacío sí se creaba, el
+    // retiro del lleno no).
+    query<{ id: string }>(
+      `SELECT id FROM viajes
+        WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
+        ORDER BY creado_en DESC LIMIT 1`,
+      [numero],
+    ),
+  ]);
 
-  // ¿Ya había un retiro activo para este contenedor (típicamente el
-  // automático por vencimiento, ver jobs/alertas.cron.ts)? Se adopta como la
-  // mitad "retiro" de este recambio en vez de insertar uno nuevo — sin esto,
-  // el INSERT de abajo violaba el índice único ux_viajes_activo_por_tipo (un
-  // solo viaje activo por contenedor+tipo) y el recambio quedaba a medias
-  // (la entrega del vacío sí se creaba, el retiro del lleno no).
-  const [retiroExistente] = await query<{ id: string }>(
-    `SELECT id FROM viajes
-      WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
-      ORDER BY creado_en DESC LIMIT 1`,
-    [numero],
-  );
-  if (retiroExistente) {
-    await query(
-      `UPDATE viajes SET
-         fecha = $1, zona = $2, destino_direccion = $3, destino_lat = $4, destino_lng = $5,
-         direccion_verificada = $6, horario_preferido = $7, grupo_id = $8,
-         notas = 'Retiro automático por vencimiento — pasó a formar parte de un recambio pedido por WhatsApp.'
-       WHERE id = $9`,
-      [fechaRecambio, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, retiroExistente.id],
-    );
-  } else {
-    await query(
-      `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
-       VALUES ('retiro', $12, $1, $2, $3, $4, $5, $6, $7, $8, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
-      [numero, to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, fechaRecambio],
-    );
-  }
-  await query(
-    `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, importe, es_cuenta_corriente, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
-     VALUES ('entrega', $12, $1, $2, $3, $4, $5, $6, $7, $8, TRUE, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
-    [to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, precio, grupoId, deposito?.id ?? null, deposito?.direccion ?? null, fechaRecambio],
-  );
-
-  const [alerta] = await query(
-    `INSERT INTO alertas (tipo, referencia_id, mensaje)
-     VALUES ('recambio_solicitado', $1, $2)
-     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [numero, `${to} pidió un recambio del contenedor ${numero} por cuenta corriente`],
-  );
+  // Las 3 escrituras de acá abajo tampoco dependen una de otra (la entrega no
+  // lee nada de la escritura del retiro, y la alerta solo necesita numero/to,
+  // ningún id generado por las otras dos) — en paralelo.
+  const [, , [alerta]] = await Promise.all([
+    retiroExistente
+      ? query(
+          `UPDATE viajes SET
+             fecha = $1, zona = $2, destino_direccion = $3, destino_lat = $4, destino_lng = $5,
+             direccion_verificada = $6, horario_preferido = $7, grupo_id = $8,
+             notas = 'Retiro automático por vencimiento — pasó a formar parte de un recambio pedido por WhatsApp.'
+           WHERE id = $9`,
+          [fechaRecambio, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, retiroExistente.id],
+        )
+      : query(
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+           VALUES ('retiro', $12, $1, $2, $3, $4, $5, $6, $7, $8, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
+          [numero, to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null, fechaRecambio],
+        ),
+    query(
+      `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, direccion_verificada, horario_preferido, importe, es_cuenta_corriente, estado, notas, grupo_id, ubicacion_id, ubicacion_direccion)
+       VALUES ('entrega', $12, $1, $2, $3, $4, $5, $6, $7, $8, TRUE, 'programado', 'Recambio pedido por WhatsApp (cuenta corriente)', $9, $10, $11)`,
+      [to, zona, destino, destinoLat, destinoLng, direccionVerificada, horarioPreferido, precio, grupoId, deposito?.id ?? null, deposito?.direccion ?? null, fechaRecambio],
+    ),
+    query(
+      `INSERT INTO alertas (tipo, referencia_id, mensaje)
+       VALUES ('recambio_solicitado', $1, $2)
+       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+      [numero, `${to} pidió un recambio del contenedor ${numero} por cuenta corriente`],
+    ),
+  ]);
   if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
   emitRecursoActualizado('viajes');
 

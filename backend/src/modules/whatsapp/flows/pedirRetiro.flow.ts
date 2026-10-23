@@ -153,18 +153,22 @@ async function manejarDia(m: MensajeEntrante, sesion: Sesion): Promise<void> {
     // Vaciadero adonde se lleva el lleno (si hay uno solo activo cargado; si
     // hay varios, queda sin asignar y se completa después desde el panel).
     const vaciadero = await resolverUbicacion('vaciadero');
-    await query(
-      `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, ubicacion_id, ubicacion_direccion)
-       VALUES ('retiro', $1, $2, $3, $4, $5, 'Pedido de retiro por WhatsApp (cliente)', $6, $7)`,
-      [fecha, numero, to, zona, destino, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
-    );
-    const [alerta] = await query(
-      `INSERT INTO alertas (tipo, referencia_id, mensaje)
-       VALUES ('retiro_solicitado', $1, $2)
-       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [numero, `${to} pidió que retiremos el contenedor ${numero} el ${fecha}`],
-    );
+    // La alerta no lee nada del viaje recién creado (solo numero/to, ya
+    // conocidos) — en paralelo con el insert del viaje en vez de atrás.
+    const [, [alerta]] = await Promise.all([
+      query(
+        `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, ubicacion_id, ubicacion_direccion)
+         VALUES ('retiro', $1, $2, $3, $4, $5, 'Pedido de retiro por WhatsApp (cliente)', $6, $7)`,
+        [fecha, numero, to, zona, destino, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+      ),
+      query(
+        `INSERT INTO alertas (tipo, referencia_id, mensaje)
+         VALUES ('retiro_solicitado', $1, $2)
+         ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+         RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+        [numero, `${to} pidió que retiremos el contenedor ${numero} el ${fecha}`],
+      ),
+    ]);
     if (alerta) emitAlerta({ ...alerta, cliente_telefono: to });
   }
   emitRecursoActualizado('viajes');

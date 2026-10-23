@@ -431,27 +431,32 @@ async function manejarEleccionPedidoCC(m: MensajeEntrante, _sesion: Sesion): Pro
  * fn_validar_pago al validar (ver migración 0013).
  */
 async function registrarCuentaCorriente(to: string, pedido: PedidoCandidato | undefined): Promise<void> {
-  const [pago] = await query<{ id: string }>(
-    `INSERT INTO pagos (cliente_telefono, pedido_id, estado, es_cuenta_corriente)
-     VALUES ($1,$2,'pendiente',TRUE) RETURNING id`,
-    [to, pedido?.id ?? null],
-  );
-
-  const [cliente] = await query<{ cuenta_corriente_estado: string }>(
-    'SELECT cuenta_corriente_estado FROM clientes WHERE telefono = $1',
-    [to],
-  );
+  // El pago y su alerta van en una sola ida y vuelta (CTE: el pago se inserta
+  // primero y la alerta toma su id recién generado) — antes eran dos round
+  // trips seguidos porque la alerta necesita el id del pago. La lectura de
+  // cliente no depende de ninguno de los dos, así que corre en paralelo con
+  // ese combo en vez de esperarlo.
+  const [[alerta], [cliente]] = await Promise.all([
+    query<{ id: string; tipo: string; referencia_id: string; mensaje: string; estado: string; creado_en: string }>(
+      `WITH pago AS (
+         INSERT INTO pagos (cliente_telefono, pedido_id, estado, es_cuenta_corriente)
+         VALUES ($1,$2,'pendiente',TRUE) RETURNING id
+       )
+       INSERT INTO alertas (tipo, referencia_id, mensaje)
+       SELECT 'cuenta_corriente_solicitada', pago.id::text, $3 FROM pago
+       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+      [to, pedido?.id ?? null, `${to} pidió pagar a cuenta corriente`],
+    ),
+    query<{ cuenta_corriente_estado: string }>(
+      'SELECT cuenta_corriente_estado FROM clientes WHERE telefono = $1',
+      [to],
+    ),
+  ]);
   if (cliente?.cuenta_corriente_estado === 'sin_pedir') {
     await query(`UPDATE clientes SET cuenta_corriente_estado = 'pendiente' WHERE telefono = $1`, [to]);
   }
 
-  const [alerta] = await query(
-    `INSERT INTO alertas (tipo, referencia_id, mensaje)
-     VALUES ('cuenta_corriente_solicitada', $1, $2)
-     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [pago.id, `${to} pidió pagar a cuenta corriente`],
-  );
   if (alerta) {
     emitAlerta({
       ...alerta,
@@ -530,18 +535,19 @@ async function manejarEleccionPedidoEfectivo(m: MensajeEntrante, _sesion: Sesion
 
 /** Registra el pago en efectivo (sin comprobante) y alerta al panel para que un operador confirme el pedido. */
 async function registrarPagoEfectivo(to: string, pedido: PedidoCandidato | undefined): Promise<void> {
-  const [pago] = await query<{ id: string }>(
-    `INSERT INTO pagos (cliente_telefono, pedido_id, estado, medio_pago)
-     VALUES ($1,$2,'pendiente','efectivo') RETURNING id`,
-    [to, pedido?.id ?? null],
-  );
-
-  const [alerta] = await query(
-    `INSERT INTO alertas (tipo, referencia_id, mensaje)
-     VALUES ('pago_pendiente_validacion', $1, $2)
+  // Mismo combo en un solo round-trip que registrarCuentaCorriente de arriba:
+  // la alerta necesita el id del pago recién insertado, así que va en la
+  // misma ida y vuelta vía CTE en vez de una segunda.
+  const [alerta] = await query<{ id: string; tipo: string; referencia_id: string; mensaje: string; estado: string; creado_en: string }>(
+    `WITH pago AS (
+       INSERT INTO pagos (cliente_telefono, pedido_id, estado, medio_pago)
+       VALUES ($1,$2,'pendiente','efectivo') RETURNING id
+     )
+     INSERT INTO alertas (tipo, referencia_id, mensaje)
+     SELECT 'pago_pendiente_validacion', pago.id::text, $3 FROM pago
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [pago.id, `${to} eligió pagar en EFECTIVO — confirmar pedido`],
+    [to, pedido?.id ?? null, `${to} eligió pagar en EFECTIVO — confirmar pedido`],
   );
   if (alerta) {
     emitAlerta({

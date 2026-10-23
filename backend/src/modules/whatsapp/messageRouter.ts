@@ -194,11 +194,13 @@ function pideAsesor(m: MensajeEntrante): boolean {
  */
 export async function enrutar(m: MensajeEntrante): Promise<void> {
   // 1) ¿Es un chofer conocido? El flujo del chofer tiene prioridad.
-  const chofer = await query(
-    'SELECT id FROM choferes WHERE telefono = $1 AND activo = TRUE',
-    [m.from],
-  );
-  const sesion = await getSesion(m.from);
+  // Independientes entre sí (tablas distintas, ninguna depende del resultado
+  // de la otra) — en paralelo para no pagar dos round-trips a la DB en CADA
+  // mensaje entrante, el camino más caliente de todo el bot.
+  const [chofer, sesion] = await Promise.all([
+    query('SELECT id FROM choferes WHERE telefono = $1 AND activo = TRUE', [m.from]),
+    getSesion(m.from),
+  ]);
 
   if (chofer.length > 0 || sesion.flujo === 'chofer') {
     return handleChofer(m, sesion);
@@ -381,13 +383,20 @@ async function iniciarPedirContenedor(m: MensajeEntrante, sesion: Sesion): Promi
     return handlePedirEntrega(m, { ...sesion, flujo: 'pedir_entrega', paso: null });
   }
 
-  const [pendiente] = await pedidosAbiertos(m.from);
+  // Independientes entre sí (tablas distintas) — se piden las dos en paralelo
+  // aunque la segunda quede sin usar si ya hay un pendiente, total la
+  // prioridad (pendiente > contenedor propio > cliente nuevo) se decide igual
+  // más abajo, solo que sin pagar un round-trip extra en el caso común.
+  const [[pendiente], contenedoresPropios] = await Promise.all([
+    pedidosAbiertos(m.from),
+    contenedoresDelCliente(m.from),
+  ]);
   if (pendiente) {
     await ofrecerPedidoPendiente(m.from, pendiente, 'cotizacion');
     return;
   }
 
-  if ((await contenedoresDelCliente(m.from)).length > 0) {
+  if (contenedoresPropios.length > 0) {
     return handlePedirNuevoContenedor(m, { ...sesion, flujo: 'cotizacion', paso: null });
   }
   return handleCotizacion(m, { ...sesion, flujo: 'cotizacion', paso: null });
