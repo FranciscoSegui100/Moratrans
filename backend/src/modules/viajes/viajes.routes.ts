@@ -576,6 +576,27 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
         patente = choferRows[0]?.patente ?? null;
       }
 
+      // Retiro/recambio: si el contenedor ya tiene un retiro activo (típicamente
+      // el automático por vencimiento, ver jobs/alertas.cron.ts), se reprograma
+      // esa misma fila en vez de duplicarla — mismo criterio que ya usan
+      // pedirRetiro.flow.ts y recambio.flow.ts por WhatsApp. Sin esto, el INSERT
+      // de abajo violaba ux_viajes_activo_por_tipo (un solo viaje activo por
+      // contenedor+tipo) y el POST fallaba con un 500 genérico en vez de mover
+      // el retiro que ya estaba en la bolsa.
+      let retiroExistente: { id: string; estado: string } | null = null;
+      if ((v.tipo === 'retiro' || v.tipo === 'recambio') && v.contenedor_numero) {
+        const { rows } = await c.query<{ id: string; estado: string }>(
+          `SELECT id, estado FROM viajes
+            WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
+            ORDER BY creado_en DESC LIMIT 1`,
+          [v.contenedor_numero],
+        );
+        retiroExistente = rows[0] ?? null;
+        if (retiroExistente?.estado === 'en_curso') {
+          fail(`Ya hay un chofer en camino a buscar el contenedor ${v.contenedor_numero} — no se puede reprogramar.`);
+        }
+      }
+
       if (v.tipo === 'recambio') {
         if (v.contenedor_numero_entrega) {
           await reservarParaEntrega(c, v.contenedor_numero_entrega, v.fecha, actualizadoPor);
@@ -587,13 +608,32 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
         // selector para esto en el panel, mismo criterio "silencioso" que usa
         // el bot en recambio.flow.ts.
         const deposito = await resolverUbicacion('deposito');
-        const { rows: retiroRows } = await c.query(
-          `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, grupo_id, ubicacion_id, ubicacion_direccion, horario_preferido)
-           VALUES ('retiro',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-          [v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.contenedor_numero ?? null, v.cliente_telefono ?? null, v.zona ?? null,
-           v.destino_direccion ?? null, v.notas ?? null, patente, v.remito ?? null, v.importe ?? null, grupoId,
-           ubicacion?.id ?? null, ubicacion?.direccion ?? null, v.horario_preferido ?? null],
-        );
+        const { rows: retiroRows } = retiroExistente
+          ? await c.query(
+              // COALESCE en todo salvo fecha/grupo_id: lo único que el operador
+              // seguro está decidiendo acá es cuándo pasa a buscarlo y que ahora
+              // forma parte de este recambio — no pisar con NULL un chofer,
+              // zona o vaciadero que ya tenía asignado el retiro automático solo
+              // porque el formulario no repite ese campo.
+              `UPDATE viajes SET
+                 fecha = $1, hora_estimada = COALESCE($2, hora_estimada), chofer_id = COALESCE($3, chofer_id),
+                 zona = COALESCE($4, zona), destino_direccion = COALESCE($5, destino_direccion),
+                 notas = COALESCE($6, notas), patente = COALESCE($7, patente), remito = COALESCE($8, remito),
+                 importe = COALESCE($9, importe), grupo_id = $10,
+                 ubicacion_id = COALESCE($11, ubicacion_id), ubicacion_direccion = COALESCE($12, ubicacion_direccion),
+                 horario_preferido = COALESCE($13, horario_preferido)
+               WHERE id = $14 RETURNING *`,
+              [v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.zona ?? null, v.destino_direccion ?? null,
+               v.notas ?? null, v.chofer_id ? patente : null, v.remito ?? null, v.importe ?? null, grupoId,
+               ubicacion?.id ?? null, ubicacion?.direccion ?? null, v.horario_preferido ?? null, retiroExistente.id],
+            )
+          : await c.query(
+              `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, grupo_id, ubicacion_id, ubicacion_direccion, horario_preferido)
+               VALUES ('retiro',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+              [v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.contenedor_numero ?? null, v.cliente_telefono ?? null, v.zona ?? null,
+               v.destino_direccion ?? null, v.notas ?? null, patente, v.remito ?? null, v.importe ?? null, grupoId,
+               ubicacion?.id ?? null, ubicacion?.direccion ?? null, v.horario_preferido ?? null],
+            );
         const { rows: entregaRows } = await c.query(
           `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, grupo_id, ubicacion_id, ubicacion_direccion, horario_preferido)
            VALUES ('entrega',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
@@ -605,6 +645,26 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
 
       if (v.tipo === 'entrega' && v.contenedor_numero) {
         await reservarParaEntrega(c, v.contenedor_numero, v.fecha, actualizadoPor);
+      }
+
+      if (v.tipo === 'retiro' && retiroExistente) {
+        const { rows } = await c.query(
+          // Mismo criterio COALESCE que en el recambio (ver más arriba): solo
+          // fecha se pisa sí o sí, el resto no se borra si el formulario no lo
+          // repite.
+          `UPDATE viajes SET
+             fecha = $1, hora_estimada = COALESCE($2, hora_estimada), chofer_id = COALESCE($3, chofer_id),
+             zona = COALESCE($4, zona), destino_direccion = COALESCE($5, destino_direccion),
+             notas = COALESCE($6, notas), patente = COALESCE($7, patente), remito = COALESCE($8, remito),
+             importe = COALESCE($9, importe),
+             ubicacion_id = COALESCE($10, ubicacion_id), ubicacion_direccion = COALESCE($11, ubicacion_direccion),
+             horario_preferido = COALESCE($12, horario_preferido)
+           WHERE id = $13 RETURNING *`,
+          [v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.zona ?? null, v.destino_direccion ?? null,
+           v.notas ?? null, v.chofer_id ? patente : null, v.remito ?? null, v.importe ?? null,
+           ubicacion?.id ?? null, ubicacion?.direccion ?? null, v.horario_preferido ?? null, retiroExistente.id],
+        );
+        return { principal: rows[0], secundario: null as any };
       }
 
       const { rows } = await c.query(

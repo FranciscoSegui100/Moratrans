@@ -1254,6 +1254,16 @@ export function Rutas() {
   // criterio que usa el bot (ver contenedorCliente.service.ts), para que acá
   // no se pueda armar un retiro de un contenedor que el cliente nunca tuvo.
   const necesitaContenedorCliente = formViaje.tipo === 'retiro' || formViaje.tipo === 'recambio';
+  /**
+   * Retiro no tiene costo (no se descuenta del alquiler, ver pedirRetiro.flow.ts)
+   * así que siempre es 0, aunque la zona tenga tarifa cargada. Recambio sí
+   * cobra la tarifa de la zona, igual que una entrega nueva.
+   */
+  function importeAuto(tipo: string, zona: string, actual: string): string {
+    if (tipo === 'retiro') return '0';
+    const tarifa = zonasTarifas.find((z) => z.departamento === zona);
+    return tarifa ? tarifa.precio : actual;
+  }
   const { data: contenedoresCliente = [], isLoading: cargandoContenedoresCliente } = useQuery({
     queryKey: ['clientes', formViaje.cliente_telefono, 'contenedores'],
     queryFn: () => api.get<ContenedorCliente[]>(`/api/clientes/${encodeURIComponent(formViaje.cliente_telefono)}/contenedores`).then((r) => r.data),
@@ -1809,7 +1819,16 @@ export function Rutas() {
               <select
                 className="form-select"
                 value={formViaje.tipo}
-                onChange={(e) => setFormViaje({ ...formViaje, tipo: e.target.value, ubicacion_id: '', contenedor_numero: '' })}
+                onChange={(e) => {
+                  const tipo = e.target.value;
+                  setFormViaje({
+                    ...formViaje,
+                    tipo,
+                    ubicacion_id: '',
+                    contenedor_numero: '',
+                    importe: importeAuto(tipo, formViaje.zona, formViaje.importe),
+                  });
+                }}
               >
                 <option value="entrega">Entrega</option>
                 <option value="retiro">Retiro</option>
@@ -1874,16 +1893,15 @@ export function Rutas() {
                       const numero = e.target.value;
                       const elegido = contenedoresCliente.find((c) => c.numero === numero);
                       const zona = elegido?.zona || formViaje.zona;
-                      const tarifa = zonasTarifas.find((z) => z.departamento === zona);
                       setFormViaje({
                         ...formViaje,
                         contenedor_numero: numero,
                         // Mismo criterio que usa el bot (ver recambio.flow.ts / pedirRetiro.flow.ts):
                         // retirar o recambiar un contenedor va a buscarlo donde ya está entregado,
-                        // con la misma zona (y tarifa) de esa entrega.
+                        // con la misma zona (y tarifa, si corresponde) de esa entrega.
                         destino_direccion: elegido?.destino_direccion || formViaje.destino_direccion,
                         zona,
-                        importe: elegido?.zona && tarifa ? tarifa.precio : formViaje.importe,
+                        importe: importeAuto(formViaje.tipo, zona, formViaje.importe),
                       });
                     }}
                   >
@@ -1937,9 +1955,9 @@ export function Rutas() {
                   const zona = e.target.value;
                   // La tarifa de la zona completa el importe sola — mismo
                   // precio que usa el bot para cotizar (ver tarifaDeZona en
-                  // cotizacion.flow.ts). Se puede ajustar a mano después.
-                  const tarifa = zonasTarifas.find((z) => z.departamento === zona);
-                  setFormViaje({ ...formViaje, zona, importe: tarifa ? tarifa.precio : formViaje.importe });
+                  // cotizacion.flow.ts), salvo en retiro, que no tiene costo
+                  // (ver importeAuto). Se puede ajustar a mano después.
+                  setFormViaje({ ...formViaje, zona, importe: importeAuto(formViaje.tipo, zona, formViaje.importe) });
                 }}
               >
                 <option value="">— Elegir zona —</option>
