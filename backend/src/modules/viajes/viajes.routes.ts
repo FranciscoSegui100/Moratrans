@@ -73,7 +73,8 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
             CASE WHEN v.tipo = 'entrega' THEN v.ubicacion_direccion ELSE v.destino_direccion END AS origen_direccion,
             CASE WHEN v.tipo = 'entrega' THEN v.destino_direccion ELSE v.ubicacion_direccion END AS destino_final_direccion,
             -- Misma vista "por contrato" que GET /api/contenedores (columna
-            -- estado_contrato) — expresión duplicada a propósito, mantener en sync.
+            -- estado_contrato) y dashboard.routes.ts (GET /contenedores) —
+            -- expresión duplicada a propósito, mantener las tres en sync.
             CASE
               WHEN EXISTS (
                 SELECT 1 FROM viajes v2

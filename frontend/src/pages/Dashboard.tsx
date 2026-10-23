@@ -76,23 +76,36 @@ interface ActividadItem {
   detalle: string | null;
 }
 
+// Mismos colores que ya usan los badges de Contenedores/Viajes para cada
+// estado "por contrato" (ver .badge.<estado> en index.css) — así un mismo
+// estado se ve siempre del mismo color en todo el panel.
 const estadoColors: Record<string, string> = {
   disponible:     'var(--success)',
-  reservado:      'var(--accent)',
-  entregado:      'var(--purple)',
-  retirado:       'var(--neutral)',
+  preasignado:    'var(--warning)',
+  reservado:      'var(--purple)',
+  alquilado:      'var(--purple)',
+  para_retirar:   'var(--warning)',
+  yendo_a_vaciar: 'var(--neutral)',
+  vencido:        'var(--danger)',
   mantenimiento:  'var(--danger)',
 };
 
 // Orden fijo (no alfabético) para que la leyenda y la dona sigan el flujo
-// natural del contenedor: disponible -> reservado -> con el cliente -> volviendo.
-const estadoOrden = ['disponible', 'reservado', 'entregado', 'retirado', 'mantenimiento'];
+// natural del contenedor: disponible -> preasignado/reservado -> alquilado ->
+// para retirar -> yendo a vaciar -> vencido. Vista "por contrato" (ver
+// GET /api/dashboard/contenedores) — reemplaza al estado técnico crudo
+// (disponible/reservado/entregado/retirado/mantenimiento), que no distinguía
+// un contenedor recién alquilado de uno que ya hay que ir a buscar.
+const estadoOrden = ['disponible', 'preasignado', 'reservado', 'alquilado', 'para_retirar', 'yendo_a_vaciar', 'vencido', 'mantenimiento'];
 const estadoLabels: Record<string, string> = {
-  disponible:    'Disponible',
-  reservado:     'Reservado',
-  entregado:     'Con el cliente',
-  retirado:      'Volviendo al depósito',
-  mantenimiento: 'En mantenimiento',
+  disponible:     'Disponible',
+  preasignado:    'Disponible · sin confirmar',
+  reservado:      'Reservado',
+  alquilado:      'Alquilado',
+  para_retirar:   'Para retirar',
+  yendo_a_vaciar: 'Yendo a vaciar',
+  vencido:        'Vencido',
+  mantenimiento:  'En mantenimiento',
 };
 
 const accionContenedorLabels: Record<string, string> = {

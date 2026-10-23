@@ -20,7 +20,8 @@ contenedoresRouter.get('/', async (_req: Request, res: Response) => {
             -- Vista "por contrato" (Disponible/Alquilado/Para retirar/Yendo a
             -- vaciar/Vencido) derivada del estado técnico, sin tocarlo —
             -- misma expresión duplicada en viajes.routes.ts (columna
-            -- contenedor_estado); mantener ambas en sync.
+            -- contenedor_estado) y en dashboard.routes.ts (GET /contenedores,
+            -- agrupada); mantener las tres en sync.
             CASE
               WHEN EXISTS (
                 SELECT 1 FROM viajes v

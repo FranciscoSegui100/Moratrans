@@ -157,9 +157,42 @@ dashboardRouter.get('/tendencia', async (_req: Request, res: Response) => {
   res.json(rows);
 });
 
-/** GET /api/dashboard/contenedores — distribución por estado (para gráfico). */
+/**
+ * GET /api/dashboard/contenedores — distribución por estado (para gráfico).
+ * Agrupa por la misma vista "por contrato" (Disponible/Preasignado/
+ * Reservado/Alquilado/Para retirar/Yendo a vaciar/Vencido) que ya usan
+ * GET /api/contenedores y GET /api/viajes — antes agrupaba por el estado
+ * técnico (disponible/reservado/entregado/retirado/mantenimiento), mucho
+ * menos informativo para este gráfico. Expresión duplicada a propósito
+ * (van tres copias ahora, ver los otros dos archivos), mantener en sync.
+ */
 dashboardRouter.get('/contenedores', async (_req: Request, res: Response) => {
-  const rows = await query('SELECT estado, count(*)::int AS total FROM contenedores GROUP BY estado');
+  const rows = await query(
+    `SELECT
+            CASE
+              WHEN EXISTS (
+                SELECT 1 FROM viajes v
+                 WHERE v.contenedor_numero = c.numero AND v.tipo = 'retiro' AND v.estado = 'en_curso'
+              ) THEN 'yendo_a_vaciar'
+              WHEN EXISTS (
+                SELECT 1 FROM viajes v
+                 WHERE v.contenedor_numero = c.numero AND v.tipo = 'retiro' AND v.estado = 'programado' AND v.fecha <= $1::date
+              ) THEN 'para_retirar'
+              WHEN c.estado = 'entregado' AND c.vence_en IS NOT NULL AND c.vence_en < now() THEN 'vencido'
+              WHEN c.estado = 'entregado' THEN 'alquilado'
+              WHEN c.estado = 'disponible' AND va.tipo = 'entrega' THEN 'preasignado'
+              ELSE c.estado::text
+            END AS estado,
+            count(*)::int AS total
+       FROM contenedores c
+       LEFT JOIN LATERAL (
+         SELECT v.tipo FROM viajes v
+          WHERE v.contenedor_numero = c.numero AND v.estado IN ('programado', 'en_curso')
+          ORDER BY v.creado_en DESC LIMIT 1
+       ) va ON true
+      GROUP BY 1`,
+    [hoyMendozaISO()],
+  );
   res.json(rows);
 });
 
