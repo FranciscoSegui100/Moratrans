@@ -14,6 +14,15 @@ const esSupabase = env.DATABASE_URL.includes('supabase.');
 // contra cualquier otro host de producción se usa el store de confianza estándar.
 export const pool = new Pool({
   connectionString: env.DATABASE_URL,
+  // Todas las queries del código son sin schema explícito (`FROM contenedores`,
+  // no `FROM public.contenedores`) — dependían del search_path por default del
+  // rol ("$user", public, extensions). Detectado migrando a un proyecto nuevo
+  // de Supabase: el pooler compartido (Supavisor, modo transacción) de ese
+  // proyecto arrancaba cada conexión con el search_path VACÍO pese a que el
+  // rol lo tenía bien configurado — ninguna tabla resolvía. Fijarlo acá a
+  // mano saca la app de esa dependencia implícita para siempre, sin importar
+  // qué pooler/proyecto esté del otro lado.
+  options: '-c search_path=public',
   max: 10,
   idleTimeoutMillis: 30_000,
   // Sin esto, una conexión que se cae en silencio (ej. un proxy/NAT que
