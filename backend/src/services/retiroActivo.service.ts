@@ -3,6 +3,8 @@ import { PoolClient } from 'pg';
 export interface RetiroActivo {
   id: string;
   estado: 'programado' | 'en_curso';
+  /** No null = esta fila ya es la mitad "retiro" de un recambio en curso (ver grupo_id en schema.sql). */
+  grupo_id: string | null;
 }
 
 /**
@@ -19,7 +21,7 @@ export interface RetiroActivo {
  */
 export async function buscarRetiroActivo(c: PoolClient, contenedorNumero: string): Promise<RetiroActivo | null> {
   const { rows } = await c.query<RetiroActivo>(
-    `SELECT id, estado FROM viajes
+    `SELECT id, estado, grupo_id FROM viajes
       WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
       ORDER BY creado_en DESC LIMIT 1`,
     [contenedorNumero],

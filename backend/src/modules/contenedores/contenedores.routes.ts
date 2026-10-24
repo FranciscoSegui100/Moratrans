@@ -423,6 +423,7 @@ contenedoresRouter.post('/:numero/retiro-anticipado', requireRol('admin', 'opera
     const row = await withTx(async (c) => {
       const activo = await buscarRetiroActivo(c, numero);
       if (activo?.estado === 'en_curso') fail('Ya hay un chofer en camino a buscar este contenedor — no se puede reprogramar.');
+      if (activo?.grupo_id) fail('Este contenedor ya tiene un recambio programado — cambiale la fecha desde ahí, no como retiro anticipado aparte.');
       if (activo) {
         const { rows } = await c.query(
           `UPDATE viajes SET fecha = $1 WHERE id = $2 RETURNING *`,
@@ -500,6 +501,11 @@ contenedoresRouter.post('/:numero/alargue', requireRol('admin', 'operador'), asy
     const resultado = await withTx(async (c) => {
       const activo = await buscarRetiroActivo(c, numero);
       if (activo?.estado === 'en_curso') fail('Ya hay un chofer en camino a buscar este contenedor — no se puede alargar ahora.');
+      // Si ya hay un recambio programado (grupo_id), ese retiro no es "libre"
+      // para adoptar acá — hacerlo le pisaba fecha/pago_id al recambio y la
+      // extensión quedaba con el importe mezclado o invisible según el orden
+      // en que se hicieran las dos cosas.
+      if (activo?.grupo_id) fail('Este contenedor ya tiene un recambio programado — no se puede alargar por separado.');
 
       const { rows: contRows } = await c.query<{ vence_en: Date }>(
         `UPDATE contenedores SET vence_en = vence_en + make_interval(days => $2) WHERE numero = $1 RETURNING vence_en`,
@@ -617,28 +623,36 @@ contenedoresRouter.post('/:numero/recambio', requireRol('admin', 'operador'), as
 
       const grupoId = randomUUID();
       const deposito = await resolverUbicacion('deposito');
+      // El costo del recambio va en la entrega (el nuevo contenedor), no en
+      // el retiro — mismo criterio que el recambio directo de cuenta
+      // corriente (ver recambio.flow.ts) y el que valida un pago de
+      // recambio (ver pagos.routes.ts): sin esto el Excel de movimientos
+      // exportaba este viaje con IMPORTE vacío, y en la ficha del cliente el
+      // cobro aparecía en la fila de retiro en vez de en la de entrega.
+      // pago_id sí se linkea en las dos patas (igual que esos dos caminos),
+      // para que cualquiera de las dos filas lo encuentre.
       let retiroId: string;
       if (activo) {
         await c.query(
-          `UPDATE viajes SET fecha = $1, grupo_id = $2, importe = $3, pago_id = $4, es_cuenta_corriente = $5 WHERE id = $6`,
-          [v.fecha, grupoId, monto, pagoId, cargoCC, activo.id],
+          `UPDATE viajes SET fecha = $1, grupo_id = $2, pago_id = $3 WHERE id = $4`,
+          [v.fecha, grupoId, pagoId, activo.id],
         );
         retiroId = activo.id;
       } else {
         const vaciadero = await resolverUbicacion('vaciadero');
         const { rows } = await c.query<{ id: string }>(
-          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, importe, es_cuenta_corriente, pago_id, grupo_id, notas, ubicacion_id, ubicacion_direccion, canal)
-           VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'Recambio cargado a mano desde Contenedores', $12, $13, 'panel') RETURNING id`,
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, pago_id, grupo_id, notas, ubicacion_id, ubicacion_direccion, canal)
+           VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, $8, $9, 'Recambio cargado a mano desde Contenedores', $10, $11, 'panel') RETURNING id`,
           [v.fecha, numero, cont.cliente_telefono, cont.zona, cont.destino_direccion, cont.destino_lat, cont.destino_lng,
-           monto, cargoCC, pagoId, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+           pagoId, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
         );
         retiroId = rows[0].id;
       }
       await c.query(
-        `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, grupo_id, notas, ubicacion_id, ubicacion_direccion, canal)
-         VALUES ('entrega', $1, $2, $3, $4, $5, $6, $7, $8, 'Recambio cargado a mano desde Contenedores', $9, $10, 'panel')`,
+        `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, importe, es_cuenta_corriente, pago_id, grupo_id, notas, ubicacion_id, ubicacion_direccion, canal)
+         VALUES ('entrega', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'Recambio cargado a mano desde Contenedores', $12, $13, 'panel')`,
         [v.fecha, v.contenedor_numero_entrega.trim().toUpperCase(), cont.cliente_telefono, cont.zona, cont.destino_direccion,
-         cont.destino_lat, cont.destino_lng, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
+         cont.destino_lat, cont.destino_lng, monto, cargoCC, pagoId, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
       );
       return { retiroId, pagoId };
     });
