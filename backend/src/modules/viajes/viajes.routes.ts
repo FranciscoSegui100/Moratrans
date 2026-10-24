@@ -887,6 +887,13 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
 
       if ('contenedor_numero' in parsed.data && parsed.data.contenedor_numero) {
         if (viajeActual.tipo === 'entrega') {
+          // Cambiar el contenedor de una entrega libera la reserva del anterior
+          // (mismo criterio que PATCH /api/rutas/:id/paradas/:viajeId/contenedor).
+          // Sin esto el viejo quedaba 'reservado' sin ningún viaje detrás: no
+          // se podía elegir en ningún pedido y no aparecía en ningún lado.
+          if (reasignaContenedor) {
+            await liberarReservaEntrega(c, viajeActual.contenedor_numero!, `operador:${req.user!.id}`);
+          }
           await reservarParaEntrega(c, parsed.data.contenedor_numero, viajeActual.fecha, `operador:${req.user!.id}`, {
             excluirViajeId: req.params.id,
           });
