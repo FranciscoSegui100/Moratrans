@@ -114,8 +114,26 @@ type TipoPedido = 'entrega' | 'retiro' | 'recambio' | 'alargue_retiro';
 /** Para distinguir visualmente los pedidos en pantalla (ver tipoBulto arriba para el texto que va al Excel, que no se toca). */
 function tipoPedido(v: ViajeCliente): TipoPedido {
   if (v.tipo === 'alargue_retiro') return 'alargue_retiro';
-  if (v.tipo === 'retiro' && v.grupo_id) return 'recambio';
+  // Las dos patas de un recambio (retiro del lleno + entrega del vacío) comparten grupo_id.
+  if (v.grupo_id) return 'recambio';
   return v.tipo as 'entrega' | 'retiro';
+}
+
+/**
+ * Un alargue no siempre es una fila propia: el cargado desde "Gestionar
+ * contenedor" queda en la fila del retiro que reprograma, y el del bot se
+ * anida como comprobante de la entrega del mismo contenedor (ver GET
+ * /:telefono/viajes en el backend). Para el filtro "Alargues" cuenta
+ * cualquier fila que tenga un cobro de alargue.
+ */
+function tieneAlargue(v: ViajeCliente): boolean {
+  return v.tipo === 'alargue_retiro' || (v.comprobantes ?? []).some((c) => c.tipo === 'alargue_retiro');
+}
+
+function coincideFiltro(v: ViajeCliente, filtro: 'todos' | TipoPedido): boolean {
+  if (filtro === 'todos') return true;
+  if (filtro === 'alargue_retiro') return tieneAlargue(v);
+  return tipoPedido(v) === filtro;
 }
 
 const BADGE_PEDIDO: Record<TipoPedido, { texto: string; icono: string; clase: string }> = {
@@ -488,10 +506,10 @@ export function ClienteDetalle() {
   const [filtroPedido, setFiltroPedido] = useState<'todos' | TipoPedido>('todos');
   const conteosPedido = useMemo(() => {
     const c: Record<TipoPedido, number> = { entrega: 0, retiro: 0, recambio: 0, alargue_retiro: 0 };
-    for (const v of viajes) c[tipoPedido(v)]++;
+    for (const t of Object.keys(c) as TipoPedido[]) c[t] = viajes.filter((v) => coincideFiltro(v, t)).length;
     return c;
   }, [viajes]);
-  const viajesFiltrados = filtroPedido === 'todos' ? viajes : viajes.filter((v) => tipoPedido(v) === filtroPedido);
+  const viajesFiltrados = viajes.filter((v) => coincideFiltro(v, filtroPedido));
 
   // Ya vienen ordenados por fecha DESC desde el backend: agrupar preservando
   // ese orden deja los meses más recientes arriba sin tener que reordenar.
@@ -862,12 +880,10 @@ export function ClienteDetalle() {
                     const comprobantes = v.comprobantes ?? [];
                     const inicial = elegirInicial(v.tipo, comprobantes);
                     const esCC = v.es_cuenta_corriente || inicial?.es_cuenta_corriente;
-                    // Un 'retiro' suelto (no recambio) con el único comprobante de tipo
-                    // alargue es una fila que existe solo para cargar una extensión de
-                    // retiro a mano (ver POST /api/contenedores/:numero/alargue) — sin
-                    // esta marca, el importe quedaba en una fila que se ve como "Retiro"
-                    // a secas, y no quedaba claro de dónde salía la deuda.
-                    const esRetiroConAlargue = v.tipo === 'retiro' && !v.grupo_id && inicial?.tipo === 'alargue_retiro';
+                    // Fila que no es un alargue en sí pero lleva el cobro de uno (ver
+                    // tieneAlargue) — sin esta marca no quedaba claro de dónde salía
+                    // esa deuda.
+                    const incluyeAlargue = v.tipo !== 'alargue_retiro' && tieneAlargue(v);
                     return (
                     <tr key={v.id}>
                       <td style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
@@ -894,8 +910,11 @@ export function ClienteDetalle() {
                           const b = BADGE_PEDIDO[tipoPedido(v)];
                           return (
                             <>
-                              <span className={`tag ${b.clase}`} title={tipoBulto(v)}>{b.icono} {b.texto}</span>
-                              {esRetiroConAlargue && (
+                              <span className={`tag ${b.clase}`} title={tipoBulto(v)}>
+                                {b.icono} {b.texto}
+                                {v.grupo_id && <span style={{ fontWeight: 400 }}>· {v.tipo === 'retiro' ? 'retira' : 'deja'}</span>}
+                              </span>
+                              {incluyeAlargue && (
                                 <div style={{ marginTop: 4 }}>
                                   <span className="tag alargue" style={{ fontSize: '0.62rem' }}>⏳ Incluye alargue</span>
                                 </div>
