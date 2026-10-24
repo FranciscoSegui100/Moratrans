@@ -24,7 +24,6 @@ interface Chofer { id: string; nombre: string; activo: boolean; }
 interface Ubicacion { id: string; tipo: 'deposito' | 'vaciadero'; nombre: string; activo: boolean; }
 interface Tarifa { departamento: string; precio: string; activo: boolean; }
 /** Contenedores que un cliente tiene entregados ahora mismo — ver GET /api/clientes/:telefono/contenedores. */
-interface ContenedorCliente { numero: string; zona: string | null; destino_direccion: string | null; }
 
 // Mismas franjas que OPCIONES_HORARIO en horarioPreferido.flow.ts — el bot
 // guarda exactamente estos textos en viajes.horario_preferido, así que un
@@ -35,7 +34,6 @@ const OPCIONES_HORARIO_SUGERIDO = ['🌅 Mañana (8-12hs)', '🕐 Tarde (12-15hs
 const formViajeInicial = {
   tipo: 'entrega', fecha: '', horario_preferido: '', zona: '',
   destino_direccion: '', importe: '', ubicacion_id: '', cliente_telefono: '',
-  contenedor_numero: '',
 };
 
 interface ViajePendiente {
@@ -1250,25 +1248,11 @@ export function Rutas() {
     queryKey: ['clientes'],
     queryFn: () => api.get<ClienteBasico[]>('/api/clientes').then((r) => r.data),
   });
-  // Solo para retiro/recambio: de qué contenedor(es) puede elegir — el mismo
-  // criterio que usa el bot (ver contenedorCliente.service.ts), para que acá
-  // no se pueda armar un retiro de un contenedor que el cliente nunca tuvo.
-  const necesitaContenedorCliente = formViaje.tipo === 'retiro' || formViaje.tipo === 'recambio';
-  /**
-   * Retiro no tiene costo (no se descuenta del alquiler, ver pedirRetiro.flow.ts)
-   * así que siempre es 0, aunque la zona tenga tarifa cargada. Recambio sí
-   * cobra la tarifa de la zona, igual que una entrega nueva.
-   */
-  function importeAuto(tipo: string, zona: string, actual: string): string {
-    if (tipo === 'retiro') return '0';
+  /** La zona completa el importe sola con la tarifa vigente — se puede ajustar a mano después. */
+  function importeAuto(zona: string, actual: string): string {
     const tarifa = zonasTarifas.find((z) => z.departamento === zona);
     return tarifa ? tarifa.precio : actual;
   }
-  const { data: contenedoresCliente = [], isLoading: cargandoContenedoresCliente } = useQuery({
-    queryKey: ['clientes', formViaje.cliente_telefono, 'contenedores'],
-    queryFn: () => api.get<ContenedorCliente[]>(`/api/clientes/${encodeURIComponent(formViaje.cliente_telefono)}/contenedores`).then((r) => r.data),
-    enabled: necesitaContenedorCliente && !!formViaje.cliente_telefono,
-  });
   const { data: rutas = [] } = useQuery({
     queryKey: ['rutas', fecha],
     queryFn: () => api.get<Ruta[]>(`/api/rutas?fecha=${fecha}`).then((r) => r.data),
@@ -1389,10 +1373,9 @@ export function Rutas() {
     }
   }
 
-  // Depósito para una entrega, vaciadero para un retiro. Si hay una sola
-  // activa de ese tipo no hace falta elegir: el backend la autoasigna sola.
-  const tipoUbicacionViaje = formViaje.tipo === 'entrega' ? 'deposito' : 'vaciadero';
-  const ubicacionesElegiblesViaje = ubicacionesViaje.filter((u) => u.tipo === tipoUbicacionViaje);
+  // Depósito de salida de la entrega. Si hay uno solo activo no hace falta
+  // elegir: el backend lo autoasigna solo.
+  const ubicacionesElegiblesViaje = ubicacionesViaje.filter((u) => u.tipo === 'deposito');
 
   // Combobox de cliente: filtra por nombre o teléfono, como cualquier otro
   // buscador del panel (ver Conversaciones.tsx) — con muchos clientes el
@@ -1403,12 +1386,12 @@ export function Rutas() {
     : clientesForm.slice(0, 8);
 
   function elegirClienteForm(c: ClienteBasico) {
-    setFormViaje({ ...formViaje, cliente_telefono: c.telefono, contenedor_numero: '' });
+    setFormViaje({ ...formViaje, cliente_telefono: c.telefono });
     setClienteQuery(`${c.nombre} — ${c.telefono}`);
     setClienteListaAbierta(false);
   }
 
-  /** Programa un viaje (o recambio) nuevo — cae directo a la bolsa sin rutear. */
+  /** Programa una entrega nueva a un cliente — cae directo a la bolsa sin rutear. */
   async function crearViaje(e: React.FormEvent) {
     e.preventDefault();
     if (!formViaje.fecha) return;
@@ -1421,13 +1404,12 @@ export function Rutas() {
         importe: formViaje.importe || undefined,
         ubicacion_id: formViaje.ubicacion_id || undefined,
         horario_preferido: formViaje.horario_preferido || undefined,
-        contenedor_numero: formViaje.contenedor_numero || undefined,
       });
       setFormViaje(formViajeInicial);
       setClienteQuery('');
       recargarListas();
       queryClient.invalidateQueries({ queryKey: ['viajes'] });
-      show('success', formViaje.tipo === 'recambio' ? 'Recambio programado correctamente' : 'Viaje programado correctamente');
+      show('success', 'Viaje programado correctamente');
     } catch (err: any) {
       show('error', 'Error al programar', err.response?.data?.error || 'Error desconocido');
     } finally {
@@ -1814,27 +1796,6 @@ export function Rutas() {
           </button>
           {mostrarFormViaje && (
           <form onSubmit={crearViaje} className="form-row" style={{ marginTop: '14px' }}>
-            <div className="form-group">
-              <label className="form-label">Tipo</label>
-              <select
-                className="form-select"
-                value={formViaje.tipo}
-                onChange={(e) => {
-                  const tipo = e.target.value;
-                  setFormViaje({
-                    ...formViaje,
-                    tipo,
-                    ubicacion_id: '',
-                    contenedor_numero: '',
-                    importe: importeAuto(tipo, formViaje.zona, formViaje.importe),
-                  });
-                }}
-              >
-                <option value="entrega">Entrega</option>
-                <option value="retiro">Retiro</option>
-                <option value="recambio">Recambio</option>
-              </select>
-            </div>
             <div className="form-group" ref={clienteBoxRef} style={{ position: 'relative' }}>
               <label className="form-label">Cliente</label>
               <div style={{ position: 'relative' }}>
@@ -1849,7 +1810,7 @@ export function Rutas() {
                   onChange={(e) => {
                     setClienteQuery(e.target.value);
                     setClienteListaAbierta(true);
-                    if (formViaje.cliente_telefono) setFormViaje({ ...formViaje, cliente_telefono: '', contenedor_numero: '' });
+                    if (formViaje.cliente_telefono) setFormViaje({ ...formViaje, cliente_telefono: '' });
                   }}
                 />
               </div>
@@ -1874,46 +1835,9 @@ export function Rutas() {
                 </div>
               )}
             </div>
-            {necesitaContenedorCliente && (
-              <div className="form-group">
-                <label className="form-label">Contenedor a retirar</label>
-                {formViaje.cliente_telefono && cargandoContenedoresCliente ? (
-                  <div className="text-muted" style={{ fontSize: '0.78rem' }}>Buscando...</div>
-                ) : formViaje.cliente_telefono && contenedoresCliente.length === 0 ? (
-                  <div className="text-muted" style={{ fontSize: '0.78rem', maxWidth: 220 }}>
-                    Este cliente no tiene ningún contenedor entregado ahora mismo.
-                  </div>
-                ) : (
-                  <select
-                    className="form-select"
-                    value={formViaje.contenedor_numero}
-                    required
-                    disabled={!formViaje.cliente_telefono}
-                    onChange={(e) => {
-                      const numero = e.target.value;
-                      const elegido = contenedoresCliente.find((c) => c.numero === numero);
-                      const zona = elegido?.zona || formViaje.zona;
-                      setFormViaje({
-                        ...formViaje,
-                        contenedor_numero: numero,
-                        // Mismo criterio que usa el bot (ver recambio.flow.ts / pedirRetiro.flow.ts):
-                        // retirar o recambiar un contenedor va a buscarlo donde ya está entregado,
-                        // con la misma zona (y tarifa, si corresponde) de esa entrega.
-                        destino_direccion: elegido?.destino_direccion || formViaje.destino_direccion,
-                        zona,
-                        importe: importeAuto(formViaje.tipo, zona, formViaje.importe),
-                      });
-                    }}
-                  >
-                    <option value="">— Elegir contenedor —</option>
-                    {contenedoresCliente.map((c) => <option key={c.numero} value={c.numero}>{c.numero}</option>)}
-                  </select>
-                )}
-              </div>
-            )}
             {ubicacionesElegiblesViaje.length > 1 && (
               <div className="form-group">
-                <label className="form-label">{formViaje.tipo === 'entrega' ? 'Sale de' : 'Se descarga en'}</label>
+                <label className="form-label">Sale de</label>
                 <select
                   className="form-select"
                   value={formViaje.ubicacion_id}
@@ -1950,14 +1874,12 @@ export function Rutas() {
               <select
                 className="form-select"
                 value={formViaje.zona}
-                required={formViaje.tipo === 'recambio'}
                 onChange={(e) => {
                   const zona = e.target.value;
                   // La tarifa de la zona completa el importe sola — mismo
                   // precio que usa el bot para cotizar (ver tarifaDeZona en
-                  // cotizacion.flow.ts), salvo en retiro, que no tiene costo
-                  // (ver importeAuto). Se puede ajustar a mano después.
-                  setFormViaje({ ...formViaje, zona, importe: importeAuto(formViaje.tipo, zona, formViaje.importe) });
+                  // cotizacion.flow.ts). Se puede ajustar a mano después.
+                  setFormViaje({ ...formViaje, zona, importe: importeAuto(zona, formViaje.importe) });
                 }}
               >
                 <option value="">— Elegir zona —</option>
@@ -1970,7 +1892,6 @@ export function Rutas() {
                 className="form-input"
                 placeholder="Ej. Av. San Martín 1234, Godoy Cruz"
                 value={formViaje.destino_direccion}
-                required={formViaje.tipo === 'recambio'}
                 onChange={(e) => setFormViaje({ ...formViaje, destino_direccion: e.target.value })}
               />
             </div>
@@ -1981,14 +1902,13 @@ export function Rutas() {
                 className="form-input"
                 placeholder="Ej. 85000"
                 value={formViaje.importe}
-                required={formViaje.tipo === 'recambio'}
                 onChange={(e) => setFormViaje({ ...formViaje, importe: e.target.value })}
               />
             </div>
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={creandoViaje || (necesitaContenedorCliente && !formViaje.contenedor_numero)}
+              disabled={creandoViaje}
             >
               {creandoViaje ? 'Guardando...' : 'Programar viaje'}
             </button>

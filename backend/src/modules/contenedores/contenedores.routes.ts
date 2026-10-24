@@ -1,12 +1,123 @@
+import { randomUUID } from 'crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { query } from '../../config/db';
+import { query, withTx } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { finalizarRetiro } from '../../services/retiro.service';
 import { hoyMendozaISO } from '../../services/fechas.service';
+import { buscarRetiroActivo } from '../../services/retiroActivo.service';
+import { reservarParaEntrega } from '../../services/contenedorReserva.service';
+import { resolverUbicacion } from '../../services/ubicaciones.service';
+import { diaHabilDesde, formatearFechaCorta } from '../../services/diasHabiles.service';
+import { encrypt, encryptBuffer } from '../../services/crypto.service';
+import { subirArchivo } from '../../services/storage.service';
+import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
+import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
+import { datosBancarios } from '../whatsapp/flows/pago.flow';
+import { emitRecursoActualizado } from '../../config/socket';
+import { DIAS_ALARGUE, PORCENTAJE_ALARGUE } from '../../config/bot.config';
 
 export const contenedoresRouter = Router();
 contenedoresRouter.use(requireAuth);
+
+interface ContenedorEntregado {
+  numero: string;
+  estado: string;
+  vence_en: Date | null;
+  cliente_telefono: string;
+  cuenta_corriente_estado: string;
+  zona: string | null;
+  destino_direccion: string | null;
+  destino_lat: number | null;
+  destino_lng: number | null;
+}
+
+/**
+ * Contenedor + su cliente/dirección actual (de la última entrega no
+ * cancelada) + su estado de cuenta corriente — base común de los 3 flujos
+ * manuales de abajo (retiro anticipado, alargue, recambio). `null` si el
+ * contenedor no existe o no está 'entregado' a nadie ahora mismo.
+ */
+async function obtenerContenedorEntregado(numero: string): Promise<ContenedorEntregado | null> {
+  const [row] = await query<ContenedorEntregado>(
+    `SELECT c.numero, c.estado, c.vence_en, ultima.cliente_telefono, cl.cuenta_corriente_estado,
+            ultima.zona, ultima.destino_direccion, ultima.destino_lat, ultima.destino_lng
+       FROM contenedores c
+       CROSS JOIN LATERAL (
+         SELECT v.cliente_telefono, v.zona, v.destino_direccion, v.destino_lat, v.destino_lng
+           FROM viajes v
+          WHERE v.contenedor_numero = c.numero AND v.tipo = 'entrega' AND v.estado <> 'cancelado'
+          ORDER BY v.creado_en DESC LIMIT 1
+       ) ultima
+       LEFT JOIN clientes cl ON cl.telefono = ultima.cliente_telefono
+      WHERE c.numero = $1 AND c.estado = 'entregado'`,
+    [numero],
+  );
+  return row ?? null;
+}
+
+/** "Fecha" (YYYY-MM-DD) de vence_en en hora Mendoza — mismo criterio que jobs/alertas.cron.ts. */
+function fechaMendoza(fecha: Date): string {
+  return new Date(fecha.getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function fail(msg: string, status = 409): never {
+  const err: any = new Error(msg);
+  err.status = status;
+  throw err;
+}
+
+/**
+ * Sube y cifra un comprobante de transferencia — mismo criterio que uno que
+ * llega por WhatsApp (ver pago.flow.ts) o que se carga a mano desde la ficha
+ * del cliente (ver clientes.routes.ts POST /:telefono/viaje-manual).
+ */
+async function subirComprobanteManual(base64: string, contentType: string | undefined, prefijo: string): Promise<string> {
+  const buffer = Buffer.from(base64, 'base64');
+  if (buffer.length > 8 * 1024 * 1024) fail('El comprobante no puede pesar más de 8MB', 400);
+  const mime = contentType || 'image/jpeg';
+  const ext = mime.includes('pdf') ? 'pdf' : mime.split('/')[1] || 'jpg';
+  const ruta = `comprobantes/${prefijo}_${Date.now()}.${ext}`;
+  await subirArchivo(encryptBuffer(buffer), ruta, 'application/octet-stream');
+  return encrypt(ruta);
+}
+
+/**
+ * Reglas de plata compartidas por alargue y recambio manuales — mismo
+ * criterio ya confirmado con el dueño del negocio para "viaje cargado a
+ * mano" (ver clientes.routes.ts POST /:telefono/viaje-manual), con una
+ * diferencia clave: ACÁ el viaje queda 'programado' de verdad (hay que
+ * pasar a buscarlo/entregarlo), no 'completado' — esto es "lo pidió por
+ * teléfono, hay que programarlo", no "cargar algo que ya pasó".
+ *  - Pagado -> 'validado', nunca cargo de cuenta corriente.
+ *  - No pagado + cuenta corriente (aprobada o pendiente) -> cargo directo
+ *    (es_cuenta_corriente=TRUE, 'validado'), sin avisar nada — se cobra junto.
+ *  - No pagado + ocasional -> 'pendiente' + se le manda la solicitud de pago
+ *    por WhatsApp.
+ */
+function reglasDePago(cont: ContenedorEntregado, pagado: boolean) {
+  const esCC = cont.cuenta_corriente_estado === 'aprobada' || cont.cuenta_corriente_estado === 'pendiente';
+  const cargoCC = esCC && !pagado;
+  const estado = cargoCC || pagado ? 'validado' : 'pendiente';
+  return { esCC, cargoCC, estado };
+}
+
+async function pedirPagoPorWhatsApp(telefono: string, monto: number, concepto: string, contenedorNumero: string, medioPago: 'efectivo' | 'transferencia'): Promise<void> {
+  const cuerpo =
+    `📋 Tenés un pago pendiente de *$${monto.toLocaleString('es-AR')}* — ${concepto} del contenedor ${contenedorNumero}.\n\n` +
+    (medioPago === 'transferencia'
+      ? `${datosBancarios()}\n\nCuando hagas la transferencia, mandanos la foto del comprobante por acá. 📎`
+      : '💵 Coordiná con nosotros el pago en efectivo cuando puedas.');
+  try {
+    await sendText(telefono, cuerpo);
+  } catch (e) {
+    const motivo = motivoErrorWa(e);
+    console.error('Error mandando solicitud de pago manual:', motivo);
+    notificarEnvioFallido(telefono, telefono, `solicitud de pago de ${concepto}`, motivo).catch((e2) =>
+      console.error('Error registrando alerta de envío fallido:', e2),
+    );
+  }
+}
 
 /**
  * GET /api/contenedores — Listar todos los contenedores.
@@ -59,7 +170,7 @@ contenedoresRouter.get('/', async (_req: Request, res: Response) => {
             -- retirado): contenedores.cliente_id nunca se llega a completar
             -- en ningún flujo (queda siempre NULL salvo cuando se limpia a
             -- mano), así que el dato real hay que sacarlo del viaje vigente.
-            va.cliente_telefono, va.destino_direccion,
+            va.cliente_telefono, va.destino_direccion, va.zona,
             COALESCE(cl.nombre, va.cliente_telefono) AS cliente_nombre
        FROM contenedores c
        LEFT JOIN choferes ch ON c.actualizado_por LIKE 'chofer:%' AND ch.id::text = substring(c.actualizado_por FROM 8)
@@ -68,7 +179,7 @@ contenedoresRouter.get('/', async (_req: Request, res: Response) => {
        -- para que el operador vea de un vistazo si quedó "huérfano" sin chofer,
        -- y de quién/adónde es la entrega en curso.
        LEFT JOIN LATERAL (
-         SELECT v.tipo, v.chofer_id, v.cliente_telefono, v.destino_direccion
+         SELECT v.tipo, v.chofer_id, v.cliente_telefono, v.destino_direccion, v.zona
            FROM viajes v
           WHERE v.contenedor_numero = c.numero AND v.estado IN ('programado', 'en_curso')
           ORDER BY v.creado_en DESC LIMIT 1
@@ -300,3 +411,266 @@ contenedoresRouter.patch(
     }
   },
 );
+
+// ─────────────────────────────────────────────────────────────────────────
+// Gestionar contenedor: los 3 flujos que el bot ya resuelve solo por
+// WhatsApp (retiro anticipado, alargue, recambio), pero armados a mano desde
+// el panel — para un cliente que llama y prefiere saltearse el bot. A
+// diferencia de clientes.routes.ts POST /:telefono/viaje-manual (que carga
+// algo que YA pasó, sin tocar nada operativo), acá el viaje queda
+// 'programado' de verdad: mueve la bolsa / estira el vencimiento / puede
+// asignarse a un chofer, igual que si lo hubiera pedido el cliente por
+// WhatsApp.
+// ─────────────────────────────────────────────────────────────────────────
+
+const retiroAnticipadoSchema = z.object({ fecha: z.string() });
+
+/**
+ * POST /api/contenedores/:numero/retiro-anticipado — sin costo (no se
+ * descuenta del alquiler, mismo criterio que pedirRetiro.flow.ts). La fecha
+ * tiene que ser antes del vencimiento ya pactado — si el cliente llama
+ * después de vencido, es un retiro normal, no "anticipado".
+ */
+contenedoresRouter.post('/:numero/retiro-anticipado', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const parsed = retiroAnticipadoSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Falta la fecha' });
+  const { fecha } = parsed.data;
+  const numero = req.params.numero;
+
+  const cont = await obtenerContenedorEntregado(numero);
+  if (!cont) return res.status(404).json({ error: 'Este contenedor no está entregado a ningún cliente ahora mismo.' });
+  if (!cont.vence_en) return res.status(409).json({ error: 'Este contenedor no tiene fecha de vencimiento cargada.' });
+  const hoy = hoyMendozaISO();
+  const venceFecha = fechaMendoza(cont.vence_en);
+  if (fecha < hoy) return res.status(400).json({ error: 'La fecha no puede ser anterior a hoy.' });
+  if (fecha >= venceFecha) return res.status(400).json({ error: `Tiene que ser antes del vencimiento (${formatearFechaCorta(cont.vence_en)}).` });
+
+  try {
+    const row = await withTx(async (c) => {
+      const activo = await buscarRetiroActivo(c, numero);
+      if (activo?.estado === 'en_curso') fail('Ya hay un chofer en camino a buscar este contenedor — no se puede reprogramar.');
+      if (activo) {
+        const { rows } = await c.query(
+          `UPDATE viajes SET fecha = $1 WHERE id = $2 RETURNING *`,
+          [fecha, activo.id],
+        );
+        return rows[0];
+      }
+      const vaciadero = await resolverUbicacion('vaciadero');
+      const { rows } = await c.query(
+        `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, notas, ubicacion_id, ubicacion_direccion)
+         VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, 'Retiro anticipado cargado a mano desde Contenedores', $8, $9) RETURNING *`,
+        [fecha, numero, cont.cliente_telefono, cont.zona, cont.destino_direccion, cont.destino_lat, cont.destino_lng,
+         vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+      );
+      return rows[0];
+    });
+    emitRecursoActualizado('viajes');
+    res.json(row);
+  } catch (e: any) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    console.error('Error programando retiro anticipado:', e);
+    res.status(500).json({ error: 'Error interno del servidor.' });
+  }
+});
+
+const pagoManualSchema = z.object({
+  medio_pago: z.enum(['efectivo', 'transferencia']),
+  pagado: z.boolean(),
+  comprobante_base64: z.string().optional(),
+  comprobante_content_type: z.string().optional(),
+});
+
+/**
+ * POST /api/contenedores/:numero/alargue — siempre DIAS_ALARGUE días desde
+ * el vencimiento actual (el cliente no elige cuánto), al PORCENTAJE_ALARGUE
+ * de la tarifa vigente de su zona — mismos valores que usa el bot (ver
+ * bot.config.ts). A diferencia del alargue pedido por WhatsApp (que cancela
+ * el retiro automático y deja que el cron lo vuelva a crear, ver
+ * cancelarRetiroAutomatico), acá se reprograma directo a la fecha nueva —
+ * el operador quiere ver el resultado ya mismo, no esperar la próxima
+ * corrida del cron.
+ */
+contenedoresRouter.post('/:numero/alargue', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const parsed = pagoManualSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
+  const v = parsed.data;
+  const numero = req.params.numero;
+
+  const cont = await obtenerContenedorEntregado(numero);
+  if (!cont) return res.status(404).json({ error: 'Este contenedor no está entregado a ningún cliente ahora mismo.' });
+  if (!cont.vence_en) return res.status(409).json({ error: 'Este contenedor no tiene fecha de vencimiento cargada.' });
+  if (!cont.zona) return res.status(409).json({ error: 'Este contenedor no tiene zona cargada — no se puede calcular el costo del alargue.' });
+
+  const [tarifa] = await query<{ precio: string }>(
+    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+    [cont.zona],
+  );
+  if (!tarifa) return res.status(409).json({ error: `No hay tarifa activa cargada para ${cont.zona}.` });
+  const monto = Math.round(Number(tarifa.precio) * PORCENTAJE_ALARGUE);
+
+  const { cargoCC, estado } = reglasDePago(cont, v.pagado);
+  let urlComprobante: string | null = null;
+  if (v.pagado && v.medio_pago === 'transferencia' && v.comprobante_base64) {
+    try {
+      urlComprobante = await subirComprobanteManual(v.comprobante_base64, v.comprobante_content_type, `alargue_${numero}`);
+    } catch (e: any) {
+      if (e.status) return res.status(e.status).json({ error: e.message });
+      console.error('Error subiendo comprobante de alargue:', e);
+      return res.status(502).json({ error: 'No se pudo guardar el comprobante' });
+    }
+  }
+
+  try {
+    const resultado = await withTx(async (c) => {
+      const activo = await buscarRetiroActivo(c, numero);
+      if (activo?.estado === 'en_curso') fail('Ya hay un chofer en camino a buscar este contenedor — no se puede alargar ahora.');
+
+      const { rows: contRows } = await c.query<{ vence_en: Date }>(
+        `UPDATE contenedores SET vence_en = vence_en + make_interval(days => $2) WHERE numero = $1 RETURNING vence_en`,
+        [numero, DIAS_ALARGUE],
+      );
+      const nuevoVenceEn = contRows[0].vence_en;
+      const nuevaFecha = diaHabilDesde(fechaMendoza(nuevoVenceEn));
+
+      const { rows: pagoRows } = await c.query<{ id: string }>(
+        `INSERT INTO pagos (cliente_telefono, tipo, contenedor_numero, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante)
+         VALUES ($1, 'alargue_retiro', $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [cont.cliente_telefono, numero, monto, v.medio_pago, estado, v.pagado && v.medio_pago === 'efectivo', cargoCC, urlComprobante],
+      );
+      const pagoId = pagoRows[0].id;
+
+      if (activo) {
+        await c.query(`UPDATE viajes SET fecha = $1, pago_id = $2 WHERE id = $3`, [nuevaFecha, pagoId, activo.id]);
+      } else {
+        const vaciadero = await resolverUbicacion('vaciadero');
+        await c.query(
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, pago_id, notas, ubicacion_id, ubicacion_direccion)
+           VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, $8, 'Alargue cargado a mano desde Contenedores', $9, $10)`,
+          [nuevaFecha, numero, cont.cliente_telefono, cont.zona, cont.destino_direccion, cont.destino_lat, cont.destino_lng,
+           pagoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+        );
+      }
+      return { venceEn: nuevoVenceEn, pagoId };
+    });
+
+    if (!v.pagado && !reglasDePago(cont, v.pagado).esCC) {
+      await pedirPagoPorWhatsApp(cont.cliente_telefono, monto, 'extensión de retiro', numero, v.medio_pago);
+    }
+    emitRecursoActualizado('contenedores');
+    emitRecursoActualizado('viajes');
+    emitRecursoActualizado('pagos');
+    res.json({ ok: true, vence_en: resultado.venceEn, pago_id: resultado.pagoId, monto });
+  } catch (e: any) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    console.error('Error aplicando alargue manual:', e);
+    res.status(500).json({ error: 'Error interno del servidor.' });
+  }
+});
+
+const recambioSchema = pagoManualSchema.extend({
+  fecha: z.string(),
+  contenedor_numero_entrega: z.string().min(1),
+});
+
+/**
+ * POST /api/contenedores/:numero/recambio — misma dirección/zona (y por lo
+ * tanto mismo precio, tarifa completa de esa zona) del contenedor que ya
+ * tiene; la fecha tiene que caer entre hoy y el vencimiento ya pactado — un
+ * recambio después de vencido ya no es "recambio", es un retiro + una
+ * entrega nueva aparte.
+ */
+contenedoresRouter.post('/:numero/recambio', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const parsed = recambioSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
+  const v = parsed.data;
+  const numero = req.params.numero;
+
+  const cont = await obtenerContenedorEntregado(numero);
+  if (!cont) return res.status(404).json({ error: 'Este contenedor no está entregado a ningún cliente ahora mismo.' });
+  if (!cont.zona) return res.status(409).json({ error: 'Este contenedor no tiene zona cargada — no se puede calcular el precio del recambio.' });
+  if (v.contenedor_numero_entrega.trim().toUpperCase() === numero.toUpperCase()) {
+    return res.status(400).json({ error: 'El contenedor que se deja no puede ser el mismo que se retira.' });
+  }
+  const hoy = hoyMendozaISO();
+  if (v.fecha < hoy) return res.status(400).json({ error: 'La fecha no puede ser anterior a hoy.' });
+  if (cont.vence_en && v.fecha > fechaMendoza(cont.vence_en)) {
+    return res.status(400).json({ error: `Tiene que ser hasta el vencimiento (${formatearFechaCorta(cont.vence_en)}) — después de esa fecha ya no es un recambio.` });
+  }
+
+  const [tarifa] = await query<{ precio: string }>(
+    'SELECT precio FROM tarifas_departamento WHERE departamento = $1 AND activo = TRUE',
+    [cont.zona],
+  );
+  if (!tarifa) return res.status(409).json({ error: `No hay tarifa activa cargada para ${cont.zona}.` });
+  const monto = Number(tarifa.precio);
+
+  const { cargoCC, estado } = reglasDePago(cont, v.pagado);
+  let urlComprobante: string | null = null;
+  if (v.pagado && v.medio_pago === 'transferencia' && v.comprobante_base64) {
+    try {
+      urlComprobante = await subirComprobanteManual(v.comprobante_base64, v.comprobante_content_type, `recambio_${numero}`);
+    } catch (e: any) {
+      if (e.status) return res.status(e.status).json({ error: e.message });
+      console.error('Error subiendo comprobante de recambio:', e);
+      return res.status(502).json({ error: 'No se pudo guardar el comprobante' });
+    }
+  }
+
+  try {
+    const resultado = await withTx(async (c) => {
+      const activo = await buscarRetiroActivo(c, numero);
+      if (activo?.estado === 'en_curso') fail('Ya hay un chofer en camino a buscar este contenedor — no se puede recambiar ahora.');
+
+      const actualizadoPor = `operador:${req.user!.id}`;
+      await reservarParaEntrega(c, v.contenedor_numero_entrega.trim().toUpperCase(), v.fecha, actualizadoPor);
+
+      const { rows: pagoRows } = await c.query<{ id: string }>(
+        `INSERT INTO pagos (cliente_telefono, tipo, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante)
+         VALUES ($1, 'flete', $2, $3, $4, $5, $6, $7) RETURNING id`,
+        [cont.cliente_telefono, monto, v.medio_pago, estado, v.pagado && v.medio_pago === 'efectivo', cargoCC, urlComprobante],
+      );
+      const pagoId = pagoRows[0].id;
+
+      const grupoId = randomUUID();
+      const deposito = await resolverUbicacion('deposito');
+      let retiroId: string;
+      if (activo) {
+        await c.query(
+          `UPDATE viajes SET fecha = $1, grupo_id = $2, importe = $3, pago_id = $4, es_cuenta_corriente = $5 WHERE id = $6`,
+          [v.fecha, grupoId, monto, pagoId, cargoCC, activo.id],
+        );
+        retiroId = activo.id;
+      } else {
+        const vaciadero = await resolverUbicacion('vaciadero');
+        const { rows } = await c.query<{ id: string }>(
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, importe, es_cuenta_corriente, pago_id, grupo_id, notas, ubicacion_id, ubicacion_direccion)
+           VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'Recambio cargado a mano desde Contenedores', $12, $13) RETURNING id`,
+          [v.fecha, numero, cont.cliente_telefono, cont.zona, cont.destino_direccion, cont.destino_lat, cont.destino_lng,
+           monto, cargoCC, pagoId, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+        );
+        retiroId = rows[0].id;
+      }
+      await c.query(
+        `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, grupo_id, notas, ubicacion_id, ubicacion_direccion)
+         VALUES ('entrega', $1, $2, $3, $4, $5, $6, $7, $8, 'Recambio cargado a mano desde Contenedores', $9, $10)`,
+        [v.fecha, v.contenedor_numero_entrega.trim().toUpperCase(), cont.cliente_telefono, cont.zona, cont.destino_direccion,
+         cont.destino_lat, cont.destino_lng, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
+      );
+      return { retiroId, pagoId };
+    });
+
+    if (!v.pagado && !reglasDePago(cont, v.pagado).esCC) {
+      await pedirPagoPorWhatsApp(cont.cliente_telefono, monto, 'recambio', numero, v.medio_pago);
+    }
+    emitRecursoActualizado('contenedores');
+    emitRecursoActualizado('viajes');
+    emitRecursoActualizado('pagos');
+    res.json({ ok: true, pago_id: resultado.pagoId });
+  } catch (e: any) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    if (e.code === '23503') return res.status(400).json({ error: 'El contenedor que se deja no existe.' });
+    console.error('Error armando recambio manual:', e);
+    res.status(500).json({ error: 'Error interno del servidor.' });
+  }
+});

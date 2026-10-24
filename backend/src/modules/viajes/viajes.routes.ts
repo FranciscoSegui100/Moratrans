@@ -14,6 +14,7 @@ import { formatearTelefonoLegible } from '../../services/telefono.service';
 import { notificarClienteChoferEnCamino } from '../whatsapp/notificacionesCliente';
 import { hoyMendozaISO } from '../../services/fechas.service';
 import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
+import { buscarRetiroActivo, RetiroActivo } from '../../services/retiroActivo.service';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -583,15 +584,9 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
       // de abajo violaba ux_viajes_activo_por_tipo (un solo viaje activo por
       // contenedor+tipo) y el POST fallaba con un 500 genérico en vez de mover
       // el retiro que ya estaba en la bolsa.
-      let retiroExistente: { id: string; estado: string } | null = null;
+      let retiroExistente: RetiroActivo | null = null;
       if ((v.tipo === 'retiro' || v.tipo === 'recambio') && v.contenedor_numero) {
-        const { rows } = await c.query<{ id: string; estado: string }>(
-          `SELECT id, estado FROM viajes
-            WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
-            ORDER BY creado_en DESC LIMIT 1`,
-          [v.contenedor_numero],
-        );
-        retiroExistente = rows[0] ?? null;
+        retiroExistente = await buscarRetiroActivo(c, v.contenedor_numero);
         if (retiroExistente?.estado === 'en_curso') {
           fail(`Ya hay un chofer en camino a buscar el contenedor ${v.contenedor_numero} — no se puede reprogramar.`);
         }

@@ -19,7 +19,7 @@ import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { formatearFechaCorta, formatearFechaLarga, medianocheArgentina, sumarDias } from '../../services/diasHabiles.service';
 import { hoyMendozaISO } from '../../services/fechas.service';
 import { saldoCuentaCorriente } from '../reportes/reportes.service';
-import { DIAS_ALQUILER_ANTES_RETIRO } from '../../config/bot.config';
+import { DIAS_ALQUILER_ANTES_RETIRO, DIAS_ALARGUE } from '../../config/bot.config';
 import { cancelarRetiroAutomatico } from '../../services/retiroAutomatico.service';
 
 export const pagosRouter = Router();
@@ -209,12 +209,6 @@ async function avisarChoferReservaFutura(
  * retiro y la fecha de vencimiento del contenedor. Luego genera y envía el
  * PDF por WhatsApp.
  */
-/**
- * Cuánto dura un "alargue de retiro" (ver alargarRetiro.flow.ts) — fijo, el
- * cliente no elige la cantidad de días.
- */
-const DIAS_ALARGUE = 5;
-
 /**
  * Un pago 'alargue_retiro' no reserva contenedor ni crea ticket — solo suma
  * DIAS_ALARGUE al vencimiento del contenedor que el cliente ya tenía. Se

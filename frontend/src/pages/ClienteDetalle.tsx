@@ -10,6 +10,7 @@ import { ComprobanteViewer } from '../components/ComprobanteViewer';
 import { useAuth, tieneRol } from '../context/AuthContext';
 import { formatearFecha } from '../lib/fechas';
 import { hoyISO } from '../lib/viajes';
+import { archivoABase64 } from '../lib/archivos';
 
 interface Comprobante {
   id: string;
@@ -143,15 +144,6 @@ function formularioViajeVacio(): ViajeManualForm {
   };
 }
 
-/** Lee un File como base64 puro (sin el prefijo "data:mime;base64,") para mandarlo en el body del POST. */
-function archivoABase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
 
 export function ClienteDetalle() {
   const { telefono = '' } = useParams<{ telefono: string }>();

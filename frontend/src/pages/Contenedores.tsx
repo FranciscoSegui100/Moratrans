@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { X, Wrench, CircleCheck, Pencil, Trash2, Check, MessageCircle, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { X, Wrench, CircleCheck, Pencil, Trash2, Check, MessageCircle, ArrowUp, ArrowDown, ArrowUpDown, Settings2 } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { useAuth, tieneRol } from '../context/AuthContext';
 import { formatearFechaHora } from '../lib/fechas';
+import { hoyISO, sumarDias } from '../lib/viajes';
+import { archivoABase64 } from '../lib/archivos';
 
 interface Contenedor {
   numero: string;
@@ -22,7 +24,9 @@ interface Contenedor {
   cliente_telefono: string | null;
   cliente_nombre: string | null;
   destino_direccion: string | null;
+  zona: string | null;
 }
+interface Tarifa { departamento: string; precio: string; activo: boolean; }
 interface HistorialItem {
   id: string;
   estado: string;
@@ -93,6 +97,104 @@ export function Contenedores() {
     queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
   });
   const cargar = () => queryClient.invalidateQueries({ queryKey: ['contenedores'] });
+
+  // Gestionar contenedor: los 3 flujos manuales (retiro anticipado, alargue,
+  // recambio) que el bot ya resuelve solo por WhatsApp — para un cliente que
+  // llama y prefiere saltearse el bot (ver POST /api/contenedores/:numero/…).
+  const [gestionarNumero, setGestionarNumero] = useState<string | null>(null);
+  const [accionGestion, setAccionGestion] = useState<'retiro_anticipado' | 'alargue' | 'recambio'>('retiro_anticipado');
+  const [gestionForm, setGestionForm] = useState({
+    fecha: '',
+    contenedor_numero_entrega: '',
+    medio_pago: 'transferencia' as 'efectivo' | 'transferencia',
+    pagado: true,
+  });
+  const [comprobanteGestion, setComprobanteGestion] = useState<File | null>(null);
+  const [guardandoGestion, setGuardandoGestion] = useState(false);
+
+  const { data: zonasTarifas = [] } = useQuery({
+    queryKey: ['tarifas', 'activas'],
+    queryFn: () => api.get<Tarifa[]>('/api/tarifas').then((r) => r.data.filter((t) => t.activo)),
+  });
+
+  function abrirGestion(numero: string) {
+    setGestionarNumero(numero);
+    setAccionGestion('retiro_anticipado');
+    setGestionForm({ fecha: '', contenedor_numero_entrega: '', medio_pago: 'transferencia', pagado: true });
+    setComprobanteGestion(null);
+  }
+  function cerrarGestion() {
+    setGestionarNumero(null);
+  }
+
+  async function confirmarRetiroAnticipado() {
+    if (!gestionarNumero || !gestionForm.fecha) return;
+    setGuardandoGestion(true);
+    try {
+      await api.post(`/api/contenedores/${encodeURIComponent(gestionarNumero)}/retiro-anticipado`, { fecha: gestionForm.fecha });
+      cargar();
+      show('success', 'Retiro anticipado programado', `${gestionarNumero} · ${gestionForm.fecha}`);
+      cerrarGestion();
+    } catch (err: any) {
+      show('error', 'No se pudo programar', err.response?.data?.error);
+    } finally {
+      setGuardandoGestion(false);
+    }
+  }
+
+  async function confirmarAlargue() {
+    if (!gestionarNumero) return;
+    setGuardandoGestion(true);
+    try {
+      let comprobante_base64: string | undefined;
+      let comprobante_content_type: string | undefined;
+      if (gestionForm.pagado && gestionForm.medio_pago === 'transferencia' && comprobanteGestion) {
+        comprobante_base64 = await archivoABase64(comprobanteGestion);
+        comprobante_content_type = comprobanteGestion.type;
+      }
+      const { data } = await api.post<{ monto: number }>(`/api/contenedores/${encodeURIComponent(gestionarNumero)}/alargue`, {
+        medio_pago: gestionForm.medio_pago,
+        pagado: gestionForm.pagado,
+        comprobante_base64,
+        comprobante_content_type,
+      });
+      cargar();
+      show('success', 'Alargue aplicado', `$${Number(data.monto).toLocaleString('es-AR')} · ${gestionarNumero}`);
+      cerrarGestion();
+    } catch (err: any) {
+      show('error', 'No se pudo aplicar el alargue', err.response?.data?.error);
+    } finally {
+      setGuardandoGestion(false);
+    }
+  }
+
+  async function confirmarRecambio() {
+    if (!gestionarNumero || !gestionForm.fecha || !gestionForm.contenedor_numero_entrega) return;
+    setGuardandoGestion(true);
+    try {
+      let comprobante_base64: string | undefined;
+      let comprobante_content_type: string | undefined;
+      if (gestionForm.pagado && gestionForm.medio_pago === 'transferencia' && comprobanteGestion) {
+        comprobante_base64 = await archivoABase64(comprobanteGestion);
+        comprobante_content_type = comprobanteGestion.type;
+      }
+      await api.post(`/api/contenedores/${encodeURIComponent(gestionarNumero)}/recambio`, {
+        fecha: gestionForm.fecha,
+        contenedor_numero_entrega: gestionForm.contenedor_numero_entrega,
+        medio_pago: gestionForm.medio_pago,
+        pagado: gestionForm.pagado,
+        comprobante_base64,
+        comprobante_content_type,
+      });
+      cargar();
+      show('success', 'Recambio programado', gestionarNumero);
+      cerrarGestion();
+    } catch (err: any) {
+      show('error', 'No se pudo programar el recambio', err.response?.data?.error);
+    } finally {
+      setGuardandoGestion(false);
+    }
+  }
 
   const { data: historial = [], isLoading: cargandoHistorial } = useQuery({
     queryKey: ['contenedores', historialNumero, 'historial'],
@@ -336,6 +438,7 @@ export function Contenedores() {
                 Vence {iconoOrden('vence')}
               </th>
               <th>Última actualización</th>
+              <th>Gestionar</th>
             </tr>
           </thead>
           <tbody>
@@ -407,11 +510,26 @@ export function Contenedores() {
                   {formatearFechaHora(c.actualizado_en)}{' '}
                   {c.actualizado_por && <span>· {c.actualizado_por}</span>}
                 </td>
+                <td>
+                  <RoleGate roles={['admin', 'operador']}>
+                    {c.estado === 'entregado' ? (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        title="Retiro anticipado, alargue o recambio para este contenedor"
+                        onClick={(e) => { e.stopPropagation(); abrirGestion(c.numero); }}
+                      >
+                        <Settings2 size={14} strokeWidth={1.75} /> Gestionar
+                      </button>
+                    ) : (
+                      <span className="text-muted" style={{ fontSize: '0.78rem' }} title="Solo disponible para contenedores entregados a un cliente">—</span>
+                    )}
+                  </RoleGate>
+                </td>
               </tr>
             ))}
             {contenedores.length === 0 && (
               <tr>
-                <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No hay contenedores registrados
                 </td>
               </tr>
@@ -453,6 +571,15 @@ export function Contenedores() {
                       <Pencil size={16} strokeWidth={1.75} /> Editar número
                     </button>
                   )}
+                  {(() => {
+                    const cont = contenedores.find((c) => c.numero === historialNumero);
+                    if (cont?.estado !== 'entregado') return null;
+                    return (
+                      <button className="btn btn-ghost btn-sm" onClick={() => abrirGestion(historialNumero)}>
+                        <Settings2 size={16} strokeWidth={1.75} /> Gestionar
+                      </button>
+                    );
+                  })()}
                   {(() => {
                     const cont = contenedores.find((c) => c.numero === historialNumero);
                     if (!cont) return null;
@@ -572,6 +699,205 @@ export function Contenedores() {
           </div>
         </div>
       )}
+
+      {gestionarNumero && (() => {
+        const cont = contenedores.find((c) => c.numero === gestionarNumero);
+        if (!cont) return null;
+        const hoy = hoyISO();
+        const venceFecha = cont.vence_en ? cont.vence_en.slice(0, 10) : null;
+        const maxRetiroAnticipado = venceFecha ? sumarDias(venceFecha, -1) : undefined;
+        const tarifa = cont.zona ? zonasTarifas.find((z) => z.departamento === cont.zona) : undefined;
+        const montoAlargue = tarifa ? Math.round(Number(tarifa.precio) * 0.5) : null;
+        const montoRecambio = tarifa ? Number(tarifa.precio) : null;
+        const contenedoresDisponibles = contenedores.filter((c) => c.estado === 'disponible');
+
+        return (
+          <div className="modal-overlay" onClick={cerrarGestion}>
+            <div className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+              <div className="modal-header">
+                <div className="section-title" style={{ margin: 0 }}>Gestionar · {gestionarNumero}</div>
+                <button className="modal-close" onClick={cerrarGestion}>
+                  <X size={18} strokeWidth={2} />
+                </button>
+              </div>
+
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 14 }}>
+                {etiquetaCliente(cont)} {cont.destino_direccion && `· ${cont.destino_direccion}`}
+                {venceFecha && ` · Vence ${formatearFechaHora(cont.vence_en!)}`}
+              </div>
+
+              <div className="btn-group" style={{ marginBottom: 16 }}>
+                <button
+                  className={`btn btn-sm ${accionGestion === 'retiro_anticipado' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setAccionGestion('retiro_anticipado')}
+                >
+                  Retiro anticipado
+                </button>
+                <button
+                  className={`btn btn-sm ${accionGestion === 'alargue' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setAccionGestion('alargue')}
+                >
+                  Alargue
+                </button>
+                <button
+                  className={`btn btn-sm ${accionGestion === 'recambio' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setAccionGestion('recambio')}
+                >
+                  Recambio
+                </button>
+              </div>
+
+              {accionGestion === 'retiro_anticipado' && (
+                <div className="form-row">
+                  {!venceFecha ? (
+                    <p className="text-muted">Este contenedor no tiene fecha de vencimiento cargada.</p>
+                  ) : (
+                    <>
+                      <p className="text-muted" style={{ fontSize: '0.82rem' }}>
+                        Sin costo — no se descuenta del alquiler. Tiene que ser antes del vencimiento ({formatearFechaHora(cont.vence_en!)}).
+                      </p>
+                      <div className="form-group">
+                        <label className="form-label">Fecha de retiro</label>
+                        <input
+                          type="date"
+                          className="form-input"
+                          value={gestionForm.fecha}
+                          min={hoy}
+                          max={maxRetiroAnticipado}
+                          onChange={(e) => setGestionForm({ ...gestionForm, fecha: e.target.value })}
+                        />
+                      </div>
+                      <button
+                        className="btn btn-primary"
+                        disabled={guardandoGestion || !gestionForm.fecha}
+                        onClick={confirmarRetiroAnticipado}
+                      >
+                        {guardandoGestion ? 'Guardando...' : 'Confirmar retiro anticipado'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {accionGestion === 'alargue' && (
+                <div className="form-row">
+                  <p className="text-muted" style={{ fontSize: '0.82rem' }}>
+                    Estira el vencimiento 5 días{montoAlargue != null && <> — cuesta <strong>${montoAlargue.toLocaleString('es-AR')}</strong> (50% de la tarifa de {cont.zona})</>}.
+                  </p>
+                  <div className="form-group">
+                    <label className="form-label">Medio de pago</label>
+                    <select
+                      className="form-select"
+                      value={gestionForm.medio_pago}
+                      onChange={(e) => setGestionForm({ ...gestionForm, medio_pago: e.target.value as 'efectivo' | 'transferencia' })}
+                    >
+                      <option value="transferencia">Transferencia</option>
+                      <option value="efectivo">Efectivo</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <input
+                        type="checkbox"
+                        checked={gestionForm.pagado}
+                        onChange={(e) => setGestionForm({ ...gestionForm, pagado: e.target.checked })}
+                      />
+                      Ya está pagado
+                    </label>
+                    {!gestionForm.pagado && (
+                      <div className="text-muted" style={{ fontSize: '0.78rem' }}>
+                        Queda como deuda del cliente — si no es cuenta corriente, se le manda el pedido de pago por WhatsApp.
+                      </div>
+                    )}
+                  </div>
+                  {gestionForm.pagado && gestionForm.medio_pago === 'transferencia' && (
+                    <div className="form-group">
+                      <label className="form-label">Comprobante (opcional)</label>
+                      <input type="file" accept="image/*,.pdf" onChange={(e) => setComprobanteGestion(e.target.files?.[0] ?? null)} />
+                    </div>
+                  )}
+                  <button className="btn btn-primary" disabled={guardandoGestion} onClick={confirmarAlargue}>
+                    {guardandoGestion ? 'Guardando...' : 'Confirmar alargue'}
+                  </button>
+                </div>
+              )}
+
+              {accionGestion === 'recambio' && (
+                <div className="form-row">
+                  <p className="text-muted" style={{ fontSize: '0.82rem' }}>
+                    Misma dirección y zona del contenedor actual{montoRecambio != null && <> — cuesta <strong>${montoRecambio.toLocaleString('es-AR')}</strong></>}.
+                    {venceFecha && ` Tiene que ser hasta el vencimiento (${formatearFechaHora(cont.vence_en!)}).`}
+                  </p>
+                  <div className="form-group">
+                    <label className="form-label">Fecha</label>
+                    <input
+                      type="date"
+                      className="form-input"
+                      value={gestionForm.fecha}
+                      min={hoy}
+                      max={venceFecha ?? undefined}
+                      onChange={(e) => setGestionForm({ ...gestionForm, fecha: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Contenedor vacío a dejar</label>
+                    <select
+                      className="form-select"
+                      value={gestionForm.contenedor_numero_entrega}
+                      onChange={(e) => setGestionForm({ ...gestionForm, contenedor_numero_entrega: e.target.value })}
+                    >
+                      <option value="">— Elegir contenedor —</option>
+                      {contenedoresDisponibles.map((c) => <option key={c.numero} value={c.numero}>{c.numero}</option>)}
+                    </select>
+                    {contenedoresDisponibles.length === 0 && (
+                      <div className="text-muted" style={{ fontSize: '0.78rem' }}>No hay contenedores disponibles en depósito ahora mismo.</div>
+                    )}
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Medio de pago</label>
+                    <select
+                      className="form-select"
+                      value={gestionForm.medio_pago}
+                      onChange={(e) => setGestionForm({ ...gestionForm, medio_pago: e.target.value as 'efectivo' | 'transferencia' })}
+                    >
+                      <option value="transferencia">Transferencia</option>
+                      <option value="efectivo">Efectivo</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <input
+                        type="checkbox"
+                        checked={gestionForm.pagado}
+                        onChange={(e) => setGestionForm({ ...gestionForm, pagado: e.target.checked })}
+                      />
+                      Ya está pagado
+                    </label>
+                    {!gestionForm.pagado && (
+                      <div className="text-muted" style={{ fontSize: '0.78rem' }}>
+                        Queda como deuda del cliente — si no es cuenta corriente, se le manda el pedido de pago por WhatsApp.
+                      </div>
+                    )}
+                  </div>
+                  {gestionForm.pagado && gestionForm.medio_pago === 'transferencia' && (
+                    <div className="form-group">
+                      <label className="form-label">Comprobante (opcional)</label>
+                      <input type="file" accept="image/*,.pdf" onChange={(e) => setComprobanteGestion(e.target.files?.[0] ?? null)} />
+                    </div>
+                  )}
+                  <button
+                    className="btn btn-primary"
+                    disabled={guardandoGestion || !gestionForm.fecha || !gestionForm.contenedor_numero_entrega}
+                    onClick={confirmarRecambio}
+                  >
+                    {guardandoGestion ? 'Guardando...' : 'Confirmar recambio'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
