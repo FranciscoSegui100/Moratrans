@@ -1,11 +1,10 @@
 import cron from 'node-cron';
 import { query } from '../config/db';
-import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../config/socket';
+import { emitAlerta, emitAlertaActualizada } from '../config/socket';
 import { sendButtons } from '../modules/whatsapp/graphApi';
-import { formatearFechaLarga, diaHabilDesde } from '../services/diasHabiles.service';
+import { formatearFechaLarga } from '../services/diasHabiles.service';
 import { hoyMendozaISO } from '../services/fechas.service';
-import { NOTA_RETIRO_AUTOMATICO } from '../services/retiroAutomatico.service';
-import { resolverUbicacion } from '../services/ubicaciones.service';
+import { NOTA_RETIRO_AUTOMATICO, sincronizarRetirosPorVencimiento } from '../services/retiroAutomatico.service';
 
 /**
  * Inserta alertas nuevas (evitando duplicados por el índice único parcial)
@@ -84,89 +83,14 @@ export async function generarAlertas(): Promise<void> {
     console.error('[cron] Error procesando avisos de vencimiento por WhatsApp a clientes:', err.message);
   }
 
-  // 1.c) Retiro automático EN CUANTO SE SABE el vencimiento: apenas un
-  // contenedor queda 'entregado' con `vence_en` cargado, su retiro ya entra
-  // a la Bolsa de Rutas fechado el día que vence (día hábil siguiente si cae
-  // en fin de semana) — así un operador lo puede ver y planificar (chofer,
-  // ruta) con anticipación, no recién el día que vence.
-  // - Si el cliente pide un retiro anticipado o un recambio de este mismo
-  //   contenedor, este viaje se reprograma a la fecha que pidió en vez de
-  //   duplicarse (ver pedirRetiro.flow.ts / recambio.flow.ts).
-  // - Si el cliente extiende el alquiler, se cancela solo (ver
-  //   cancelarRetiroAutomatico) y se vuelve a crear acá para la fecha nueva.
-  // - El aviso al operador ('retiro_solicitado') NO sale acá — recién
-  //   cuando está próximo/vencido de verdad (ver 1.d, más abajo); si no, se
-  //   generaría una alerta de algo que todavía falta muchos días.
+  // 1.c) Retiro automático EN CUANTO SE SABE el vencimiento: cada contenedor
+  // entregado tiene su retiro en la bolsa del día que vence (lunes si cae
+  // sábado/domingo), y se mueve solo si el vencimiento cambia — ver
+  // sincronizarRetirosPorVencimiento. El aviso al operador
+  // ('retiro_solicitado') NO sale acá, recién cuando está próximo/vencido de
+  // verdad (ver 1.d, más abajo).
   try {
-    const candidatos = await query<{
-      numero: string;
-      vence_fecha: string;
-      cliente_telefono: string | null;
-      zona: string | null;
-      destino_direccion: string | null;
-      destino_lat: number | null;
-      destino_lng: number | null;
-    }>(
-      // vence_fecha en hora Mendoza (UTC-3, sin horario de verano): mismo
-      // criterio que hoyMendozaISO, sin depender de la zona del server ni de
-      // la de Postgres.
-      `SELECT c.numero,
-              to_char((c.vence_en - interval '3 hours') AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS vence_fecha,
-              ultima.cliente_telefono, ultima.zona, ultima.destino_direccion,
-              ultima.destino_lat, ultima.destino_lng
-         FROM contenedores c
-         LEFT JOIN LATERAL (
-           SELECT v.cliente_telefono, v.zona, v.destino_direccion, v.destino_lat, v.destino_lng
-             FROM viajes v
-            WHERE v.contenedor_numero = c.numero AND v.tipo = 'entrega' AND v.estado <> 'cancelado'
-            ORDER BY v.creado_en DESC LIMIT 1
-         ) ultima ON true
-        WHERE c.estado = 'entregado'
-          AND c.vence_en IS NOT NULL
-          -- Evita duplicar si ya existe un retiro activo (programado o en curso):
-          AND NOT EXISTS (
-            SELECT 1 FROM viajes v2
-             WHERE v2.contenedor_numero = c.numero
-               AND v2.tipo = 'retiro'
-               AND v2.estado IN ('programado', 'en_curso')
-          )`,
-    );
-
-    const aCrear = candidatos.map((cv) => ({ ...cv, fechaRetiro: diaHabilDesde(cv.vence_fecha) }));
-
-    if (aCrear.length > 0) {
-      const vaciadero = await resolverUbicacion('vaciadero');
-
-      for (const cv of aCrear) {
-        // Crea el viaje de retiro (ruta_id = null -> entra directo a la Bolsa de Rutas)
-        await query(
-          `INSERT INTO viajes (
-             tipo, fecha, contenedor_numero, cliente_telefono,
-             zona, destino_direccion, destino_lat, destino_lng,
-             notas, ubicacion_id, ubicacion_direccion
-           ) VALUES (
-             'retiro', $1, $2, $3,
-             $4, $5, $6, $7,
-             $10, $8, $9
-           )`,
-          [
-            cv.fechaRetiro,
-            cv.numero,
-            cv.cliente_telefono,
-            cv.zona,
-            cv.destino_direccion,
-            cv.destino_lat,
-            cv.destino_lng,
-            vaciadero?.id ?? null,
-            vaciadero?.direccion ?? null,
-            NOTA_RETIRO_AUTOMATICO,
-          ],
-        );
-      }
-
-      emitRecursoActualizado('viajes');
-      console.log(`[cron] ${aCrear.length} retiro(s) automático(s) agregado(s) a la bolsa por vencimiento`);
-    }
+    await sincronizarRetirosPorVencimiento();
   } catch (err: any) {
     console.error('[cron] Error creando retiros automáticos por vencimiento:', err.message);
   }

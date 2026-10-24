@@ -16,6 +16,7 @@ import { emitRecursoActualizado } from '../../config/socket';
 import { despacharPrimeraParada } from '../../services/despachoRutas.service';
 import { hoyMendozaISO } from '../../services/fechas.service';
 import { anularPagosDeViajesCancelados } from '../../services/pagoViajeCancelado.service';
+import { sincronizarRetirosPorVencimiento } from '../../services/retiroAutomatico.service';
 
 export const rutasRouter = Router();
 rutasRouter.use(requireAuth);
@@ -347,6 +348,10 @@ rutasRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res:
  */
 rutasRouter.get('/bolsa', async (req: Request, res: Response) => {
   const { fecha } = req.query as Record<string, string>;
+  // Que la bolsa siempre muestre los contenedores que vencen (lunes si vencen
+  // sábado/domingo), sin esperar a la próxima corrida del cron. Si falla, se
+  // lista igual lo que ya hay.
+  await sincronizarRetirosPorVencimiento().catch((e) => console.error('Error sincronizando retiros por vencimiento:', e.message));
   const conds = [`v.ruta_id IS NULL`, `v.estado IN ('programado', 'en_curso')`];
   const params: any[] = [];
   if (fecha) { params.push(fecha); conds.push(`v.fecha = $${params.length}`); }
