@@ -488,6 +488,39 @@ async function cascadearParejaRecambio(
 }
 
 /**
+ * Si el viaje recién completado (o su pareja de recambio — el pago puede
+ * estar linkeado en cualquiera de las dos mitades) tiene un pago en efectivo
+ * sin cobrar, le pregunta al chofer si lo cobró (botones cobro_efectivo:,
+ * ver handleChofer). Mismo paso para entrega, recambio con "Recambio hecho" y
+ * recambio eligiendo el vacío: antes un recambio cerrado con "Recambio hecho"
+ * no preguntaba nada.
+ */
+async function preguntarCobroEfectivo(to: string, viajeId: string): Promise<void> {
+  const [pagoEfectivo] = await query<{ pago_id: string; monto: string | null }>(
+    `SELECT p.id AS pago_id, COALESCE(p.monto, pe.precio)::text AS monto
+       FROM viajes v
+       JOIN pagos p ON p.id = v.pago_id
+       LEFT JOIN pedidos pe ON pe.id = p.pedido_id
+      WHERE (v.id = $1 OR (v.grupo_id IS NOT NULL AND v.grupo_id = (SELECT grupo_id FROM viajes WHERE id = $1)))
+        AND p.medio_pago = 'efectivo'
+        AND p.efectivo_cobrado = FALSE
+        AND p.estado <> 'rechazado'
+      LIMIT 1`,
+    [viajeId],
+  );
+  if (!pagoEfectivo) return;
+  const montoTxt = pagoEfectivo.monto ? ` por *$${Number(pagoEfectivo.monto).toLocaleString('es-AR')}*` : '';
+  await sendButtons(
+    to,
+    `💵 *Cobro en efectivo*\n\n¿Cobraste el pago en efectivo${montoTxt} al cliente?`,
+    [
+      { id: `cobro_efectivo:si:${pagoEfectivo.pago_id}`, title: '✅ Sí, ya cobré' },
+      { id: `cobro_efectivo:no:${pagoEfectivo.pago_id}`, title: '❌ No cobré' },
+    ],
+  );
+}
+
+/**
  * El chofer eligió CON QUÉ contenedor vacío completa su recambio: lo asigna,
  * lo marca entregado, y de yapa cascadearParejaRecambio se encarga de pasar
  * el lleno pareja a retirado si ya está listo — antes eran 3 acciones
@@ -559,29 +592,7 @@ async function aplicarVacioRecambio(
       `✅ Recambio registrado. Contenedor *${numero}* entregado${mensajeLleno}. ${mensajeLleno ? 'Avisame por acá cuando vacíes el lleno (opción 🗑️ del menú). ' : ''}Gracias por tu trabajo. 🙌`,
     );
 
-    // Verificar si el recambio tiene pago en efectivo pendiente
-    const [pagoEfectivo] = await query<{ pago_id: string; monto: string | null }>(
-      `SELECT p.id AS pago_id, COALESCE(p.monto, pe.precio)::text AS monto
-         FROM viajes v
-         JOIN pagos p ON p.id = v.pago_id
-         LEFT JOIN pedidos pe ON pe.id = p.pedido_id
-        WHERE v.id = $1
-          AND p.medio_pago = 'efectivo'
-          AND p.efectivo_cobrado = FALSE`,
-      [entregaId],
-    );
-
-    if (pagoEfectivo) {
-      const montoTxt = pagoEfectivo.monto ? ` por *$${Number(pagoEfectivo.monto).toLocaleString('es-AR')}*` : '';
-      await sendButtons(
-        to,
-        `💵 *Cobro en efectivo*\n\n¿Cobraste el pago en efectivo${montoTxt} al cliente?`,
-        [
-          { id: `cobro_efectivo:si:${pagoEfectivo.pago_id}`, title: '✅ Sí, ya cobré' },
-          { id: `cobro_efectivo:no:${pagoEfectivo.pago_id}`, title: '❌ No cobré' },
-        ],
-      );
-    }
+    await preguntarCobroEfectivo(to, entregaId);
 
     // Después de la confirmación: avisar la parada siguiente de la ruta (una
     // sola vez, con las dos mitades del recambio ya completas). Si se retiró
@@ -789,6 +800,8 @@ async function aplicarEstado(
         to,
         `📥 Registrado. Contenedor *${numero}* marcado como retirado${extraVacio}. ¡Gracias por tu trabajo! 🙌`,
       );
+      // Recambio pagado en efectivo: igual que una entrega, preguntar si cobró.
+      await preguntarCobroEfectivo(to, retiroId);
       // Después de la confirmación: avisar la parada siguiente de la ruta (una
       // sola vez — si era un recambio, las dos mitades ya están completas). Sin
       // el menú suelto: traería la lista de "¿ya vaciaste?" pegada al retiro
@@ -880,41 +893,15 @@ async function aplicarEstado(
     }
     // Si esto es el vacío de un recambio y el lleno pareja ya está listo
     // (entregado), se retira en el mismo momento (yendo a vaciar) — así no
-    // importa si el chofer marca primero el vacío o el lleno. Corre en
-    // paralelo con el chequeo de pago en efectivo de abajo: ninguno de los
-    // dos lee el resultado del otro, y "pagoEfectivo" no hace falta hasta
-    // después de mandar el mensaje de confirmación.
-    const [extra, [pagoEfectivo]] = await Promise.all([
-      cascadearParejaRecambio(numero, choferId, choferNombre),
-      // Verificar si el viaje tiene pago en efectivo pendiente de cobrar
-      query<{ pago_id: string; monto: string | null }>(
-        `SELECT p.id AS pago_id, COALESCE(p.monto, pe.precio)::text AS monto
-           FROM viajes v
-           JOIN pagos p ON p.id = v.pago_id
-           LEFT JOIN pedidos pe ON pe.id = p.pedido_id
-          WHERE v.id = $1
-            AND p.medio_pago = 'efectivo'
-            AND p.efectivo_cobrado = FALSE`,
-        [entregaAsignada.id],
-      ),
-    ]);
+    // importa si el chofer marca primero el vacío o el lleno.
+    const extra = await cascadearParejaRecambio(numero, choferId, choferNombre);
     // Si de yapa se retiró el lleno de un recambio, sin menú suelto (mismo
     // criterio que el branch 'retirado': nada de "¿ya vaciaste?" pegado).
     if (extra) siguienteEnviada = true;
     await clearSesion(to);
     await sendText(to, `✅ Registrado. Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
 
-    if (pagoEfectivo) {
-      const montoTxt = pagoEfectivo.monto ? ` por *$${Number(pagoEfectivo.monto).toLocaleString('es-AR')}*` : '';
-      await sendButtons(
-        to,
-        `💵 *Cobro en efectivo*\n\n¿Cobraste el pago en efectivo${montoTxt} al cliente?`,
-        [
-          { id: `cobro_efectivo:si:${pagoEfectivo.pago_id}`, title: '✅ Sí, ya cobré' },
-          { id: `cobro_efectivo:no:${pagoEfectivo.pago_id}`, title: '❌ No cobré' },
-        ],
-      );
-    }
+    await preguntarCobroEfectivo(to, entregaAsignada.id);
 
     // Después de la confirmación: si hay una parada siguiente en la ruta se la
     // avisa (ese aviso trae su propio menú, así que abajo no se manda el suelto).

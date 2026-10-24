@@ -209,12 +209,15 @@ function formatearHora(horaEstimada: string | null): string | null {
  */
 async function medioPagoDeViaje(pagoId: string | null | undefined): Promise<{ medioPago: string | null; monto: string | null }> {
   if (!pagoId) return { medioPago: null, monto: null };
-  const [p] = await query<{ medio_pago: string | null; monto: string | null }>(
-    `SELECT p.medio_pago, COALESCE(p.monto, pe.precio) AS monto
+  const [p] = await query<{ medio_pago: string | null; monto: string | null; efectivo_cobrado: boolean }>(
+    `SELECT p.medio_pago, COALESCE(p.monto, pe.precio) AS monto, p.efectivo_cobrado
        FROM pagos p LEFT JOIN pedidos pe ON pe.id = p.pedido_id
       WHERE p.id = $1`,
     [pagoId],
   );
+  // Efectivo ya cobrado (ej. un recambio que el cliente pagó en mano al
+  // pedirlo por teléfono): no hay que decirle al chofer que cobre.
+  if (p?.medio_pago === 'efectivo' && p.efectivo_cobrado) return { medioPago: 'efectivo_cobrado', monto: p.monto };
   return { medioPago: p?.medio_pago ?? null, monto: p?.monto ?? null };
 }
 

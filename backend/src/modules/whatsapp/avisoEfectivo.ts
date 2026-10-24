@@ -6,6 +6,8 @@
  *    pagos.medio_pago): para cuando esta función corre, el pago ya está
  *    validado (así nace el viaje, ver pagos.routes.ts), así que avisa que ya
  *    está abonado y no hay que cobrar nada.
+ *  - efectivo_cobrado (no es un medio_pago real, lo arma medioPagoDeViaje en
+ *    viajes.routes.ts): efectivo que el cliente ya pagó en mano — ya está abonado.
  *  - sin medio de pago (viaje sin `pago_id`, ej. cuenta corriente o armado a
  *    mano sin pago asociado): no se puede afirmar nada, no agrega línea.
  * Compartido entre pagos.routes.ts y viajes.routes.ts para evitar un import
@@ -16,7 +18,7 @@ export function avisoPagoChofer(medioPago: string | null | undefined, precio: st
     const monto = precio ? `ARS ${Number(precio).toLocaleString('es-AR')}` : 'el importe correspondiente';
     return `\n\n💵 *PAGO EN EFECTIVO — cobrar ${monto} al entregar*`;
   }
-  if (medioPago === 'transferencia') {
+  if (medioPago === 'transferencia' || medioPago === 'efectivo_cobrado') {
     return `\n\n✅ *Ya está abonado — no hace falta cobrar nada*`;
   }
   return '';
