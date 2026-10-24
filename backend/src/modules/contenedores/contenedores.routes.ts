@@ -30,8 +30,6 @@ interface ContenedorEntregado {
   destino_direccion: string | null;
   destino_lat: number | null;
   destino_lng: number | null;
-  /** 'panel' si la entrega vigente se cargó a mano, 'bot' si la pidió el cliente por WhatsApp (ver migración 0059). */
-  canal: string;
   cliente_existe: boolean;
 }
 
@@ -44,11 +42,11 @@ interface ContenedorEntregado {
 async function obtenerContenedorEntregado(numero: string): Promise<ContenedorEntregado | null> {
   const [row] = await query<ContenedorEntregado>(
     `SELECT c.numero, c.estado, c.vence_en, ultima.cliente_telefono, cl.cuenta_corriente_estado,
-            ultima.zona, ultima.destino_direccion, ultima.destino_lat, ultima.destino_lng, ultima.canal,
+            ultima.zona, ultima.destino_direccion, ultima.destino_lat, ultima.destino_lng,
             (cl.id IS NOT NULL) AS cliente_existe
        FROM contenedores c
        CROSS JOIN LATERAL (
-         SELECT v.cliente_telefono, v.zona, v.destino_direccion, v.destino_lat, v.destino_lng, v.canal
+         SELECT v.cliente_telefono, v.zona, v.destino_direccion, v.destino_lat, v.destino_lng
            FROM viajes v
           WHERE v.contenedor_numero = c.numero AND v.tipo = 'entrega' AND v.estado <> 'cancelado'
           ORDER BY v.creado_en DESC LIMIT 1
@@ -61,18 +59,13 @@ async function obtenerContenedorEntregado(numero: string): Promise<ContenedorEnt
 }
 
 /**
- * Los 3 flujos manuales de abajo son solo para pedidos cargados a mano (la
- * entrega vigente tiene canal 'panel'): lo que pidió el cliente por WhatsApp
- * lo sigue gestionando él desde el bot. Y el cliente tiene que existir en
+ * Los 3 flujos manuales de abajo valen para cualquier contenedor entregado
+ * (pedido por el bot o cargado a mano), pero el cliente tiene que existir en
  * Clientes — sin eso la plata no queda asociada a nadie (no aparece en su
  * ficha ni en su cuenta corriente); `codigo: 'cliente_inexistente'` le dice
  * al panel que lo mande a crearlo. Devuelve true si cortó la request.
  */
 function rechazarSiNoGestionable(cont: ContenedorEntregado, res: Response): boolean {
-  if (cont.canal !== 'panel') {
-    res.status(409).json({ error: 'Este contenedor se pidió por WhatsApp: el retiro, alargue o recambio los pide el cliente desde el bot.' });
-    return true;
-  }
   if (!cont.cliente_existe) {
     res.status(409).json({
       error: 'El cliente de este contenedor todavía no está cargado en Clientes. Crealo primero.',
@@ -200,13 +193,6 @@ contenedoresRouter.get('/', async (_req: Request, res: Response) => {
             -- mano), así que el dato real hay que sacarlo del viaje vigente.
             va.cliente_telefono, va.destino_direccion, va.zona,
             COALESCE(cl.nombre, va.cliente_telefono) AS cliente_nombre,
-            -- "Gestionar" (retiro anticipado/alargue/recambio a mano) solo
-            -- para entregas cargadas a mano — ver rechazarSiNoGestionable.
-            COALESCE(c.estado = 'entregado' AND (
-              SELECT ue.canal FROM viajes ue
-               WHERE ue.contenedor_numero = c.numero AND ue.tipo = 'entrega' AND ue.estado <> 'cancelado'
-               ORDER BY ue.creado_en DESC LIMIT 1
-            ) = 'panel', FALSE) AS gestion_manual,
             -- Teléfono del cliente de la entrega vigente si todavía NO está
             -- cargado en Clientes (null si existe): el panel lo manda a crearlo
             -- antes de dejar gestionar nada.

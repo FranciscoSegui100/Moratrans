@@ -25,8 +25,6 @@ interface Contenedor {
   cliente_nombre: string | null;
   destino_direccion: string | null;
   zona: string | null;
-  /** Entregado y con la entrega vigente cargada a mano: se puede gestionar desde el panel. */
-  gestion_manual: boolean;
   /** Teléfono del cliente de la entrega vigente si todavía no está cargado en Clientes. */
   gestion_cliente_faltante: string | null;
 }
@@ -106,9 +104,8 @@ export function Contenedores() {
   // Gestionar contenedor: los 3 flujos manuales (retiro anticipado, alargue,
   // recambio) que el bot ya resuelve solo por WhatsApp — para un cliente que
   // llama y prefiere saltearse el bot (ver POST /api/contenedores/:numero/…).
-  // Solo para pedidos cargados a mano (gestion_manual): lo que pidió el
-  // cliente por WhatsApp lo sigue gestionando él desde el bot.
-  // ?gestionar=NUM lo reabre directo — es adonde vuelve el alta de cliente
+  // Para cualquier contenedor entregado, lo haya pedido el cliente por el bot
+  // o se haya cargado a mano. ?gestionar=NUM lo reabre directo — es adonde vuelve el alta de cliente
   // cuando se lo mandó a crear desde acá.
   const [gestionarNumero, setGestionarNumero] = useState<string | null>(
     () => new URLSearchParams(window.location.search).get('gestionar'),
@@ -539,7 +536,7 @@ export function Contenedores() {
                 </td>
                 <td>
                   <RoleGate roles={['admin', 'operador']}>
-                    {c.gestion_manual ? (
+                    {c.estado === 'entregado' ? (
                       <button
                         className="btn btn-ghost btn-sm"
                         title="Retiro anticipado, alargue o recambio para este contenedor"
@@ -551,7 +548,7 @@ export function Contenedores() {
                       <span
                         className="text-muted"
                         style={{ fontSize: '0.78rem' }}
-                        title={c.estado === 'entregado' ? 'Pedido por WhatsApp: el retiro, alargue o recambio los pide el cliente desde el bot' : 'Solo disponible para contenedores entregados a un cliente'}
+                        title="Solo disponible para contenedores entregados a un cliente"
                       >—</span>
                     )}
                   </RoleGate>
@@ -604,7 +601,7 @@ export function Contenedores() {
                   )}
                   {(() => {
                     const cont = contenedores.find((c) => c.numero === historialNumero);
-                    if (!cont?.gestion_manual) return null;
+                    if (cont?.estado !== 'entregado') return null;
                     return (
                       <button className="btn btn-ghost btn-sm" onClick={() => abrirGestion(historialNumero)}>
                         <Settings2 size={16} strokeWidth={1.75} /> Gestionar
@@ -757,11 +754,7 @@ export function Contenedores() {
                 {venceFecha && ` · Vence ${formatearFechaHora(cont.vence_en!)}`}
               </div>
 
-              {!cont.gestion_manual ? (
-                <p className="text-muted" style={{ fontSize: '0.85rem' }}>
-                  Este contenedor se pidió por WhatsApp: el retiro, alargue o recambio los pide el cliente desde el bot.
-                </p>
-              ) : cont.gestion_cliente_faltante ? (
+              {cont.gestion_cliente_faltante ? (
                 <div>
                   <p style={{ fontSize: '0.85rem' }}>
                     El cliente de este contenedor (<strong>{cont.gestion_cliente_faltante}</strong>) todavía no está cargado en Clientes.
