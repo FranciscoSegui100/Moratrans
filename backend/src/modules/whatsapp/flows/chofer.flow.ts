@@ -296,7 +296,13 @@ async function ofrecerVaciadosPendientes(to: string, choferId: string): Promise<
   return true;
 }
 
-/** Recambios propios (ya tiene asignado el retiro del lleno) esperando que diga con qué vacío completa la entrega. */
+/**
+ * Recambios propios (ya tiene asignado el retiro del lleno) esperando que diga
+ * con qué vacío completa la entrega. Solo los que ya le llegaron: asignados
+ * directo (sin ruta) o de una ruta que ya se le despachó — un recambio de una
+ * ruta todavía sin despachar (ej. la de mañana) no se le ofrece antes de
+ * tiempo, le llega con el aviso de su parada.
+ */
 async function ofrecerRecambioPendiente(to: string, choferId: string): Promise<void> {
   const pendientes = await query<{ entrega_id: string; lleno_numero: string }>(
     `SELECT e.id AS entrega_id, r.contenedor_numero AS lleno_numero
@@ -305,6 +311,7 @@ async function ofrecerRecambioPendiente(to: string, choferId: string): Promise<v
         AND e.estado IN ('programado', 'en_curso')
       WHERE r.chofer_id = $1 AND r.tipo = 'retiro' AND r.grupo_id IS NOT NULL
         AND r.estado IN ('programado', 'en_curso')
+        AND (r.ruta_id IS NULL OR r.chofer_notificado_en IS NOT NULL)
       ORDER BY r.creado_en`,
     [choferId],
   );

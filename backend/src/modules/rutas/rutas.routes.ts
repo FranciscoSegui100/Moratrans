@@ -1163,8 +1163,21 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
       // parada, se trata como una parada no confirmable más — igual que un
       // contenedor no disponible — en vez de confirmarla y avisarle al
       // chofer una visita que el camión no puede hacer todavía.
+      //
+      // La mitad-retiro de un recambio se confirma junto con su mitad-entrega,
+      // nunca sola: si la entrega quedó pendiente (típicamente, sin el vacío
+      // asignado todavía), confirmar el retiro le despachaba al chofer medio
+      // recambio — un aviso de "retiro" suelto y después la lista de "¿con
+      // qué vacío completás el recambio?" (chofer.flow.ts), en vez del aviso
+      // de recambio completo con el vacío que tiene que dejar.
+      const entregaConfirmada = (grupoId: string) =>
+        entregas.some((e) => e.grupo_id === grupoId && (e.ruta_confirmada_en || confirmadasAhora.includes(e)));
       const retiros = viajes.filter((v) => v.tipo === 'retiro' && !v.ruta_confirmada_en);
       for (const v of retiros) {
+        if (v.grupo_id && entregas.some((e) => e.grupo_id === v.grupo_id) && !entregaConfirmada(v.grupo_id)) {
+          pendientes.push(`El recambio de la parada ${v.orden} se confirma cuando su entrega esté lista (asignale el contenedor vacío).`);
+          continue;
+        }
         const advertenciaCapacidad = advertencias.find((a) => a.tipo === 'lleno_sin_vaciar' && a.orden === v.orden);
         if (advertenciaCapacidad) {
           pendientes.push(advertenciaCapacidad.mensaje);
