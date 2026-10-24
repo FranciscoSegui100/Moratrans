@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { query, withTx } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { excelClientes, enviarExcelClientePorWhatsApp, enviarResumenCuentaCorrientePorWhatsApp, resumenCuentaCorriente, deudaCliente, enviarDeudaClientePorWhatsApp } from '../reportes/reportes.service';
-import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
+import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
 import { datosBancarios, pedidosAbiertos } from '../whatsapp/flows/pago.flow';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitRecursoActualizado } from '../../config/socket';
@@ -317,7 +317,10 @@ clientesRouter.post('/:telefono/viaje-manual', requireRol('admin', 'operador', '
         ? `${datosBancarios()}\n\nCuando hagas la transferencia, mandanos la foto del comprobante por acá. 📎`
         : '💵 Coordiná con nosotros el pago en efectivo cuando puedas.');
     try {
-      await sendText(telefono, cuerpo);
+      // Transferencia: con el botón para mandar el comprobante (el bot lo ata
+      // a este pago, ver pagosManualesPendientes en pago.flow.ts).
+      if (v.medio_pago === 'transferencia') await sendButtons(telefono, cuerpo, [{ id: 'opt_pagar', title: '💸 Enviar comprobante' }]);
+      else await sendText(telefono, cuerpo);
     } catch (e) {
       const motivo = motivoErrorWa(e);
       console.error('Error mandando solicitud de pago manual:', motivo);

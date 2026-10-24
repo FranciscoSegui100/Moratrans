@@ -269,6 +269,47 @@ async function validarAlargue(req: Request, res: Response, pagoId: string): Prom
   res.json({ ok: true, tipo: 'alargue_retiro', contenedor: pago.contenedor_numero, vence_en: cont.vence_en });
 }
 
+/**
+ * Pago de un viaje que un operador ya cargó a mano ("Programar nuevo viaje",
+ * "Viaje manual", recambio desde Contenedores — ver pagoManual.service.ts):
+ * el viaje ya existe y tiene este pago linkeado (viajes.pago_id), no hay
+ * pedido detrás. Validarlo es solo eso — confirmar la plata. Antes caía en
+ * fn_validar_pago como si fuera un pedido del bot y se creaba un ticket y
+ * OTRO viaje de entrega, duplicando el que ya estaba.
+ */
+async function validarPagoDeViajeManual(req: Request, res: Response, pagoId: string): Promise<void> {
+  const [pago] = await query<{ cliente_telefono: string; monto: string | null }>(
+    `UPDATE pagos SET estado = 'validado', validado_por = $2
+      WHERE id = $1 AND estado = 'pendiente'
+      RETURNING cliente_telefono, monto`,
+    [pagoId, req.user!.id],
+  );
+  if (!pago) {
+    res.status(409).json({ error: 'Pago inexistente o no está pendiente' });
+    return;
+  }
+  await query(`UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'pago_pendiente_validacion' AND referencia_id = $1`, [pagoId]);
+  emitAlertaActualizada({ tipo: 'pago_pendiente_validacion', referencia_id: pagoId, estado: 'resuelta' });
+  emitRecursoActualizado('pagos');
+  emitRecursoActualizado('viajes');
+
+  // Lo de arriba ya quedó grabado: si WhatsApp falla no se tira la respuesta
+  // (mismo criterio que validarAlargue), se avisa por alerta.
+  try {
+    await sendText(
+      pago.cliente_telefono,
+      `✅ ¡Recibimos tu pago${pago.monto ? ` de *$${Number(pago.monto).toLocaleString('es-AR')}*` : ''}! Muchas gracias. 🙌`,
+    );
+  } catch (e) {
+    const motivo = motivoErrorWa(e);
+    console.error('Error avisando pago de viaje manual validado:', motivo);
+    await notificarEnvioFallido(pagoId, pago.cliente_telefono, 'aviso de pago validado', motivo).catch((e2) =>
+      console.error('Error registrando alerta de envío fallido:', e2),
+    );
+  }
+  res.json({ ok: true, tipo: 'viaje_manual' });
+}
+
 function mensajeAlargueValidado(contenedor: string, venceEn: Date): string {
   return `✅ ¡Listo! Extendimos *${DIAS_ALARGUE} días* el retiro de tu contenedor *${contenedor}* — ahora vence el ${formatearFechaCorta(venceEn)}.`;
 }
@@ -592,6 +633,14 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
   if (pagoTipo.tipo === 'alargue_retiro') return validarAlargue(req, res, pagoId);
   if (pagoTipo.tipo === 'abono_cc') return validarAbonoCC(req, res, pagoId);
   if (pagoTipo.tipo === 'pedido_catalogo') return validarPedidoCatalogo(req, res, pagoId);
+  if (pagoTipo.tipo === 'flete') {
+    const [manual] = await query<{ es_manual: boolean }>(
+      `SELECT (p.pedido_id IS NULL AND EXISTS (SELECT 1 FROM viajes v WHERE v.pago_id = p.id)) AS es_manual
+         FROM pagos p WHERE p.id = $1`,
+      [pagoId],
+    );
+    if (manual?.es_manual) return validarPagoDeViajeManual(req, res, pagoId);
+  }
 
   const parsed = validarSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });

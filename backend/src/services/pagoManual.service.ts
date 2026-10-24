@@ -1,6 +1,6 @@
 import { encrypt, encryptBuffer } from './crypto.service';
 import { subirArchivo } from './storage.service';
-import { sendText, motivoErrorWa } from '../modules/whatsapp/graphApi';
+import { sendText, sendButtons, motivoErrorWa } from '../modules/whatsapp/graphApi';
 import { notificarEnvioFallido } from '../modules/whatsapp/alertaEnvio';
 import { datosBancarios } from '../modules/whatsapp/flows/pago.flow';
 
@@ -58,7 +58,11 @@ export async function pedirPagoPorWhatsApp(
       ? `${datosBancarios()}\n\nCuando hagas la transferencia, mandanos la foto del comprobante por acá. 📎`
       : '💵 Coordiná con nosotros el pago en efectivo cuando puedas.');
   try {
-    await sendText(telefono, cuerpo);
+    // Transferencia: con el botón para mandar el comprobante (el bot lo ata a
+    // este pago, ver pagosManualesPendientes en pago.flow.ts) — mandar la
+    // foto suelta también funciona.
+    if (medioPago === 'transferencia') await sendButtons(telefono, cuerpo, [{ id: 'opt_pagar', title: '💸 Enviar comprobante' }]);
+    else await sendText(telefono, cuerpo);
   } catch (e) {
     const motivo = motivoErrorWa(e);
     console.error('Error mandando solicitud de pago manual:', motivo);

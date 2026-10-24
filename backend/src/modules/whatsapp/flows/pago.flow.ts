@@ -54,6 +54,11 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     return manejarEleccionPedido(m, sesion);
   }
 
+  // Respuesta a "¿Para cuál pago es este comprobante?" (pagos cargados a mano, ver pagosManualesPendientes)
+  if (sesion.paso === 'elegir_pago_manual') {
+    return manejarEleccionPagoManual(m, sesion);
+  }
+
   // Respuesta a "¿Para cuál cotización es este pago a cuenta corriente?"
   if (sesion.paso === 'elegir_pedido_cc') {
     return manejarEleccionPedidoCC(m, sesion);
@@ -143,6 +148,28 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     // llegaba al operador sin zona ni precio ni contexto para revisar.
     const pedidosPrevios = await pedidosAbiertos(to);
     if (pedidosPrevios.length === 0) {
+      // Sin pedido del bot, pero con un pago que un operador cargó a mano
+      // y le pidió por WhatsApp (viaje manual, alargue/recambio desde el
+      // panel): el comprobante es de ese pago.
+      const manuales = await pagosManualesPendientes(to);
+      if (manuales.length === 1) {
+        return registrarComprobantePagoManual(to, manuales[0], rutaCifrada, mediaId);
+      }
+      if (manuales.length > 1) {
+        await setSesion({ telefono: to, flujo: 'pago', paso: 'elegir_pago_manual', contexto: { rutaCifrada, mediaId } });
+        await sendList(
+          to,
+          '¿Para cuál es este comprobante?',
+          'Tenés más de un pago pendiente — decime a cuál corresponde:',
+          'Ver pagos',
+          manuales.map((p) => ({
+            id: `pagoman:${p.id}`,
+            title: etiquetaPagoManual(p).slice(0, 24),
+            description: p.monto ? `ARS ${Number(p.monto).toLocaleString('es-AR')}` : undefined,
+          })),
+        );
+        return;
+      }
       // Conversación tomada por un operador (modo humano): las imágenes
       // siguen entrando acá para no frenar un pago real (ver messageRouter,
       // paso 3), pero si no hay nada que pagar es una foto cualquiera de la
@@ -221,6 +248,15 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
  */
 export async function avisarAdjuntoSinContexto(m: MensajeEntrante, sesion: Sesion): Promise<void> {
   const to = m.from;
+  // Excepción: si le pedimos la transferencia de un pago cargado a mano
+  // ("mandanos la foto del comprobante por acá") y no tiene ningún pedido del
+  // bot abierto, el contexto es claro — se toma como el comprobante de ese
+  // pago sin hacerle tocar ningún botón. En modo humano no: pisaría la sesión.
+  if (!sesion.contexto?.modoHumano
+      && (await pedidosAbiertos(to)).length === 0
+      && (await pagosManualesPendientes(to)).length > 0) {
+    return handlePago(m, { ...sesion, flujo: 'pago', paso: 'esperando_comprobante', contexto: {} });
+  }
   try {
     const { buffer, mime } = await downloadMedia(m.mediaId!);
     const ext = detectarExtensionSegura(buffer, mime);
@@ -287,6 +323,104 @@ export async function pedidosAbiertos(telefono: string): Promise<PedidoCandidato
       ORDER BY pe.creado_en DESC LIMIT 10`,
     [telefono],
   );
+}
+
+export type PagoManualCandidato = {
+  id: string;
+  tipo: string;
+  monto: string | null;
+  contenedor_numero: string | null;
+  tiene_comprobante: boolean;
+};
+
+/**
+ * Pagos por transferencia que un operador cargó a mano como "no pagado" y le
+ * pidió al cliente por WhatsApp (viaje manual, alargue/recambio desde el
+ * panel, ver pagoManual.service.ts): a diferencia de un pago del bot, no
+ * tienen pedido detrás, así que pedidosAbiertos no los ve y el comprobante
+ * del cliente no tenía adónde ir ("no tenés ningún pedido para pagar").
+ */
+export async function pagosManualesPendientes(telefono: string): Promise<PagoManualCandidato[]> {
+  return query<PagoManualCandidato>(
+    `SELECT p.id, p.tipo::text AS tipo, p.monto::text AS monto, p.contenedor_numero,
+            (p.url_comprobante IS NOT NULL) AS tiene_comprobante
+       FROM pagos p
+      WHERE p.cliente_telefono = $1
+        AND p.estado = 'pendiente'
+        AND p.pedido_id IS NULL
+        AND p.es_cuenta_corriente = FALSE
+        AND p.medio_pago = 'transferencia'
+        AND p.tipo IN ('flete', 'alargue_retiro')
+      ORDER BY p.creado_en
+      LIMIT 10`,
+    [telefono],
+  );
+}
+
+function etiquetaPagoManual(p: PagoManualCandidato): string {
+  const concepto = p.tipo === 'alargue_retiro' ? 'Extensión' : 'Viaje';
+  return p.contenedor_numero ? `${concepto} ${p.contenedor_numero}` : concepto;
+}
+
+/**
+ * Ata el comprobante a un pago cargado a mano y lo deja para validar: si el
+ * pago todavía no tenía comprobante pasa a ser el principal (el que se ve en
+ * Validar pagos); si ya tenía, se suma como adjunto. Misma alerta que un
+ * comprobante del bot ('alargue_solicitado' para una extensión).
+ */
+async function registrarComprobantePagoManual(
+  to: string,
+  pago: PagoManualCandidato,
+  rutaCifrada: string,
+  mediaId: string | null,
+): Promise<void> {
+  if (!pago.tiene_comprobante) {
+    await query(`UPDATE pagos SET url_comprobante = $1, media_id = $2 WHERE id = $3`, [rutaCifrada, mediaId, pago.id]);
+  } else {
+    await query(`INSERT INTO pagos_adjuntos (pago_id, url_comprobante, media_id) VALUES ($1,$2,$3)`, [pago.id, rutaCifrada, mediaId]);
+  }
+  const tipoAlerta = pago.tipo === 'alargue_retiro' ? 'alargue_solicitado' : 'pago_pendiente_validacion';
+  const [alerta] = await query<{ id: string; tipo: string; referencia_id: string; mensaje: string; estado: string; creado_en: string }>(
+    `INSERT INTO alertas (tipo, referencia_id, mensaje)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+     RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+    [tipoAlerta, pago.id, `Nuevo comprobante de ${to} (${etiquetaPagoManual(pago).toLowerCase()}) pendiente de validar`],
+  );
+  if (alerta) {
+    emitAlerta({
+      ...alerta,
+      cliente_telefono: to,
+      monto: pago.monto,
+      pago_estado: 'pendiente',
+      tiene_comprobante: true,
+      medio_pago: 'transferencia',
+    });
+  }
+  emitRecursoActualizado('pagos');
+  await clearSesion(to);
+  await sendText(
+    to,
+    '✅ ¡Recibido! Tu comprobante quedó *pendiente de validación* por un operador.\n\n' +
+      '_Si en un rato no tenés novedades, escribí *asesor*._',
+  );
+}
+
+/** Respuesta a "¿Para cuál pago es este comprobante?" — el comprobante ya está subido (contexto). */
+async function manejarEleccionPagoManual(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  const to = m.from;
+  if (m.tipo !== 'interactive_list' || !m.seleccionId?.startsWith('pagoman:')) {
+    await manejarRespuestaInvalida(m, 'Por favor, elegí uno de la lista de arriba. 👆');
+    return;
+  }
+  const id = m.seleccionId.replace('pagoman:', '');
+  const pago = (await pagosManualesPendientes(to)).find((p) => p.id === id);
+  if (!pago) {
+    await clearSesion(to);
+    await sendText(to, '🙁 Ese pago ya no está pendiente. Si tenés dudas, escribí *asesor*.');
+    return;
+  }
+  await registrarComprobantePagoManual(to, pago, sesion.contexto.rutaCifrada as string, (sesion.contexto.mediaId as string | null) ?? null);
 }
 
 /**
