@@ -127,12 +127,22 @@ export function Contenedores() {
 
   function abrirGestion(numero: string) {
     setGestionarNumero(numero);
-    setAccionGestion('retiro_anticipado');
-    setGestionForm({ fecha: '', contenedor_numero_entrega: '', medio_pago: 'transferencia', pagado: true });
-    setComprobanteGestion(null);
+    cambiarAccion('retiro_anticipado');
   }
   function cerrarGestion() {
     setGestionarNumero(null);
+  }
+  /**
+   * Cambia de pestaña (retiro anticipado / alargue / recambio) DENTRO del
+   * mismo modal — y resetea el formulario. Sin este reset, "pagado",
+   * "medio de pago" y sobre todo el comprobante elegido quedaban pegados de
+   * la pestaña anterior: probar alargue y después recambio sin cerrar el
+   * modal mandaba el comprobante y el "ya pagado" de la primera prueba.
+   */
+  function cambiarAccion(accion: 'retiro_anticipado' | 'alargue' | 'recambio') {
+    setAccionGestion(accion);
+    setGestionForm({ fecha: '', contenedor_numero_entrega: '', medio_pago: 'transferencia', pagado: true });
+    setComprobanteGestion(null);
   }
 
   /** El cliente del contenedor no está en Clientes: hay que crearlo (sin eso la plata no queda a su nombre) y volver acá. */
@@ -769,19 +779,19 @@ export function Contenedores() {
               <div className="btn-group" style={{ marginBottom: 16 }}>
                 <button
                   className={`btn btn-sm ${accionGestion === 'retiro_anticipado' ? 'btn-primary' : 'btn-ghost'}`}
-                  onClick={() => setAccionGestion('retiro_anticipado')}
+                  onClick={() => cambiarAccion('retiro_anticipado')}
                 >
                   Retiro anticipado
                 </button>
                 <button
                   className={`btn btn-sm ${accionGestion === 'alargue' ? 'btn-primary' : 'btn-ghost'}`}
-                  onClick={() => setAccionGestion('alargue')}
+                  onClick={() => cambiarAccion('alargue')}
                 >
                   Alargue
                 </button>
                 <button
                   className={`btn btn-sm ${accionGestion === 'recambio' ? 'btn-primary' : 'btn-ghost'}`}
-                  onClick={() => setAccionGestion('recambio')}
+                  onClick={() => cambiarAccion('recambio')}
                 >
                   Recambio
                 </button>
