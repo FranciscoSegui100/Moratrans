@@ -785,7 +785,7 @@ async function aplicarEstado(
       await clearSesion(to);
       await sendText(
         to,
-        `📥 Registrado. Contenedor *${numero}* marcado como retirado${extraVacio}. Avisame por acá cuando lo vacíes en el vaciadero (opción 🗑️ del menú). Gracias por tu trabajo. 🙌`,
+        `📥 Registrado. Contenedor *${numero}* marcado como retirado${extraVacio}. ¡Gracias por tu trabajo! 🙌`,
       );
       // Después de la confirmación: avisar la parada siguiente de la ruta (una
       // sola vez — si era un recambio, las dos mitades ya están completas). Sin

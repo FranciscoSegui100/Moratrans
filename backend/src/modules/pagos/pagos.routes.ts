@@ -8,7 +8,6 @@ import { decrypt, decryptBuffer } from '../../services/crypto.service';
 import { enviarTicketPorWhatsApp } from '../../services/pdf.service';
 import { descargarArchivo } from '../../services/storage.service';
 import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
-import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { datosBancarios } from '../whatsapp/flows/pago.flow';
 import { setSesion } from '../whatsapp/session.store';
 import { avisarChoferRecambio } from '../viajes/viajes.routes';

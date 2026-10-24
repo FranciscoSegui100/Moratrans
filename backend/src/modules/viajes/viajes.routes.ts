@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { query, withTx } from '../../config/db';
 import { requireAuth, requireRol } from '../../middleware/rbac';
 import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
-import { menuChofer } from '../whatsapp/flows/chofer.flow';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { reservarParaEntrega, liberarReservaEntrega } from '../../services/contenedorReserva.service';
@@ -262,7 +261,6 @@ export async function avisarChoferViaje(
     if (boton) await sendButtons(chofer.telefono!, cuerpo, [boton]);
     else await sendText(chofer.telefono!, cuerpo);
   });
-  await menuChofer(chofer.telefono, chofer.nombre);
 }
 
 /**
@@ -288,7 +286,6 @@ export async function avisarChoferVaciado(choferId: string, contenedorNumero: st
       [{ id: `vaciado:${contenedorNumero}`, title: '🗑️ Ya vacié' }],
     );
   });
-  await menuChofer(chofer.telefono, chofer.nombre);
 }
 
 /**
@@ -370,7 +367,6 @@ export async function avisarChoferRecambio(
     if (boton) await sendButtons(chofer.telefono!, cuerpo, [boton]);
     else await sendText(chofer.telefono!, cuerpo);
   });
-  await menuChofer(chofer.telefono, chofer.nombre);
 }
 
 /**
