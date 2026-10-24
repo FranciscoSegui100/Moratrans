@@ -109,6 +109,7 @@ async function movimientosDetalle(mes?: string, telefono?: string): Promise<Movi
          LEFT JOIN pagos pg ON pg.id = v.pago_id
         WHERE v.cliente_telefono IS NOT NULL
           AND NOT (v.tipo = 'retiro' AND v.grupo_id IS NULL)
+          AND v.estado <> 'cancelado'
           AND ($1::text IS NULL OR to_char(v.fecha, 'YYYY-MM') = $1)
           AND ($2::text IS NULL OR v.cliente_telefono = $2)
         UNION ALL
@@ -501,11 +502,11 @@ async function itemsCuentaCorriente(telefono: string): Promise<ItemCuentaCorrien
     `SELECT pe.creado_en::text AS fecha, pe.zona, pe.precio::text AS monto
        FROM pedidos pe
       WHERE pe.cliente_telefono = $1
-        AND EXISTS (SELECT 1 FROM pagos pg WHERE pg.pedido_id = pe.id AND pg.es_cuenta_corriente = TRUE)
+        AND EXISTS (SELECT 1 FROM pagos pg WHERE pg.pedido_id = pe.id AND pg.es_cuenta_corriente = TRUE) AND pe.estado <> 'cancelado'
      UNION ALL
      SELECT v.fecha::text AS fecha, v.zona, v.importe::text AS monto
        FROM viajes v
-      WHERE v.cliente_telefono = $1 AND v.es_cuenta_corriente = TRUE
+      WHERE v.cliente_telefono = $1 AND v.es_cuenta_corriente = TRUE AND v.estado <> 'cancelado'
      UNION ALL
      SELECT pg.creado_en::text AS fecha, 'Alargue ' || pg.contenedor_numero AS zona, pg.monto::text AS monto
        FROM pagos pg
@@ -681,6 +682,7 @@ async function itemsDeuda(telefono: string): Promise<ItemDeuda[]> {
       WHERE v.cliente_telefono = $1
         AND NOT (v.tipo = 'retiro' AND v.grupo_id IS NULL)
         AND v.es_cuenta_corriente = FALSE
+        AND v.estado <> 'cancelado'
         AND (
           (pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado = FALSE)
           OR (pg.medio_pago = 'transferencia' AND pg.estado <> 'validado')

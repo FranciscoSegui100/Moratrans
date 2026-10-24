@@ -78,6 +78,8 @@ interface ViajeCliente {
   tipo: 'entrega' | 'retiro' | 'alargue_retiro';
   fecha: string;
   estado: string;
+  /** Estado para mostrar (ver GET /api/clientes/:telefono/viajes) — `estado` queda para la lógica. */
+  estado_visible: EstadoVisible;
   zona: string | null;
   contenedor_numero?: string | null;
   destino_direccion: string | null;
@@ -175,6 +177,23 @@ function formularioViajeVacio(): ViajeManualForm {
   };
 }
 
+
+type EstadoVisible =
+  | 'pendiente' | 'en_curso' | 'entregado' | 'retirado' | 'vaciado' | 'cancelado'
+  | 'aplicada' | 'pendiente_pago' | 'rechazada';
+
+/** Texto y color (clase de .badge) de la columna ESTADO. */
+const ESTADO_VISIBLE: Record<EstadoVisible, { texto: string; badge: string }> = {
+  pendiente: { texto: 'Pendiente', badge: 'programado' },
+  en_curso: { texto: 'En curso', badge: 'en_curso' },
+  entregado: { texto: 'Entregado', badge: 'completado' },
+  retirado: { texto: 'Retirado (sin vaciar)', badge: 'retirado' },
+  vaciado: { texto: 'Retirado y vaciado', badge: 'completado' },
+  cancelado: { texto: 'Cancelado', badge: 'cancelado' },
+  aplicada: { texto: 'Aplicada', badge: 'completado' },
+  pendiente_pago: { texto: 'Pendiente de pago', badge: 'pendiente' },
+  rechazada: { texto: 'Pago rechazado', badge: 'rechazado' },
+};
 
 export function ClienteDetalle() {
   const { telefono = '' } = useParams<{ telefono: string }>();
@@ -931,7 +950,8 @@ export function ClienteDetalle() {
                         )}
                       </td>
                       <td>
-                        {esCC ? (
+                        {esCC || v.estado_visible === 'cancelado' ? (
+                          // Cancelado: no se le debe nada por este viaje (no suma a la deuda).
                           <span className="text-muted">—</span>
                         ) : inicial?.medio_pago === 'efectivo' ? (
                           puedeEditarRemito ? (
@@ -963,7 +983,12 @@ export function ClienteDetalle() {
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}>{v.vence_en ? formatearFecha(v.vence_en) : <span className="text-muted">—</span>}</td>
                       <td>{v.chofer_nombre ?? '—'}</td>
-                      <td><span className={`badge ${v.estado}`}>{v.estado}</span></td>
+                      <td>
+                        {(() => {
+                          const e = ESTADO_VISIBLE[v.estado_visible] ?? { texto: v.estado, badge: v.estado };
+                          return <span className={`badge ${e.badge}`}>{e.texto}</span>;
+                        })()}
+                      </td>
                     </tr>
                     );
                   })}

@@ -47,10 +47,10 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
                SELECT SUM(monto) FROM (
                  SELECT pe.precio AS monto FROM pedidos pe
                   WHERE pe.cliente_telefono = cl.telefono
-                    AND EXISTS (SELECT 1 FROM pagos pg WHERE pg.pedido_id = pe.id AND pg.es_cuenta_corriente = TRUE)
+                    AND EXISTS (SELECT 1 FROM pagos pg WHERE pg.pedido_id = pe.id AND pg.es_cuenta_corriente = TRUE) AND pe.estado <> 'cancelado'
                  UNION ALL
                  SELECT v2.importe AS monto FROM viajes v2
-                  WHERE v2.cliente_telefono = cl.telefono AND v2.es_cuenta_corriente = TRUE
+                  WHERE v2.cliente_telefono = cl.telefono AND v2.es_cuenta_corriente = TRUE AND v2.estado <> 'cancelado'
                  UNION ALL
                  SELECT pg2.monto FROM pagos pg2
                   WHERE pg2.cliente_telefono = cl.telefono AND pg2.tipo = 'alargue_retiro' AND pg2.es_cuenta_corriente = TRUE
@@ -69,7 +69,7 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
                LEFT JOIN pagos pg3 ON pg3.id = v3.pago_id
               WHERE v3.cliente_telefono = cl.telefono
                 AND NOT (v3.tipo = 'retiro' AND v3.grupo_id IS NULL)
-                AND v3.es_cuenta_corriente = FALSE
+                AND v3.es_cuenta_corriente = FALSE AND v3.estado <> 'cancelado'
                 AND ((pg3.medio_pago = 'efectivo' AND pg3.efectivo_cobrado = FALSE)
                      OR (pg3.medio_pago = 'transferencia' AND pg3.estado <> 'validado'))
              UNION ALL

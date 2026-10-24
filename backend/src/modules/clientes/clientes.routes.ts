@@ -67,10 +67,10 @@ clientesRouter.get('/', async (_req: Request, res: Response) => {
                SELECT pe.precio AS monto
                  FROM pedidos pe
                 WHERE pe.cliente_telefono = cl.telefono
-                  AND EXISTS (SELECT 1 FROM pagos pg WHERE pg.pedido_id = pe.id AND pg.es_cuenta_corriente = TRUE)
+                  AND EXISTS (SELECT 1 FROM pagos pg WHERE pg.pedido_id = pe.id AND pg.es_cuenta_corriente = TRUE) AND pe.estado <> 'cancelado'
                UNION ALL
                SELECT v2.importe AS monto FROM viajes v2
-                WHERE v2.cliente_telefono = cl.telefono AND v2.es_cuenta_corriente = TRUE
+                WHERE v2.cliente_telefono = cl.telefono AND v2.es_cuenta_corriente = TRUE AND v2.estado <> 'cancelado'
                UNION ALL
                SELECT pg2.monto FROM pagos pg2
                 WHERE pg2.cliente_telefono = cl.telefono AND pg2.tipo = 'alargue_retiro' AND pg2.es_cuenta_corriente = TRUE
@@ -89,7 +89,7 @@ clientesRouter.get('/', async (_req: Request, res: Response) => {
              LEFT JOIN pagos pg3 ON pg3.id = v3.pago_id
             WHERE v3.cliente_telefono = cl.telefono
               AND NOT (v3.tipo = 'retiro' AND v3.grupo_id IS NULL)
-              AND v3.es_cuenta_corriente = FALSE
+              AND v3.es_cuenta_corriente = FALSE AND v3.estado <> 'cancelado'
               AND ((pg3.medio_pago = 'efectivo' AND pg3.efectivo_cobrado = FALSE)
                    OR (pg3.medio_pago = 'transferencia' AND pg3.estado <> 'validado'))
            UNION ALL
@@ -463,7 +463,21 @@ clientesRouter.get('/:telefono/cuenta-corriente', async (req: Request, res: Resp
 clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
   const mes = (req.query.mes as string) || null;
   const rows = await query(
-    `SELECT v.id, v.tipo::text AS tipo, v.fecha, v.estado::text AS estado, v.zona, v.contenedor_numero, v.destino_direccion,
+    `SELECT v.id, v.tipo::text AS tipo, v.fecha, v.estado::text AS estado,
+            -- Estado para mostrar en la ficha. viajes.estado solo no alcanza:
+            -- una entrega sigue 'programado' después de que el chofer la marcó
+            -- entregada (pasa a 'completado' recién al cerrar el ciclo, cuando
+            -- se retira y vacía el contenedor), así que lo que ya está en lo
+            -- del cliente se veía como si faltara entregarlo.
+            CASE
+              WHEN v.estado = 'cancelado' THEN 'cancelado'
+              WHEN v.tipo = 'entrega' AND (v.completada_en IS NOT NULL OR v.estado = 'completado') THEN 'entregado'
+              WHEN v.tipo = 'retiro' AND v.estado = 'completado' THEN 'vaciado'
+              WHEN v.tipo = 'retiro' AND v.completada_en IS NOT NULL THEN 'retirado'
+              WHEN v.estado = 'en_curso' THEN 'en_curso'
+              ELSE 'pendiente'
+            END AS estado_visible,
+            v.zona, v.contenedor_numero, v.destino_direccion,
             v.destino_lat, v.destino_lng,
             v.remito, v.importe, v.grupo_id, ch.nombre AS chofer_nombre,
             v.es_cuenta_corriente, co.vence_en,
@@ -499,6 +513,9 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
      UNION ALL
 
      SELECT p.id, 'alargue_retiro' AS tipo, p.creado_en::date AS fecha, 'completado' AS estado,
+            -- Una extensión no es un viaje: su estado es el de su pago (antes
+            -- figuraba siempre 'completado', aunque estuviera sin pagar).
+            CASE p.estado WHEN 'validado' THEN 'aplicada' WHEN 'rechazado' THEN 'rechazada' ELSE 'pendiente_pago' END AS estado_visible,
             NULL::text AS zona, p.contenedor_numero, NULL::text AS destino_direccion,
             NULL::numeric AS destino_lat, NULL::numeric AS destino_lng,
             NULL::text AS remito, p.monto AS importe, NULL::uuid AS grupo_id, NULL::text AS chofer_nombre,

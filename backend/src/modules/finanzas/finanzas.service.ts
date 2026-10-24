@@ -75,7 +75,7 @@ async function movimientosIngreso(anio: number): Promise<MovimientoIngreso[]> {
               v.cliente_telefono, TRUE AS es_cuenta_corriente, 'transferencia' AS medio_pago, NULL::text AS concepto, v.grupo_id,
               'entrega' AS origen
          FROM viajes v
-        WHERE v.es_cuenta_corriente = TRUE AND v.tipo = 'entrega' AND v.importe IS NOT NULL
+        WHERE v.es_cuenta_corriente = TRUE AND v.tipo = 'entrega' AND v.importe IS NOT NULL AND v.estado <> 'cancelado'
           AND EXTRACT(YEAR FROM v.fecha) = $1
      )
      SELECT i.fecha::text AS fecha,
