@@ -313,7 +313,7 @@ export function Conversaciones() {
   }
 
   return (
-    <div>
+    <div className="conv-pagina">
       <div className="page-header">
         <h2>
           Conversaciones

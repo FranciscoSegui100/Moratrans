@@ -638,9 +638,33 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   max-width: none;
   padding-left: 54px; /* deja pasar el botón flotante sin taparse con el título */
 }
-/* Páginas que usan todo el ancho (hoy, Conversaciones — ver Layout.tsx). */
+/* Páginas que usan toda la pantalla (hoy, Conversaciones — ver Layout.tsx):
+   todo el ancho, y de alto exactamente la ventana — el contenido de la
+   página se estira para llenar lo que queda debajo de la barra superior y
+   el título, en vez de calcular la altura a ojo con un calc(100vh - N). */
 .main-content.main-content--ancho {
   max-width: none;
+  height: 100vh;
+  min-height: 0;
+  padding-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+}
+.main-content--ancho > .page-enter {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.main-content--ancho .conv-pagina {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.main-content--ancho .asesoria-layout {
+  flex: 1;
+  height: auto;
 }
 
 /* ===== PAGE HEADER ===== */
