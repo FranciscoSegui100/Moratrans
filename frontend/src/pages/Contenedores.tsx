@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { X, Wrench, CircleCheck, Pencil, Trash2, Check, MessageCircle, ArrowUp, ArrowDown, ArrowUpDown, Settings2 } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { X, Wrench, CircleCheck, Pencil, Trash2, Check, MessageCircle, ArrowUp, ArrowDown, ArrowUpDown, Settings2, UserPlus } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -25,6 +25,10 @@ interface Contenedor {
   cliente_nombre: string | null;
   destino_direccion: string | null;
   zona: string | null;
+  /** Entregado y con la entrega vigente cargada a mano: se puede gestionar desde el panel. */
+  gestion_manual: boolean;
+  /** Teléfono del cliente de la entrega vigente si todavía no está cargado en Clientes. */
+  gestion_cliente_faltante: string | null;
 }
 interface Tarifa { departamento: string; precio: string; activo: boolean; }
 interface HistorialItem {
@@ -84,6 +88,7 @@ function agruparPorTicket(historial: HistorialItem[]): GrupoHistorial[] {
 export function Contenedores() {
   const { show } = useToast();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const puedeEditar = tieneRol(user, 'admin', 'operador');
   const queryClient = useQueryClient();
   const [form, setForm] = useState({ numero: '', tamano: '' });
@@ -101,7 +106,13 @@ export function Contenedores() {
   // Gestionar contenedor: los 3 flujos manuales (retiro anticipado, alargue,
   // recambio) que el bot ya resuelve solo por WhatsApp — para un cliente que
   // llama y prefiere saltearse el bot (ver POST /api/contenedores/:numero/…).
-  const [gestionarNumero, setGestionarNumero] = useState<string | null>(null);
+  // Solo para pedidos cargados a mano (gestion_manual): lo que pidió el
+  // cliente por WhatsApp lo sigue gestionando él desde el bot.
+  // ?gestionar=NUM lo reabre directo — es adonde vuelve el alta de cliente
+  // cuando se lo mandó a crear desde acá.
+  const [gestionarNumero, setGestionarNumero] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get('gestionar'),
+  );
   const [accionGestion, setAccionGestion] = useState<'retiro_anticipado' | 'alargue' | 'recambio'>('retiro_anticipado');
   const [gestionForm, setGestionForm] = useState({
     fecha: '',
@@ -127,6 +138,22 @@ export function Contenedores() {
     setGestionarNumero(null);
   }
 
+  /** El cliente del contenedor no está en Clientes: hay que crearlo (sin eso la plata no queda a su nombre) y volver acá. */
+  function irACrearCliente(numero: string, telefono: string) {
+    const volver = `/contenedores?gestionar=${encodeURIComponent(numero)}`;
+    navigate(`/clientes?nuevo=1&telefono=${encodeURIComponent(telefono)}&volver=${encodeURIComponent(volver)}`);
+  }
+
+  function errorGestion(err: any, titulo: string) {
+    const resp = err.response?.data;
+    if (resp?.codigo === 'cliente_inexistente' && resp.telefono && gestionarNumero) {
+      show('error', 'Falta crear el cliente', resp.error);
+      irACrearCliente(gestionarNumero, resp.telefono);
+      return;
+    }
+    show('error', titulo, resp?.error);
+  }
+
   async function confirmarRetiroAnticipado() {
     if (!gestionarNumero || !gestionForm.fecha) return;
     setGuardandoGestion(true);
@@ -136,7 +163,7 @@ export function Contenedores() {
       show('success', 'Retiro anticipado programado', `${gestionarNumero} · ${gestionForm.fecha}`);
       cerrarGestion();
     } catch (err: any) {
-      show('error', 'No se pudo programar', err.response?.data?.error);
+      errorGestion(err, 'No se pudo programar');
     } finally {
       setGuardandoGestion(false);
     }
@@ -162,7 +189,7 @@ export function Contenedores() {
       show('success', 'Alargue aplicado', `$${Number(data.monto).toLocaleString('es-AR')} · ${gestionarNumero}`);
       cerrarGestion();
     } catch (err: any) {
-      show('error', 'No se pudo aplicar el alargue', err.response?.data?.error);
+      errorGestion(err, 'No se pudo aplicar el alargue');
     } finally {
       setGuardandoGestion(false);
     }
@@ -190,7 +217,7 @@ export function Contenedores() {
       show('success', 'Recambio programado', gestionarNumero);
       cerrarGestion();
     } catch (err: any) {
-      show('error', 'No se pudo programar el recambio', err.response?.data?.error);
+      errorGestion(err, 'No se pudo programar el recambio');
     } finally {
       setGuardandoGestion(false);
     }
@@ -512,7 +539,7 @@ export function Contenedores() {
                 </td>
                 <td>
                   <RoleGate roles={['admin', 'operador']}>
-                    {c.estado === 'entregado' ? (
+                    {c.gestion_manual ? (
                       <button
                         className="btn btn-ghost btn-sm"
                         title="Retiro anticipado, alargue o recambio para este contenedor"
@@ -521,7 +548,11 @@ export function Contenedores() {
                         <Settings2 size={14} strokeWidth={1.75} /> Gestionar
                       </button>
                     ) : (
-                      <span className="text-muted" style={{ fontSize: '0.78rem' }} title="Solo disponible para contenedores entregados a un cliente">—</span>
+                      <span
+                        className="text-muted"
+                        style={{ fontSize: '0.78rem' }}
+                        title={c.estado === 'entregado' ? 'Pedido por WhatsApp: el retiro, alargue o recambio los pide el cliente desde el bot' : 'Solo disponible para contenedores entregados a un cliente'}
+                      >—</span>
                     )}
                   </RoleGate>
                 </td>
@@ -573,7 +604,7 @@ export function Contenedores() {
                   )}
                   {(() => {
                     const cont = contenedores.find((c) => c.numero === historialNumero);
-                    if (cont?.estado !== 'entregado') return null;
+                    if (!cont?.gestion_manual) return null;
                     return (
                       <button className="btn btn-ghost btn-sm" onClick={() => abrirGestion(historialNumero)}>
                         <Settings2 size={16} strokeWidth={1.75} /> Gestionar
@@ -725,6 +756,22 @@ export function Contenedores() {
                 {etiquetaCliente(cont)} {cont.destino_direccion && `· ${cont.destino_direccion}`}
                 {venceFecha && ` · Vence ${formatearFechaHora(cont.vence_en!)}`}
               </div>
+
+              {!cont.gestion_manual ? (
+                <p className="text-muted" style={{ fontSize: '0.85rem' }}>
+                  Este contenedor se pidió por WhatsApp: el retiro, alargue o recambio los pide el cliente desde el bot.
+                </p>
+              ) : cont.gestion_cliente_faltante ? (
+                <div>
+                  <p style={{ fontSize: '0.85rem' }}>
+                    El cliente de este contenedor (<strong>{cont.gestion_cliente_faltante}</strong>) todavía no está cargado en Clientes.
+                    Hay que crearlo antes de cargar un retiro, alargue o recambio, para que los cobros queden en su cuenta.
+                  </p>
+                  <button className="btn btn-primary" onClick={() => irACrearCliente(cont.numero, cont.gestion_cliente_faltante!)}>
+                    <UserPlus size={16} strokeWidth={1.75} /> Crear cliente
+                  </button>
+                </div>
+              ) : (<>
 
               <div className="btn-group" style={{ marginBottom: 16 }}>
                 <button
@@ -894,6 +941,7 @@ export function Contenedores() {
                   </button>
                 </div>
               )}
+              </>)}
             </div>
           </div>
         );

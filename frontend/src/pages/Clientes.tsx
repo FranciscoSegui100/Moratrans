@@ -39,8 +39,13 @@ export function Clientes() {
   // ?nuevo=1 abre el alta directo — lo usa "Programar nuevo viaje" en
   // Rutas.tsx cuando el cliente que se busca todavía no existe.
   const [mostrarAlta, setMostrarAlta] = useState(() => searchParams.get('nuevo') === '1');
+  // ?telefono= y ?volver= los usa "Gestionar" en Contenedores.tsx: el
+  // teléfono es el del contenedor (no se puede cambiar, si no el cliente
+  // nuevo no quedaría asociado) y al crear se vuelve a ese modal.
+  const telefonoFijo = searchParams.get('telefono');
+  const volverA = searchParams.get('volver');
   const [altaForm, setAltaForm] = useState<{ nombre: string; telefono: string; tipo: 'cuenta_corriente' | 'ocasional' }>(
-    { nombre: '', telefono: '', tipo: 'cuenta_corriente' },
+    { nombre: '', telefono: telefonoFijo ?? '', tipo: 'cuenta_corriente' },
   );
   const [creando, setCreando] = useState(false);
 
@@ -86,6 +91,8 @@ export function Clientes() {
       show('success', 'Cliente creado', altaForm.tipo === 'cuenta_corriente' ? 'Con cuenta corriente activa.' : 'Como ocasional.');
       setAltaForm({ nombre: '', telefono: '', tipo: 'cuenta_corriente' });
       setMostrarAlta(false);
+      // Solo rutas internas del panel, nunca una URL externa.
+      if (volverA?.startsWith('/') && !volverA.startsWith('//')) navigate(volverA);
     } catch (err: any) {
       show('error', 'No se pudo crear el cliente', err.response?.data?.error);
     } finally {
@@ -142,6 +149,7 @@ export function Clientes() {
             <input
               className="form-input"
               value={altaForm.telefono}
+              readOnly={!!telefonoFijo}
               onChange={(e) => setAltaForm({ ...altaForm, telefono: e.target.value })}
               placeholder="261 5 12-3456"
             />

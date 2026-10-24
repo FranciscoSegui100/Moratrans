@@ -378,19 +378,19 @@ clientesRouter.post('/:telefono/viaje-manual', requireRol('admin', 'operador', '
       if (v.tipo === 'recambio') {
         const grupoId = randomUUID();
         await c.query(
-          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, importe, estado, es_cuenta_corriente, pago_id, grupo_id, notas)
-           VALUES ('retiro', $1, $2, $3, NULL, 'completado', $4, $5, $6, 'Cargado a mano desde el perfil del cliente')`,
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, importe, estado, es_cuenta_corriente, pago_id, grupo_id, notas, canal)
+           VALUES ('retiro', $1, $2, $3, NULL, 'completado', $4, $5, $6, 'Cargado a mano desde el perfil del cliente', 'panel')`,
           [v.fecha, v.contenedor_numero!, telefono, cargoCC, pagoId, grupoId],
         );
         await c.query(
-          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, importe, estado, es_cuenta_corriente, pago_id, grupo_id, notas)
-           VALUES ('entrega', $1, $2, $3, $4, 'completado', $5, $6, $7, 'Cargado a mano desde el perfil del cliente')`,
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, importe, estado, es_cuenta_corriente, pago_id, grupo_id, notas, canal)
+           VALUES ('entrega', $1, $2, $3, $4, 'completado', $5, $6, $7, 'Cargado a mano desde el perfil del cliente', 'panel')`,
           [v.fecha, v.contenedor_numero_entrega ?? null, telefono, v.importe, cargoCC, pagoId, grupoId],
         );
       } else {
         await c.query(
-          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, importe, estado, es_cuenta_corriente, pago_id, notas)
-           VALUES ('entrega', $1, $2, $3, $4, 'completado', $5, $6, 'Cargado a mano desde el perfil del cliente')`,
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, importe, estado, es_cuenta_corriente, pago_id, notas, canal)
+           VALUES ('entrega', $1, $2, $3, $4, 'completado', $5, $6, 'Cargado a mano desde el perfil del cliente', 'panel')`,
           [v.fecha, v.contenedor_numero!, telefono, v.importe, cargoCC, pagoId],
         );
       }

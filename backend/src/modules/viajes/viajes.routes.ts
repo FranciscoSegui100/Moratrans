@@ -619,15 +619,15 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
                ubicacion?.id ?? null, ubicacion?.direccion ?? null, v.horario_preferido ?? null, retiroExistente.id],
             )
           : await c.query(
-              `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, grupo_id, ubicacion_id, ubicacion_direccion, horario_preferido)
-               VALUES ('retiro',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+              `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, grupo_id, ubicacion_id, ubicacion_direccion, horario_preferido, canal)
+               VALUES ('retiro',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, 'panel') RETURNING *`,
               [v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.contenedor_numero ?? null, v.cliente_telefono ?? null, v.zona ?? null,
                v.destino_direccion ?? null, v.notas ?? null, patente, v.remito ?? null, v.importe ?? null, grupoId,
                ubicacion?.id ?? null, ubicacion?.direccion ?? null, v.horario_preferido ?? null],
             );
         const { rows: entregaRows } = await c.query(
-          `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, grupo_id, ubicacion_id, ubicacion_direccion, horario_preferido)
-           VALUES ('entrega',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+          `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, grupo_id, ubicacion_id, ubicacion_direccion, horario_preferido, canal)
+           VALUES ('entrega',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, 'panel') RETURNING *`,
           [v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.contenedor_numero_entrega ?? null, v.cliente_telefono ?? null, v.zona ?? null,
            v.destino_direccion ?? null, v.notas ?? null, patente, grupoId, deposito?.id ?? null, deposito?.direccion ?? null, v.horario_preferido ?? null],
         );
@@ -659,8 +659,8 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
       }
 
       const { rows } = await c.query(
-        `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, ubicacion_id, ubicacion_direccion, horario_preferido)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+        `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, ubicacion_id, ubicacion_direccion, horario_preferido, canal)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, 'panel') RETURNING *`,
         [v.tipo, v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.contenedor_numero ?? null,
          v.cliente_telefono ?? null, v.zona ?? null, v.destino_direccion ?? null, v.notas ?? null, patente,
          v.remito ?? null, v.importe ?? null, ubicacion?.id ?? null, ubicacion?.direccion ?? null, v.horario_preferido ?? null],

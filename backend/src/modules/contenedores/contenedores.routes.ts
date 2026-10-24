@@ -30,6 +30,9 @@ interface ContenedorEntregado {
   destino_direccion: string | null;
   destino_lat: number | null;
   destino_lng: number | null;
+  /** 'panel' si la entrega vigente se cargó a mano, 'bot' si la pidió el cliente por WhatsApp (ver migración 0059). */
+  canal: string;
+  cliente_existe: boolean;
 }
 
 /**
@@ -41,10 +44,11 @@ interface ContenedorEntregado {
 async function obtenerContenedorEntregado(numero: string): Promise<ContenedorEntregado | null> {
   const [row] = await query<ContenedorEntregado>(
     `SELECT c.numero, c.estado, c.vence_en, ultima.cliente_telefono, cl.cuenta_corriente_estado,
-            ultima.zona, ultima.destino_direccion, ultima.destino_lat, ultima.destino_lng
+            ultima.zona, ultima.destino_direccion, ultima.destino_lat, ultima.destino_lng, ultima.canal,
+            (cl.id IS NOT NULL) AS cliente_existe
        FROM contenedores c
        CROSS JOIN LATERAL (
-         SELECT v.cliente_telefono, v.zona, v.destino_direccion, v.destino_lat, v.destino_lng
+         SELECT v.cliente_telefono, v.zona, v.destino_direccion, v.destino_lat, v.destino_lng, v.canal
            FROM viajes v
           WHERE v.contenedor_numero = c.numero AND v.tipo = 'entrega' AND v.estado <> 'cancelado'
           ORDER BY v.creado_en DESC LIMIT 1
@@ -54,6 +58,30 @@ async function obtenerContenedorEntregado(numero: string): Promise<ContenedorEnt
     [numero],
   );
   return row ?? null;
+}
+
+/**
+ * Los 3 flujos manuales de abajo son solo para pedidos cargados a mano (la
+ * entrega vigente tiene canal 'panel'): lo que pidió el cliente por WhatsApp
+ * lo sigue gestionando él desde el bot. Y el cliente tiene que existir en
+ * Clientes — sin eso la plata no queda asociada a nadie (no aparece en su
+ * ficha ni en su cuenta corriente); `codigo: 'cliente_inexistente'` le dice
+ * al panel que lo mande a crearlo. Devuelve true si cortó la request.
+ */
+function rechazarSiNoGestionable(cont: ContenedorEntregado, res: Response): boolean {
+  if (cont.canal !== 'panel') {
+    res.status(409).json({ error: 'Este contenedor se pidió por WhatsApp: el retiro, alargue o recambio los pide el cliente desde el bot.' });
+    return true;
+  }
+  if (!cont.cliente_existe) {
+    res.status(409).json({
+      error: 'El cliente de este contenedor todavía no está cargado en Clientes. Crealo primero.',
+      codigo: 'cliente_inexistente',
+      telefono: cont.cliente_telefono,
+    });
+    return true;
+  }
+  return false;
 }
 
 /** "Fecha" (YYYY-MM-DD) de vence_en en hora Mendoza — mismo criterio que jobs/alertas.cron.ts. */
@@ -171,7 +199,22 @@ contenedoresRouter.get('/', async (_req: Request, res: Response) => {
             -- en ningún flujo (queda siempre NULL salvo cuando se limpia a
             -- mano), así que el dato real hay que sacarlo del viaje vigente.
             va.cliente_telefono, va.destino_direccion, va.zona,
-            COALESCE(cl.nombre, va.cliente_telefono) AS cliente_nombre
+            COALESCE(cl.nombre, va.cliente_telefono) AS cliente_nombre,
+            -- "Gestionar" (retiro anticipado/alargue/recambio a mano) solo
+            -- para entregas cargadas a mano — ver rechazarSiNoGestionable.
+            COALESCE(c.estado = 'entregado' AND (
+              SELECT ue.canal FROM viajes ue
+               WHERE ue.contenedor_numero = c.numero AND ue.tipo = 'entrega' AND ue.estado <> 'cancelado'
+               ORDER BY ue.creado_en DESC LIMIT 1
+            ) = 'panel', FALSE) AS gestion_manual,
+            -- Teléfono del cliente de la entrega vigente si todavía NO está
+            -- cargado en Clientes (null si existe): el panel lo manda a crearlo
+            -- antes de dejar gestionar nada.
+            (SELECT CASE WHEN EXISTS (SELECT 1 FROM clientes cx WHERE cx.telefono = ue.cliente_telefono)
+                         THEN NULL ELSE ue.cliente_telefono END
+               FROM viajes ue
+              WHERE ue.contenedor_numero = c.numero AND ue.tipo = 'entrega' AND ue.estado <> 'cancelado'
+              ORDER BY ue.creado_en DESC LIMIT 1) AS gestion_cliente_faltante
        FROM contenedores c
        LEFT JOIN choferes ch ON c.actualizado_por LIKE 'chofer:%' AND ch.id::text = substring(c.actualizado_por FROM 8)
        LEFT JOIN usuarios u  ON c.actualizado_por LIKE 'operador:%' AND u.id::text = substring(c.actualizado_por FROM 10)
@@ -439,6 +482,7 @@ contenedoresRouter.post('/:numero/retiro-anticipado', requireRol('admin', 'opera
 
   const cont = await obtenerContenedorEntregado(numero);
   if (!cont) return res.status(404).json({ error: 'Este contenedor no está entregado a ningún cliente ahora mismo.' });
+  if (rechazarSiNoGestionable(cont, res)) return;
   if (!cont.vence_en) return res.status(409).json({ error: 'Este contenedor no tiene fecha de vencimiento cargada.' });
   const hoy = hoyMendozaISO();
   const venceFecha = fechaMendoza(cont.vence_en);
@@ -458,8 +502,8 @@ contenedoresRouter.post('/:numero/retiro-anticipado', requireRol('admin', 'opera
       }
       const vaciadero = await resolverUbicacion('vaciadero');
       const { rows } = await c.query(
-        `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, notas, ubicacion_id, ubicacion_direccion)
-         VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, 'Retiro anticipado cargado a mano desde Contenedores', $8, $9) RETURNING *`,
+        `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, notas, ubicacion_id, ubicacion_direccion, canal)
+         VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, 'Retiro anticipado cargado a mano desde Contenedores', $8, $9, 'panel') RETURNING *`,
         [fecha, numero, cont.cliente_telefono, cont.zona, cont.destino_direccion, cont.destino_lat, cont.destino_lng,
          vaciadero?.id ?? null, vaciadero?.direccion ?? null],
       );
@@ -499,6 +543,7 @@ contenedoresRouter.post('/:numero/alargue', requireRol('admin', 'operador'), asy
 
   const cont = await obtenerContenedorEntregado(numero);
   if (!cont) return res.status(404).json({ error: 'Este contenedor no está entregado a ningún cliente ahora mismo.' });
+  if (rechazarSiNoGestionable(cont, res)) return;
   if (!cont.vence_en) return res.status(409).json({ error: 'Este contenedor no tiene fecha de vencimiento cargada.' });
   if (!cont.zona) return res.status(409).json({ error: 'Este contenedor no tiene zona cargada — no se puede calcular el costo del alargue.' });
 
@@ -545,8 +590,8 @@ contenedoresRouter.post('/:numero/alargue', requireRol('admin', 'operador'), asy
       } else {
         const vaciadero = await resolverUbicacion('vaciadero');
         await c.query(
-          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, pago_id, notas, ubicacion_id, ubicacion_direccion)
-           VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, $8, 'Alargue cargado a mano desde Contenedores', $9, $10)`,
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, pago_id, notas, ubicacion_id, ubicacion_direccion, canal)
+           VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, $8, 'Alargue cargado a mano desde Contenedores', $9, $10, 'panel')`,
           [nuevaFecha, numero, cont.cliente_telefono, cont.zona, cont.destino_direccion, cont.destino_lat, cont.destino_lng,
            pagoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
         );
@@ -588,6 +633,7 @@ contenedoresRouter.post('/:numero/recambio', requireRol('admin', 'operador'), as
 
   const cont = await obtenerContenedorEntregado(numero);
   if (!cont) return res.status(404).json({ error: 'Este contenedor no está entregado a ningún cliente ahora mismo.' });
+  if (rechazarSiNoGestionable(cont, res)) return;
   if (!cont.zona) return res.status(409).json({ error: 'Este contenedor no tiene zona cargada — no se puede calcular el precio del recambio.' });
   if (v.contenedor_numero_entrega.trim().toUpperCase() === numero.toUpperCase()) {
     return res.status(400).json({ error: 'El contenedor que se deja no puede ser el mismo que se retira.' });
@@ -644,16 +690,16 @@ contenedoresRouter.post('/:numero/recambio', requireRol('admin', 'operador'), as
       } else {
         const vaciadero = await resolverUbicacion('vaciadero');
         const { rows } = await c.query<{ id: string }>(
-          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, importe, es_cuenta_corriente, pago_id, grupo_id, notas, ubicacion_id, ubicacion_direccion)
-           VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'Recambio cargado a mano desde Contenedores', $12, $13) RETURNING id`,
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, importe, es_cuenta_corriente, pago_id, grupo_id, notas, ubicacion_id, ubicacion_direccion, canal)
+           VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'Recambio cargado a mano desde Contenedores', $12, $13, 'panel') RETURNING id`,
           [v.fecha, numero, cont.cliente_telefono, cont.zona, cont.destino_direccion, cont.destino_lat, cont.destino_lng,
            monto, cargoCC, pagoId, grupoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
         );
         retiroId = rows[0].id;
       }
       await c.query(
-        `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, grupo_id, notas, ubicacion_id, ubicacion_direccion)
-         VALUES ('entrega', $1, $2, $3, $4, $5, $6, $7, $8, 'Recambio cargado a mano desde Contenedores', $9, $10)`,
+        `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, grupo_id, notas, ubicacion_id, ubicacion_direccion, canal)
+         VALUES ('entrega', $1, $2, $3, $4, $5, $6, $7, $8, 'Recambio cargado a mano desde Contenedores', $9, $10, 'panel')`,
         [v.fecha, v.contenedor_numero_entrega.trim().toUpperCase(), cont.cliente_telefono, cont.zona, cont.destino_direccion,
          cont.destino_lat, cont.destino_lng, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
       );

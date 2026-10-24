@@ -225,6 +225,9 @@ CREATE TABLE pedidos (
   -- Solo si tipo = 'recambio': el contenedor lleno que ya se sabe que hay que
   -- retirar (viene de contenedoresDelCliente, no se le vuelve a preguntar).
   contenedor_recambio_numero TEXT REFERENCES contenedores(numero) ON DELETE SET NULL ON UPDATE CASCADE,
+  -- 'bot' o 'panel' (ver migración 0059). Hoy todos los pedidos los crea el
+  -- bot; la columna queda por la migración, sin uso en el código.
+  canal            TEXT NOT NULL DEFAULT 'bot' CHECK (canal IN ('bot', 'panel')),
   -- false cuando la dirección se escribió a mano (calle y número, sin
   -- buscarla en el mapa) en vez de venir de un pin o link de Maps — señala
   -- que una persona la tiene que confirmar con el cliente antes de despachar
@@ -468,6 +471,8 @@ CREATE TABLE viajes (
   es_cuenta_corriente BOOLEAN NOT NULL DEFAULT FALSE,
   -- Pago vinculado al validar el cobro (null si el viaje se creó directo en el panel).
   pago_id           UUID REFERENCES pagos(id) ON DELETE SET NULL,
+  -- 'bot' (pedido por WhatsApp) o 'panel' (cargado a mano). Ver migración 0059.
+  canal             TEXT NOT NULL DEFAULT 'bot' CHECK (canal IN ('bot', 'panel')),
   notas             TEXT,
   creado_en         TIMESTAMPTZ  NOT NULL DEFAULT now(),
   actualizado_en    TIMESTAMPTZ  NOT NULL DEFAULT now()
