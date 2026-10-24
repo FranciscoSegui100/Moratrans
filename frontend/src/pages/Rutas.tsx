@@ -1220,9 +1220,6 @@ export function Rutas() {
   } | null>(null);
   // Choferes cuya tarjeta destella porque el auto-armado les sumó pedidos.
   const [choferesDestello, setChoferesDestello] = useState<Set<string>>(new Set());
-  // Un día sin rutas armadas muestra igual las tarjetas vacías de todos los
-  // choferes — con una flota grande es puro ruido visual la mayoría de los días.
-  const [ocultarSinRuta, setOcultarSinRuta] = useState(false);
 
   useEffect(() => {
     if (paramNuevo === '1') {
@@ -2213,16 +2210,11 @@ export function Rutas() {
               <div className="section-title" style={{ fontSize: '0.9rem', fontWeight: 700, marginBottom: 0 }}>
                 Choferes y Rutas del Día
               </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                <input type="checkbox" checked={ocultarSinRuta} onChange={(e) => setOcultarSinRuta(e.target.checked)} />
-                Ocultar sin ruta
-              </label>
             </div>
             <div className="routes-grid">
               {choferes.map((chofer) => {
                 const ruta = rutas.find((r) => r.chofer_id === chofer.id);
                 if (!ruta) {
-                  if (ocultarSinRuta) return null;
                   return (
                     <button
                       key={chofer.id}
