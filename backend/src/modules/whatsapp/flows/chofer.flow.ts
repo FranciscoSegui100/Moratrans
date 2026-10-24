@@ -91,7 +91,7 @@ if (chofer.length === 0) {
     return elegirVacioRecambio(to, chofer[0].id, m.seleccionId.replace('recgrupo:', ''));
   }
   if (esSeleccion && m.seleccionId?.startsWith('cobro_efectivo:')) {
-    const [, accion, pagoId] = m.seleccionId.split(':');
+    const [, accion, pagoId, viajeId] = m.seleccionId.split(':');
     if (accion === 'si' && pagoId) {
       await query(
         `UPDATE pagos SET efectivo_cobrado = TRUE WHERE id = $1 AND medio_pago = 'efectivo'`,
@@ -103,6 +103,15 @@ if (chofer.length === 0) {
       await sendText(to, `⚠️ Entendido. El viaje quedó marcado como NO cobrado en el sistema para que lo revise administración.`);
     }
     await clearSesion(to);
+    // Recién ahora, resuelto el cobro, la parada siguiente de la ruta (que trae
+    // su propio menú). Botones viejos sin viajeId: menú suelto como antes.
+    const siguiente = viajeId
+      ? await avisarSiguienteParadaRuta(viajeId).catch((e) => {
+          console.error('Error avisando siguiente parada:', e.message);
+          return false;
+        })
+      : false;
+    if (siguiente) return;
     return menuChofer(to, chofer[0].nombre);
   }
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recvacio:') && sesion.paso === 'elegir_vacio_recambio') {
@@ -495,7 +504,7 @@ async function cascadearParejaRecambio(
  * recambio eligiendo el vacío: antes un recambio cerrado con "Recambio hecho"
  * no preguntaba nada.
  */
-async function preguntarCobroEfectivo(to: string, viajeId: string): Promise<void> {
+async function preguntarCobroEfectivo(to: string, viajeId: string): Promise<boolean> {
   const [pagoEfectivo] = await query<{ pago_id: string; monto: string | null }>(
     `SELECT p.id AS pago_id, COALESCE(p.monto, pe.precio)::text AS monto
        FROM viajes v
@@ -508,16 +517,20 @@ async function preguntarCobroEfectivo(to: string, viajeId: string): Promise<void
       LIMIT 1`,
     [viajeId],
   );
-  if (!pagoEfectivo) return;
+  if (!pagoEfectivo) return false;
   const montoTxt = pagoEfectivo.monto ? ` por *$${Number(pagoEfectivo.monto).toLocaleString('es-AR')}*` : '';
+  // El viaje va en el id del botón: la parada siguiente de la ruta (en un
+  // recambio, el vaciado) se avisa recién cuando el chofer contesta esto —
+  // antes le llegaban los dos mensajes juntos (ver handleChofer, cobro_efectivo:).
   await sendButtons(
     to,
     `💵 *Cobro en efectivo*\n\n¿Cobraste el pago en efectivo${montoTxt} al cliente?`,
     [
-      { id: `cobro_efectivo:si:${pagoEfectivo.pago_id}`, title: '✅ Sí, ya cobré' },
-      { id: `cobro_efectivo:no:${pagoEfectivo.pago_id}`, title: '❌ No cobré' },
+      { id: `cobro_efectivo:si:${pagoEfectivo.pago_id}:${viajeId}`, title: '✅ Sí, ya cobré' },
+      { id: `cobro_efectivo:no:${pagoEfectivo.pago_id}:${viajeId}`, title: '❌ No cobré' },
     ],
   );
+  return true;
 }
 
 /**
@@ -592,7 +605,8 @@ async function aplicarVacioRecambio(
       `✅ Recambio registrado. Contenedor *${numero}* entregado${mensajeLleno}. ${mensajeLleno ? 'Avisame por acá cuando vacíes el lleno (opción 🗑️ del menú). ' : ''}Gracias por tu trabajo. 🙌`,
     );
 
-    await preguntarCobroEfectivo(to, entregaId);
+    // Si se preguntó el cobro, la parada siguiente sale cuando conteste (de a una).
+    if (await preguntarCobroEfectivo(to, entregaId)) return;
 
     // Después de la confirmación: avisar la parada siguiente de la ruta (una
     // sola vez, con las dos mitades del recambio ya completas). Si se retiró
@@ -801,7 +815,8 @@ async function aplicarEstado(
         `📥 Registrado. Contenedor *${numero}* marcado como retirado${extraVacio}. ¡Gracias por tu trabajo! 🙌`,
       );
       // Recambio pagado en efectivo: igual que una entrega, preguntar si cobró.
-      await preguntarCobroEfectivo(to, retiroId);
+      // Si se preguntó, la parada siguiente sale cuando conteste (de a una).
+      if (await preguntarCobroEfectivo(to, retiroId)) return;
       // Después de la confirmación: avisar la parada siguiente de la ruta (una
       // sola vez — si era un recambio, las dos mitades ya están completas). Sin
       // el menú suelto: traería la lista de "¿ya vaciaste?" pegada al retiro
@@ -901,11 +916,14 @@ async function aplicarEstado(
     await clearSesion(to);
     await sendText(to, `✅ Registrado. Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
 
-    await preguntarCobroEfectivo(to, entregaAsignada.id);
+    // Si se preguntó el cobro, la parada siguiente sale cuando conteste (de a
+    // una) — y tampoco el menú suelto de abajo.
+    const cobroPreguntado = await preguntarCobroEfectivo(to, entregaAsignada.id);
+    if (cobroPreguntado) siguienteEnviada = true;
 
     // Después de la confirmación: si hay una parada siguiente en la ruta se la
     // avisa (ese aviso trae su propio menú, así que abajo no se manda el suelto).
-    for (const v of entregasCompletadas) {
+    for (const v of cobroPreguntado ? [] : entregasCompletadas) {
       const enviada = await avisarSiguienteParadaRuta(v.id).catch((e) => {
         console.error('Error avisando siguiente parada:', e.message);
         return false;
