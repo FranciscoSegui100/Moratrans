@@ -99,12 +99,43 @@ const ETIQUETA_CC: Record<Cliente['cuenta_corriente_estado'], { texto: string; c
   rechazada: { texto: 'Ocasional (cta. cte. rechazada)', clase: 'rechazado' },
 };
 
-/** Mismo criterio que excelClientes() en el backend — mantener en sync. */
+/** Mismo criterio que excelClientes() en el backend — mantener en sync (texto para el Excel, no tocar). */
 function tipoBulto(v: ViajeCliente): string {
   if (v.tipo === 'alargue_retiro') return 'Extensión de retiro';
   if (v.tipo === 'entrega') return 'VACIO';
   if (v.grupo_id) return 'Recambio';
   return 'Retiro';
+}
+
+type TipoPedido = 'entrega' | 'retiro' | 'recambio' | 'alargue_retiro';
+
+/** Para distinguir visualmente los pedidos en pantalla (ver tipoBulto arriba para el texto que va al Excel, que no se toca). */
+function tipoPedido(v: ViajeCliente): TipoPedido {
+  if (v.tipo === 'alargue_retiro') return 'alargue_retiro';
+  if (v.tipo === 'retiro' && v.grupo_id) return 'recambio';
+  return v.tipo as 'entrega' | 'retiro';
+}
+
+const BADGE_PEDIDO: Record<TipoPedido, { texto: string; icono: string; clase: string }> = {
+  entrega: { texto: 'Entrega', icono: '📦', clase: 'entrega' },
+  retiro: { texto: 'Retiro', icono: '📥', clase: 'retiro' },
+  recambio: { texto: 'Recambio', icono: '🔄', clase: 'recambio' },
+  alargue_retiro: { texto: 'Alargue', icono: '⏳', clase: 'alargue' },
+};
+
+/**
+ * El comprobante que representa el pago de ESTE pedido — no el de un alargue
+ * nested de un pedido posterior con el mismo contenedor (ver GET
+ * /:telefono/viajes en el backend). Si el pedido es en sí una extensión de
+ * retiro cargada a mano (una fila de tipo 'retiro' que solo existe para
+ * llevar el alargue, ver POST /api/contenedores/:numero/alargue), no hay
+ * ningún comprobante "propio" que priorizar por encima del de alargue — sin
+ * este fallback esa fila mostraba "Tipo de pago"/"Pagado" en blanco aunque
+ * la plata sí sumaba a la deuda del cliente.
+ */
+function elegirInicial(tipo: ViajeCliente['tipo'], comprobantes: Comprobante[]): Comprobante | undefined {
+  if (tipo === 'alargue_retiro') return comprobantes.find((c) => c.tipo === 'alargue_retiro');
+  return comprobantes.find((c) => c.tipo !== 'alargue_retiro') ?? comprobantes.find((c) => c.tipo === 'alargue_retiro');
 }
 
 function etiquetaMes(mes: string): string {
@@ -433,17 +464,27 @@ export function ClienteDetalle() {
   const deudaTotal = Math.max(cuentaCorriente?.saldo ?? 0, 0) + (deuda?.total ?? 0);
   const viajes = viajesReales;
 
+  // Con muchos pedidos mezclados cuesta distinguir qué es cada fila — filtro
+  // rápido por tipo antes de agrupar por mes.
+  const [filtroPedido, setFiltroPedido] = useState<'todos' | TipoPedido>('todos');
+  const conteosPedido = useMemo(() => {
+    const c: Record<TipoPedido, number> = { entrega: 0, retiro: 0, recambio: 0, alargue_retiro: 0 };
+    for (const v of viajes) c[tipoPedido(v)]++;
+    return c;
+  }, [viajes]);
+  const viajesFiltrados = filtroPedido === 'todos' ? viajes : viajes.filter((v) => tipoPedido(v) === filtroPedido);
+
   // Ya vienen ordenados por fecha DESC desde el backend: agrupar preservando
   // ese orden deja los meses más recientes arriba sin tener que reordenar.
   const grupos = useMemo(() => {
     const porMes = new Map<string, ViajeCliente[]>();
-    for (const v of viajes) {
+    for (const v of viajesFiltrados) {
       const mes = v.fecha.slice(0, 7);
       if (!porMes.has(mes)) porMes.set(mes, []);
       porMes.get(mes)!.push(v);
     }
     return [...porMes.entries()];
-  }, [viajes]);
+  }, [viajesFiltrados]);
 
   const cc = cliente ? ETIQUETA_CC[cliente.cuenta_corriente_estado] : null;
 
@@ -757,10 +798,30 @@ export function ClienteDetalle() {
         </div>
       )}
 
+      {viajes.length > 0 && (
+        <div className="btn-group" style={{ marginTop: '20px', flexWrap: 'wrap' }}>
+          <button className={`btn btn-sm ${filtroPedido === 'todos' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFiltroPedido('todos')}>
+            Todos ({viajes.length})
+          </button>
+          {(Object.keys(BADGE_PEDIDO) as TipoPedido[]).map((t) => (
+            <button
+              key={t}
+              className={`btn btn-sm ${filtroPedido === t ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setFiltroPedido(t)}
+              disabled={conteosPedido[t] === 0}
+            >
+              {BADGE_PEDIDO[t].icono} {BADGE_PEDIDO[t].texto}s ({conteosPedido[t]})
+            </button>
+          ))}
+        </div>
+      )}
+
       {grupos.length === 0 ? (
         <div className="card">
           <div className="empty-state">
-            <div className="empty-state-title">Sin viajes registrados</div>
+            <div className="empty-state-title">
+              {viajes.length === 0 ? 'Sin viajes registrados' : 'Ningún pedido de este tipo'}
+            </div>
           </div>
         </div>
       ) : (
@@ -772,7 +833,7 @@ export function ClienteDetalle() {
                 <thead>
                   <tr>
                     <th>FECHA</th><th>DIRECCIÓN</th>
-                    <th>TIPO BULTO</th><th>Nº CONTENEDOR</th><th>Nº REMITO</th>
+                    <th>TIPO</th><th>Nº CONTENEDOR</th><th>Nº REMITO</th>
                     <th>IMPORTE</th><th>TIPO DE PAGO</th><th>PAGADO</th><th>VENCIMIENTO</th>
                     <th>CHOFER</th><th>ESTADO</th>
                   </tr>
@@ -780,14 +841,14 @@ export function ClienteDetalle() {
                 <tbody>
                   {viajesDelMes.map((v) => {
                     const comprobantes = v.comprobantes ?? [];
-                    // Una fila de extensión de retiro suelta (ver GET /:telefono/viajes
-                    // en el backend) es su propio comprobante, no algo anidado bajo
-                    // una entrega/recambio — ahí sí hay que tomar el alargue como
-                    // "inicial" en vez de filtrarlo.
-                    const inicial = v.tipo === 'alargue_retiro'
-                      ? comprobantes.find((c) => c.tipo === 'alargue_retiro')
-                      : comprobantes.find((c) => c.tipo !== 'alargue_retiro');
+                    const inicial = elegirInicial(v.tipo, comprobantes);
                     const esCC = v.es_cuenta_corriente || inicial?.es_cuenta_corriente;
+                    // Un 'retiro' suelto (no recambio) con el único comprobante de tipo
+                    // alargue es una fila que existe solo para cargar una extensión de
+                    // retiro a mano (ver POST /api/contenedores/:numero/alargue) — sin
+                    // esta marca, el importe quedaba en una fila que se ve como "Retiro"
+                    // a secas, y no quedaba claro de dónde salía la deuda.
+                    const esRetiroConAlargue = v.tipo === 'retiro' && !v.grupo_id && inicial?.tipo === 'alargue_retiro';
                     return (
                     <tr key={v.id}>
                       <td style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
@@ -809,7 +870,21 @@ export function ClienteDetalle() {
                           </button>
                         )}
                       </td>
-                      <td>{tipoBulto(v)}</td>
+                      <td>
+                        {(() => {
+                          const b = BADGE_PEDIDO[tipoPedido(v)];
+                          return (
+                            <>
+                              <span className={`tag ${b.clase}`} title={tipoBulto(v)}>{b.icono} {b.texto}</span>
+                              {esRetiroConAlargue && (
+                                <div style={{ marginTop: 4 }}>
+                                  <span className="tag alargue" style={{ fontSize: '0.62rem' }}>⏳ Incluye alargue</span>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </td>
                       <td className="mono">{v.contenedor_numero ?? '—'}</td>
                       <td className="mono">
                         {editandoRemito === v.id ? (
@@ -835,7 +910,15 @@ export function ClienteDetalle() {
                           v.remito ?? '—'
                         )}
                       </td>
-                      <td>{v.importe ? `$${Number(v.importe).toLocaleString('es-AR')}` : <span className="text-muted">—</span>}</td>
+                      <td>
+                        {(() => {
+                          // Fallback a inicial?.monto: filas de alargue cargadas antes de
+                          // este fix tienen el pago linkeado pero el importe propio en
+                          // blanco (ver POST /api/contenedores/:numero/alargue).
+                          const monto = v.importe ?? inicial?.monto;
+                          return monto ? `$${Number(monto).toLocaleString('es-AR')}` : <span className="text-muted">—</span>;
+                        })()}
+                      </td>
                       <td>
                         {esCC ? (
                           <span className="badge pendiente">📋 Cuenta corriente</span>
@@ -893,9 +976,7 @@ export function ClienteDetalle() {
 
       {viajeComprobantes && (() => {
         const comprobantesModal = viajeComprobantes.comprobantes ?? [];
-        const inicial = viajeComprobantes.tipo === 'alargue_retiro'
-          ? comprobantesModal.find((c) => c.tipo === 'alargue_retiro')
-          : comprobantesModal.find((c) => c.tipo !== 'alargue_retiro');
+        const inicial = elegirInicial(viajeComprobantes.tipo, comprobantesModal);
         return (
           <div className="modal-overlay" onClick={() => setViajeComprobantes(null)}>
             <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
