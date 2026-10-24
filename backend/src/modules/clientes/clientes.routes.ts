@@ -45,20 +45,12 @@ clientesRouter.get('/', async (_req: Request, res: Response) => {
             GREATEST(COALESCE(cc.saldo, 0), 0) + COALESCE(oc.deuda, 0) AS deuda
        FROM clientes cl
        LEFT JOIN viajes v ON v.cliente_telefono = cl.telefono
-       -- Extensiones de retiro sueltas (sin un viaje del mismo contenedor
-       -- donde anidarse, ver GET /:telefono/viajes) también cuentan como
-       -- pedido — si no, un cliente podía tener plata cargada sin que
-       -- "Pedidos" se moviera ni aparecer en ningún lado del perfil.
+       -- Cada extensión de retiro es su propia fila en "Pedidos" (ver GET
+       -- /:telefono/viajes), así que cuenta como un pedido más.
        LEFT JOIN LATERAL (
          SELECT COUNT(*)::int AS cnt
            FROM pagos p
           WHERE p.cliente_telefono = cl.telefono AND p.tipo = 'alargue_retiro'
-            AND NOT EXISTS (
-              SELECT 1 FROM viajes v2
-               WHERE v2.cliente_telefono = p.cliente_telefono
-                 AND v2.contenedor_numero = p.contenedor_numero
-                 AND p.creado_en >= v2.creado_en
-            )
        ) alr ON true
        LEFT JOIN LATERAL (
          SELECT
@@ -450,15 +442,10 @@ clientesRouter.get('/:telefono/cuenta-corriente', async (req: Request, res: Resp
 
 /**
  * GET /api/clientes/:telefono/viajes?mes=YYYY-MM — detalle de viajes de un
- * cliente. Además de la tabla `viajes`, suma las extensiones de retiro
- * (pagos.tipo='alargue_retiro') que no quedaron anidadas bajo ningún viaje
- * — el mismo NOT EXISTS que decide esto abajo es el criterio inverso del
- * OR de la subconsulta de comprobantes más abajo, para no duplicar: una
- * extensión se anida dentro de la entrega/recambio si hay una con el mismo
- * contenedor+cliente creada antes; si no hay ninguna (ej. cargada a mano
- * sin contenedor, o un contenedor que ya no tiene otros viajes), antes
- * quedaba invisible en el perfil del cliente — ahora aparece como su
- * propia fila.
+ * cliente. Además de la tabla `viajes`, suma cada extensión de retiro
+ * (pagos.tipo='alargue_retiro') como su propia fila — antes se anidaban
+ * dentro de la entrega/retiro del mismo contenedor y en la ficha no quedaba
+ * claro qué era cada fila ni de dónde salía cada cobro.
  */
 clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
   const mes = (req.query.mes as string) || null;
@@ -481,9 +468,10 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
             v.destino_lat, v.destino_lng,
             v.remito, v.importe, v.grupo_id, ch.nombre AS chofer_nombre,
             v.es_cuenta_corriente, co.vence_en,
-            -- Mismo criterio que GET /api/viajes (ver viajes.routes.ts): inicial
-            -- vinculado por pago_id, extensiones de alargue_retiro del mismo
-            -- contenedor+cliente creadas después de este viaje.
+            -- Solo el pago propio del viaje. Las extensiones de retiro ya no se
+            -- anidan acá: cada una es su propia fila (rama de abajo del UNION),
+            -- así en la ficha cada fila es una sola cosa — entrega, retiro,
+            -- recambio o alargue — en vez de "retiro que incluye alargue".
             COALESCE((
               SELECT json_agg(json_build_object(
                 'id', p.id,
@@ -498,11 +486,7 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
                 'creado_en', p.creado_en
               ) ORDER BY p.creado_en ASC)
               FROM pagos p
-              WHERE (p.id = v.pago_id)
-                 OR (p.tipo = 'alargue_retiro'
-                     AND p.contenedor_numero = v.contenedor_numero
-                     AND p.cliente_telefono = v.cliente_telefono
-                     AND p.creado_en >= v.creado_en)
+              WHERE p.id = v.pago_id AND p.tipo <> 'alargue_retiro'
             ), '[]'::json) AS comprobantes
        FROM viajes v
        LEFT JOIN choferes ch ON ch.id = v.chofer_id
@@ -531,12 +515,6 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
        LEFT JOIN contenedores co ON co.numero = p.contenedor_numero
       WHERE p.cliente_telefono = $1 AND p.tipo = 'alargue_retiro'
         AND ($2::text IS NULL OR to_char(p.creado_en, 'YYYY-MM') = $2)
-        AND NOT EXISTS (
-          SELECT 1 FROM viajes v2
-           WHERE v2.cliente_telefono = p.cliente_telefono
-             AND v2.contenedor_numero = p.contenedor_numero
-             AND p.creado_en >= v2.creado_en
-        )
       ORDER BY fecha DESC`,
     [req.params.telefono, mes],
   );

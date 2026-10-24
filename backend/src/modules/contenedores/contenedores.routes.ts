@@ -522,21 +522,18 @@ contenedoresRouter.post('/:numero/alargue', requireRol('admin', 'operador'), asy
       const pagoId = pagoRows[0].id;
 
       if (activo) {
-        // importe/es_cuenta_corriente también acá, igual que el recambio —
-        // sin esto la fila de retiro quedaba con el pago linkeado (pago_id)
-        // pero "Importe" en blanco en la ficha del cliente: la plata del
-        // alargue era invisible ahí aunque sí sumaba al total de deuda.
-        await c.query(
-          `UPDATE viajes SET fecha = $1, pago_id = $2, importe = $3, es_cuenta_corriente = $4 WHERE id = $5`,
-          [nuevaFecha, pagoId, monto, cargoCC, activo.id],
-        );
+        // Solo se reprograma la fecha: el cobro del alargue vive en su propio
+        // pago (tipo 'alargue_retiro', ya insertado arriba) y aparece como su
+        // propia fila en la ficha del cliente — mismo criterio que el alargue
+        // por WhatsApp, que tampoco toca ningún viaje.
+        await c.query(`UPDATE viajes SET fecha = $1 WHERE id = $2`, [nuevaFecha, activo.id]);
       } else {
         const vaciadero = await resolverUbicacion('vaciadero');
         await c.query(
-          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, importe, es_cuenta_corriente, pago_id, notas, ubicacion_id, ubicacion_direccion, canal)
-           VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Alargue cargado a mano desde Contenedores', $11, $12, 'panel')`,
+          `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, notas, ubicacion_id, ubicacion_direccion, canal)
+           VALUES ('retiro', $1, $2, $3, $4, $5, $6, $7, 'Retiro reprogramado por alargue desde Contenedores', $8, $9, 'panel')`,
           [nuevaFecha, numero, cont.cliente_telefono, cont.zona, cont.destino_direccion, cont.destino_lat, cont.destino_lng,
-           monto, cargoCC, pagoId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+           vaciadero?.id ?? null, vaciadero?.direccion ?? null],
         );
       }
       return { venceEn: nuevoVenceEn, pagoId };

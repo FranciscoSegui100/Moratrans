@@ -119,21 +119,9 @@ function tipoPedido(v: ViajeCliente): TipoPedido {
   return v.tipo as 'entrega' | 'retiro';
 }
 
-/**
- * Un alargue no siempre es una fila propia: el cargado desde "Gestionar
- * contenedor" queda en la fila del retiro que reprograma, y el del bot se
- * anida como comprobante de la entrega del mismo contenedor (ver GET
- * /:telefono/viajes en el backend). Para el filtro "Alargues" cuenta
- * cualquier fila que tenga un cobro de alargue.
- */
-function tieneAlargue(v: ViajeCliente): boolean {
-  return v.tipo === 'alargue_retiro' || (v.comprobantes ?? []).some((c) => c.tipo === 'alargue_retiro');
-}
-
+/** Cada fila es de un solo tipo — el backend ya manda cada alargue como su propia fila. */
 function coincideFiltro(v: ViajeCliente, filtro: 'todos' | TipoPedido): boolean {
-  if (filtro === 'todos') return true;
-  if (filtro === 'alargue_retiro') return tieneAlargue(v);
-  return tipoPedido(v) === filtro;
+  return filtro === 'todos' || tipoPedido(v) === filtro;
 }
 
 const BADGE_PEDIDO: Record<TipoPedido, { texto: string; icono: string; clase: string }> = {
@@ -880,10 +868,6 @@ export function ClienteDetalle() {
                     const comprobantes = v.comprobantes ?? [];
                     const inicial = elegirInicial(v.tipo, comprobantes);
                     const esCC = v.es_cuenta_corriente || inicial?.es_cuenta_corriente;
-                    // Fila que no es un alargue en sí pero lleva el cobro de uno (ver
-                    // tieneAlargue) — sin esta marca no quedaba claro de dónde salía
-                    // esa deuda.
-                    const incluyeAlargue = v.tipo !== 'alargue_retiro' && tieneAlargue(v);
                     return (
                     <tr key={v.id}>
                       <td style={{ whiteSpace: 'nowrap' }}>{formatearFecha(v.fecha)}</td>
@@ -909,17 +893,10 @@ export function ClienteDetalle() {
                         {(() => {
                           const b = BADGE_PEDIDO[tipoPedido(v)];
                           return (
-                            <>
-                              <span className={`tag ${b.clase}`} title={tipoBulto(v)}>
-                                {b.icono} {b.texto}
-                                {v.grupo_id && <span style={{ fontWeight: 400 }}>· {v.tipo === 'retiro' ? 'retira' : 'deja'}</span>}
-                              </span>
-                              {incluyeAlargue && (
-                                <div style={{ marginTop: 4 }}>
-                                  <span className="tag alargue" style={{ fontSize: '0.62rem' }}>⏳ Incluye alargue</span>
-                                </div>
-                              )}
-                            </>
+                            <span className={`tag ${b.clase}`} title={tipoBulto(v)}>
+                              {b.icono} {b.texto}
+                              {v.grupo_id && <span style={{ fontWeight: 400 }}>· {v.tipo === 'retiro' ? 'retira' : 'deja'}</span>}
+                            </span>
                           );
                         })()}
                       </td>
