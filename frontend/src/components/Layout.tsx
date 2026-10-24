@@ -381,7 +381,9 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="main-content">
+      {/* Conversaciones usa todo el ancho de la pantalla (lista + hilo + ficha
+          del cliente): el tope de 1440px de las demás páginas le sobra. */}
+      <main className={`main-content ${loc.pathname.startsWith('/conversaciones') ? 'main-content--ancho' : ''}`}>
         <header className="topbar">
           <div className="topbar-spacer" />
           <div className="topbar-actions">

@@ -638,6 +638,10 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   max-width: none;
   padding-left: 54px; /* deja pasar el botón flotante sin taparse con el título */
 }
+/* Páginas que usan todo el ancho (hoy, Conversaciones — ver Layout.tsx). */
+.main-content.main-content--ancho {
+  max-width: none;
+}
 
 /* ===== PAGE HEADER ===== */
 .page-header {
