@@ -314,19 +314,20 @@ export function Conversaciones() {
 
   return (
     <div className="conv-pagina">
-      <div className="page-header">
-        <h2>
-          Conversaciones
-          <span className="live-badge">
-            <span className="live-dot" />
-            en vivo
-          </span>
-        </h2>
-        <p>{conversaciones.length} conversación{conversaciones.length !== 1 ? 'es' : ''}</p>
-      </div>
-
       <div className="asesoria-layout">
         <div className="asesoria-lista-col">
+          {/* El título va arriba de la lista y no a todo el ancho: así el hilo
+              del chat arranca bien arriba y usa todo el alto de la pantalla. */}
+          <div className="page-header conv-encabezado">
+            <h2>
+              Conversaciones
+              <span className="live-badge">
+                <span className="live-dot" />
+                en vivo
+              </span>
+            </h2>
+            <p>{conversaciones.length} conversación{conversaciones.length !== 1 ? 'es' : ''}</p>
+          </div>
           <div className="conv-busqueda">
             <Search size={14} className="conv-busqueda-icon" />
             <input
