@@ -466,8 +466,15 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
             END AS estado_visible,
             v.zona, v.contenedor_numero, v.destino_direccion,
             v.destino_lat, v.destino_lng,
-            v.remito, v.importe, v.grupo_id, ch.nombre AS chofer_nombre,
-            v.es_cuenta_corriente, co.vence_en,
+            -- En un recambio el cobro es de la pata "entrega" (la que deja el
+            -- vacío). El retiro del lleno comparte el mismo pago_id (para que el
+            -- chofer lo encuentre desde cualquiera de las dos), pero en la ficha
+            -- se mostraría dos veces — esa fila va sin importe ni pago.
+            v.remito,
+            CASE WHEN v.tipo = 'retiro' AND v.grupo_id IS NOT NULL THEN NULL ELSE v.importe END AS importe,
+            v.grupo_id, ch.nombre AS chofer_nombre,
+            (v.es_cuenta_corriente AND NOT (v.tipo = 'retiro' AND v.grupo_id IS NOT NULL)) AS es_cuenta_corriente,
+            co.vence_en,
             -- Solo el pago propio del viaje. Las extensiones de retiro ya no se
             -- anidan acá: cada una es su propia fila (rama de abajo del UNION),
             -- así en la ficha cada fila es una sola cosa — entrega, retiro,
@@ -487,6 +494,7 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
               ) ORDER BY p.creado_en ASC)
               FROM pagos p
               WHERE p.id = v.pago_id AND p.tipo <> 'alargue_retiro'
+                AND NOT (v.tipo = 'retiro' AND v.grupo_id IS NOT NULL)
             ), '[]'::json) AS comprobantes
        FROM viajes v
        LEFT JOIN choferes ch ON ch.id = v.chofer_id
