@@ -57,6 +57,18 @@ export async function reservarParaEntrega(
     fail(`El contenedor ${numero} ya tiene una entrega reservada (actual o futura); no se puede reservar dos veces.`);
   }
 
+  // Ya está reservado justamente para ESTE viaje (ej. el vacío elegido al
+  // cargar un recambio desde "Gestionar" en Contenedores, que se reserva en
+  // ese momento): no hay nada que reservar de nuevo. Sin esto, confirmar la
+  // ruta lo trataba como ocupado por otro y lo rechazaba.
+  if (cont!.estado === 'reservado' && opciones?.excluirViajeId) {
+    const { rows: propio } = await c.query(
+      'SELECT 1 FROM viajes WHERE id = $1 AND contenedor_numero = $2',
+      [opciones.excluirViajeId, numero],
+    );
+    if (propio.length > 0) return;
+  }
+
   if (cont!.estado === 'disponible') {
     // vence_en es "cuándo se espera que este contenedor vuelva": la fecha de
     // ENTREGA más los días de alquiler estándar (no la fecha de entrega en sí

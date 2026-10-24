@@ -146,9 +146,18 @@ async function calcularDisponibilidadRuta(
       [rutaId],
     ) as Promise<VaciadoParada[]>,
     ejecutar(
+      // También cuenta el que ya está 'reservado' para una entrega de ESTA
+      // ruta (ej. el vacío elegido al cargar un recambio desde "Gestionar" en
+      // Contenedores, o una entrega creada con contenedor): sin esto no
+      // aparecía como opción válida de su propia parada y el panel obligaba a
+      // cambiarlo por otro.
       `SELECT c.numero
          FROM contenedores c
-        WHERE c.estado = 'disponible'
+        WHERE (c.estado = 'disponible'
+               OR (c.estado = 'reservado' AND EXISTS (
+                     SELECT 1 FROM viajes vr
+                      WHERE vr.contenedor_numero = c.numero AND vr.tipo = 'entrega'
+                        AND vr.estado IN ('programado', 'en_curso') AND vr.ruta_id = $1)))
           AND c.numero NOT IN (
             SELECT v.contenedor_numero
               FROM viajes v
