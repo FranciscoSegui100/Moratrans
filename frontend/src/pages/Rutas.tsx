@@ -1,14 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown, ChevronLeft, ChevronRight, Search, UserPlus, ExternalLink, MapPin, Printer, Send, Truck } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { AlertTriangle, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown, ChevronLeft, ChevronRight, Search, UserPlus } from 'lucide-react';
 import { api } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
 import { PedidoDetalleModal } from '../components/PedidoDetalleModal';
-import { RutaMapa, ParadaMapaItem } from '../components/RutaMapa';
-import { HojaRutaModal, ParadaHojaRuta } from '../components/HojaRutaModal';
 import { formatearFecha, sumarDias } from '../lib/fechas';
 import { hoyISO } from '../lib/viajes';
 
@@ -235,13 +233,6 @@ function tituloSeccionDia(fecha: string): string {
 
 // ── Detalle de una ruta (paradas, confirmación, vaciados) ─────────────────────
 
-interface EstadoCamionPaso {
-  orden: number;
-  llenos: number;
-  vacios: number;
-  capacidad: { llenos: number; vacios: number };
-}
-
 interface ParadaViaje {
   tipo_parada: 'viaje';
   id: string;
@@ -255,13 +246,6 @@ interface ParadaViaje {
   hora_estimada: string | null;
   zona: string | null;
   cliente_telefono: string | null;
-  cliente_nombre?: string | null;
-  remito?: string | null;
-  importe?: number | null;
-  es_cuenta_corriente?: boolean;
-  medio_pago?: string | null;
-  pago_estado?: string | null;
-  pago_id?: string | null;
   grupo_id: string | null;
   estado: string;
   notas: string | null;
@@ -269,7 +253,6 @@ interface ParadaViaje {
   ruta_confirmada_en: string | null;
   chofer_notificado_en?: string | null;
   disponibles?: string[];
-  estado_camion?: EstadoCamionPaso | null;
 }
 interface ParadaVaciado {
   tipo_parada: 'vaciado';
@@ -282,7 +265,6 @@ interface ParadaVaciado {
   contenedor_numero: string | null;
   /** Estado REAL y en vivo de ese contenedor (contenedores.estado). 'retirado' = todavía lleno, esperando vaciarse. */
   contenedor_estado: string | null;
-  estado_camion?: EstadoCamionPaso | null;
 }
 type Parada = ParadaViaje | ParadaVaciado;
 
@@ -299,9 +281,6 @@ interface RutaData extends Ruta {
   contenedores_pendientes_vaciar: string[];
   /** Contenedores 'disponible' que no entran en el stock de ESTA ruta porque ya están elegidos en una entrega activa de otra ruta sin confirmar todavía. */
   contenedores_comprometidos_otra_ruta: { numero: string; chofer_nombre: string | null }[];
-  estado_camion?: Record<number, EstadoCamionPaso>;
-  estado_camion_inicial?: { llenos: number; vacios: number; capacidad: { llenos: number; vacios: number } };
-  capacidad_camion?: { llenos: number; vacios: number };
 }
 
 /** Agrupa las paradas (ya ordenadas por el backend) en "visitas": un recambio son dos filas de `viajes` que comparten `orden` y se muestran como una sola. */
@@ -312,24 +291,15 @@ interface Visita {
   entrega?: ParadaViaje;
   retiro?: ParadaViaje;
   vaciado?: ParadaVaciado;
-  estado_camion?: EstadoCamionPaso | null;
 }
 function agruparVisitas(paradas: Parada[]): Visita[] {
   const porOrden = new Map<number, Visita>();
   for (const p of paradas) {
     let v = porOrden.get(p.orden);
-    if (!v) {
-      v = { orden: p.orden, id: p.id, tipoParada: p.tipo_parada, estado_camion: p.estado_camion };
-      porOrden.set(p.orden, v);
-    }
-    if (p.tipo_parada === 'vaciado') {
-      v.vaciado = p; v.id = p.id; v.tipoParada = 'vaciado';
-    } else if (p.viaje_tipo === 'entrega') {
-      v.entrega = p; v.id = p.id; v.tipoParada = 'viaje';
-    } else {
-      v.retiro = p; if (!v.entrega) v.id = p.id; v.tipoParada = 'viaje';
-    }
-    if (p.estado_camion) v.estado_camion = p.estado_camion;
+    if (!v) { v = { orden: p.orden, id: p.id, tipoParada: p.tipo_parada }; porOrden.set(p.orden, v); }
+    if (p.tipo_parada === 'vaciado') { v.vaciado = p; v.id = p.id; v.tipoParada = 'vaciado'; }
+    else if (p.viaje_tipo === 'entrega') { v.entrega = p; v.id = p.id; v.tipoParada = 'viaje'; }
+    else { v.retiro = p; if (!v.entrega) v.id = p.id; v.tipoParada = 'viaje'; }
   }
   return [...porOrden.values()].sort((a, b) => a.orden - b.orden);
 }
@@ -390,9 +360,6 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   const [vaciadoContenedor, setVaciadoContenedor] = useState('');
   const [confirmando, setConfirmando] = useState(false);
   const [reordenando, setReordenando] = useState(false);
-  const [mostrarMapa, setMostrarMapa] = useState(false);
-  const [mostrarHojaRuta, setMostrarHojaRuta] = useState(false);
-  const [reenviandoChofer, setReenviandoChofer] = useState(false);
   // Índice de la parada sobre cuyo borde superior caería un pedido arrastrado desde la bolsa.
   const [insertIdx, setInsertIdx] = useState<number | null>(null);
   useEffect(() => { if (!pedidoArrastrado) setInsertIdx(null); }, [pedidoArrastrado]);
@@ -400,19 +367,6 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   // `overIdx` sobre cuál está parada ahora (para el resaltado).
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
-
-  async function reenviarAlChofer() {
-    if (!confirm(`¿Reenviar la hoja de ruta y la parada activa por WhatsApp a ${ruta?.chofer_nombre ?? 'el chofer'}?`)) return;
-    setReenviandoChofer(true);
-    try {
-      const res = await api.post<{ ok: boolean; mensaje: string }>(`/api/rutas/${rutaId}/reenviar-chofer`);
-      show('success', 'Aviso reenviado', res.data.mensaje);
-    } catch (err: any) {
-      show('error', 'No se pudo reenviar al chofer', err.response?.data?.error || 'Error al conectar con WhatsApp');
-    } finally {
-      setReenviandoChofer(false);
-    }
-  }
 
   const { data: ruta } = useQuery({
     queryKey: ['rutas', rutaId],
@@ -747,43 +701,10 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
           <div className="t">{ruta.chofer_nombre ?? 'Sin chofer'}</div>
           <div className="s">Patente {ruta.patente ?? '—'} · {formatearFecha(ruta.fecha)}</div>
         </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className={`btn btn-sm ${mostrarMapa ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setMostrarMapa(!mostrarMapa)}
-            title="Ver mapa interactivo con las paradas numeradas"
-            style={{ fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '5px' }}
-          >
-            <MapPin size={14} /> {mostrarMapa ? 'Ocultar Mapa' : 'Ver Mapa'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={() => setMostrarHojaRuta(true)}
-            disabled={visitas.length === 0}
-            title="Ver e imprimir Hoja de Ruta oficial para el chofer"
-            style={{ fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '5px' }}
-          >
-            <Printer size={14} /> Hoja de Ruta
-          </button>
-          {ruta.paradas.some((p) => p.tipo_parada === 'viaje' && p.ruta_confirmada_en) && (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={reenviarAlChofer}
-              disabled={reenviandoChofer}
-              title="Reenviar parada activa y resumen por WhatsApp al chofer"
-              style={{ fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '5px' }}
-            >
-              <Send size={14} /> {reenviandoChofer ? 'Reenviando...' : 'Reenviar WhatsApp'}
-            </button>
-          )}
-          <span className={`badge ${estado.clase}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-            {estado.clase === 'sin_confirmar' && <AlertTriangle size={12} strokeWidth={2.5} />}
-            {estado.texto}
-          </span>
-        </div>
+        <span className={`badge ${estado.clase}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          {estado.clase === 'sin_confirmar' && <AlertTriangle size={12} strokeWidth={2.5} />}
+          {estado.texto}
+        </span>
       </div>
 
       {/* Guía de pasos: elegir chofer siempre está hecho acá (ya lo elegiste tocando su tarjeta). */}
@@ -796,68 +717,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
       </div>
 
       <RoleGate roles={['admin', 'operador']}>
-        {mostrarHojaRuta && (
-          <HojaRutaModal
-            rutaId={rutaId}
-            fecha={ruta.fecha}
-            choferNombre={ruta.chofer_nombre}
-            patente={ruta.patente}
-            paradas={visitas.map((v) => {
-              const dir = v.vaciado?.ubicacion_nombre ?? v.retiro?.destino_direccion ?? v.entrega?.destino_direccion ?? null;
-              const tipo = v.vaciado ? 'vaciado' : (v.entrega && v.retiro) ? 'recambio' : v.entrega ? 'entrega' : 'retiro';
-              const ref = v.entrega ?? v.retiro;
-              return {
-                id: v.id,
-                orden: v.orden,
-                tipo,
-                direccion: dir,
-                contenedorNumero: v.entrega?.contenedor_numero ?? v.retiro?.contenedor_numero,
-                contenedorRetiro: v.retiro?.contenedor_numero,
-                clienteNombre: ref?.cliente_nombre,
-                clienteTelefono: ref?.cliente_telefono,
-                horario: ref?.horario_preferido,
-                notas: ref?.notas ?? v.vaciado?.notas,
-                remito: ref?.remito,
-                importe: ref?.importe,
-                medioPago: ref?.medio_pago,
-                esCuentaCorriente: ref?.es_cuenta_corriente,
-                pagoEstado: ref?.pago_estado,
-                completada: visitaFinalizada(v),
-              };
-            })}
-            onClose={() => setMostrarHojaRuta(false)}
-          />
-        )}
-
         <div style={{ padding: '16px 18px' }}>
-          {mostrarMapa && (
-            <RutaMapa
-              paradas={visitas.map((v) => {
-                const dir = v.vaciado?.ubicacion_nombre ?? v.retiro?.destino_direccion ?? v.entrega?.destino_direccion ?? null;
-                const lat = v.retiro?.destino_lat ?? v.entrega?.destino_lat ?? null;
-                const lng = v.retiro?.destino_lng ?? v.entrega?.destino_lng ?? null;
-                const tipo = v.vaciado ? 'vaciado' : (v.entrega && v.retiro) ? 'recambio' : v.entrega ? 'entrega' : 'retiro';
-                return {
-                  id: v.id,
-                  orden: v.orden,
-                  tipo,
-                  direccion: dir,
-                  lat,
-                  lng,
-                  contenedorNumero: v.entrega?.contenedor_numero ?? v.retiro?.contenedor_numero,
-                  clienteNombre: v.entrega?.cliente_nombre ?? v.retiro?.cliente_nombre,
-                  clienteTelefono: v.entrega?.cliente_telefono ?? v.retiro?.cliente_telefono,
-                  horario: v.entrega?.horario_preferido ?? v.retiro?.horario_preferido,
-                  completada: visitaFinalizada(v),
-                  enCurso: esVisitaEnCurso(v, visitas),
-                };
-              })}
-              choferNombre={ruta.chofer_nombre}
-              patente={ruta.patente}
-              onClose={() => setMostrarMapa(false)}
-            />
-          )}
-
           <div className="abordo-label" style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
             Contenedores disponibles en depósito ({stockDeposito.length}):
           </div>
@@ -865,73 +725,6 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
             {stockDeposito.length === 0 && <span className="cchip none">no hay contenedores libres en depósito</span>}
             {stockDeposito.map((c) => <span key={c} className="cchip">{c}</span>)}
           </div>
-
-          {/* Widget Simulador de Carga del Camión */}
-          {ruta.capacidad_camion && (
-            <div
-              style={{
-                marginTop: '12px',
-                marginBottom: '10px',
-                padding: '10px 14px',
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '12px',
-                fontSize: '0.8rem',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: '8px',
-                    background: 'rgba(56, 189, 248, 0.15)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: 'var(--accent)',
-                  }}
-                >
-                  <Truck size={17} />
-                </div>
-                <div>
-                  <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
-                    Carga del Camión (Máx: {ruta.capacidad_camion.llenos} lleno · {ruta.capacidad_camion.vacios} vacíos)
-                  </div>
-                  <div style={{ fontSize: '0.73rem', color: 'var(--text-secondary)' }}>
-                    Carga inicial al salir de depósito: <strong>{ruta.estado_camion_inicial?.vacios ?? 0} vacíos</strong>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>Llenos a bordo:</span>
-                  <span
-                    className="badge"
-                    style={{
-                      background: (ruta.estado_camion?.[visitas[visitas.length - 1]?.orden]?.llenos ?? 0) > 0 ? '#fef3c7' : 'var(--bg-input)',
-                      color: (ruta.estado_camion?.[visitas[visitas.length - 1]?.orden]?.llenos ?? 0) > 0 ? '#b45309' : 'var(--text-muted)',
-                      fontWeight: 700,
-                    }}
-                  >
-                    {ruta.estado_camion?.[visitas[visitas.length - 1]?.orden]?.llenos ?? 0} / {ruta.capacidad_camion.llenos}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>Vacíos a bordo:</span>
-                  <span className="badge" style={{ background: '#e0f2fe', color: '#0369a1', fontWeight: 700 }}>
-                    {ruta.estado_camion?.[visitas[visitas.length - 1]?.orden]?.vacios ?? 0} / {ruta.capacidad_camion.vacios}
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
 
           {ruta.advertencias.length > 0 && (
             <div className="rc-warn" style={{ marginTop: '10px', marginBottom: '8px', flexDirection: 'column', alignItems: 'flex-start', gap: '4px', background: 'var(--warning-bg)', padding: '8px 12px', borderRadius: 'var(--radius)' }}>
@@ -1077,25 +870,6 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                               : v.vaciado.ubicacion_nombre ?? 'Depósito / vaciadero'}
                           </div>
                           <span className="tag vaciado">Vaciado</span>
-                          {v.estado_camion && (
-                            <span
-                              title={`Carga en camión tras este vaciado: ${v.estado_camion.llenos} llenos / ${v.estado_camion.vacios} vacíos`}
-                              style={{
-                                fontSize: '0.68rem',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                background: 'var(--bg-input)',
-                                color: 'var(--text-secondary)',
-                                fontWeight: 600,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                                marginLeft: 'auto',
-                              }}
-                            >
-                              <Truck size={10} /> {v.estado_camion.llenos}ll · {v.estado_camion.vacios}vac
-                            </span>
-                          )}
                         </div>
                         {v.vaciado.contenedor_numero && (
                           <div className="sel-row" style={{ alignItems: 'center' }}>
@@ -1132,44 +906,14 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                             />
                           </div>
                           <span className="tag recambio"><RefreshCw size={11} strokeWidth={2} /> Recambio</span>
-                          {v.estado_camion && (
-                            <span
-                              title={`Carga en camión tras este recambio: ${v.estado_camion.llenos} llenos / ${v.estado_camion.vacios} vacíos`}
-                              style={{
-                                fontSize: '0.68rem',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                background: v.estado_camion.llenos > 0 ? 'rgba(245, 158, 11, 0.15)' : 'var(--bg-input)',
-                                color: v.estado_camion.llenos > 0 ? '#d97706' : 'var(--text-secondary)',
-                                fontWeight: 600,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                                marginLeft: 'auto',
-                              }}
-                            >
-                              <Truck size={10} /> {v.estado_camion.llenos}ll · {v.estado_camion.vacios}vac
-                            </span>
-                          )}
                         </div>
                         {(v.retiro.zona ?? v.entrega.zona) && <div className="stop-sub">📍 {v.retiro.zona ?? v.entrega.zona}</div>}
                         <div className="stop-sub">Lleno a retirar: {v.retiro.contenedor_numero}</div>
-                        {(v.retiro.cliente_nombre ?? v.entrega.cliente_nombre) && (
-                          <div className="stop-sub" style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                            👤 {v.retiro.cliente_nombre ?? v.entrega.cliente_nombre}
-                          </div>
-                        )}
                         {(v.retiro.cliente_telefono ?? v.entrega.cliente_telefono) && (
                           <div className="stop-sub">📞 {v.retiro.cliente_telefono ?? v.entrega.cliente_telefono}</div>
                         )}
                         {(v.retiro.horario_preferido ?? v.entrega.horario_preferido) && (
                           <div className="stop-sub">🕐 Pidió: {v.retiro.horario_preferido ?? v.entrega.horario_preferido}</div>
-                        )}
-                        {((v.entrega.importe && v.entrega.medio_pago === 'efectivo' && v.entrega.pago_estado !== 'aprobado') ||
-                          (v.retiro.importe && v.retiro.medio_pago === 'efectivo' && v.retiro.pago_estado !== 'aprobado')) && (
-                          <div className="stop-sub" style={{ color: 'var(--danger)', fontWeight: 700 }}>
-                            💵 Cobrar en efectivo: ${(v.entrega.importe ?? v.retiro.importe)?.toLocaleString('es-AR')}
-                          </div>
                         )}
                         <div className="sel-row">
                           <label>Vacío a dejar:</label>
@@ -1197,39 +941,10 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                             <DireccionMaps direccion={v.entrega.destino_direccion} lat={v.entrega.destino_lat} lng={v.entrega.destino_lng} />
                           </div>
                           <span className="tag entrega">Entrega</span>
-                          {v.estado_camion && (
-                            <span
-                              title={`Carga en camión tras esta entrega: ${v.estado_camion.llenos} llenos / ${v.estado_camion.vacios} vacíos`}
-                              style={{
-                                fontSize: '0.68rem',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                background: 'var(--bg-input)',
-                                color: 'var(--text-secondary)',
-                                fontWeight: 600,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                                marginLeft: 'auto',
-                              }}
-                            >
-                              <Truck size={10} /> {v.estado_camion.llenos}ll · {v.estado_camion.vacios}vac
-                            </span>
-                          )}
                         </div>
                         {v.entrega.zona && <div className="stop-sub">📍 {v.entrega.zona}</div>}
-                        {v.entrega.cliente_nombre && (
-                          <div className="stop-sub" style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                            👤 {v.entrega.cliente_nombre}
-                          </div>
-                        )}
                         {v.entrega.cliente_telefono && <div className="stop-sub">📞 {v.entrega.cliente_telefono}</div>}
                         {v.entrega.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.entrega.horario_preferido}</div>}
-                        {v.entrega.importe && v.entrega.medio_pago === 'efectivo' && v.entrega.pago_estado !== 'aprobado' && (
-                          <div className="stop-sub" style={{ color: 'var(--danger)', fontWeight: 700 }}>
-                            💵 Cobrar en efectivo: ${v.entrega.importe.toLocaleString('es-AR')}
-                          </div>
-                        )}
                         <div className="sel-row">
                           <label>Contenedor:</label>
                           {!bloqueada ? (
@@ -1256,40 +971,11 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                             <DireccionMaps direccion={v.retiro.destino_direccion} lat={v.retiro.destino_lat} lng={v.retiro.destino_lng} />
                           </div>
                           <span className="tag retiro">Retiro</span>
-                          {v.estado_camion && (
-                            <span
-                              title={`Carga en camión tras este retiro: ${v.estado_camion.llenos} llenos / ${v.estado_camion.vacios} vacíos`}
-                              style={{
-                                fontSize: '0.68rem',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                background: v.estado_camion.llenos > 0 ? 'rgba(245, 158, 11, 0.15)' : 'var(--bg-input)',
-                                color: v.estado_camion.llenos > 0 ? '#d97706' : 'var(--text-secondary)',
-                                fontWeight: 600,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                                marginLeft: 'auto',
-                              }}
-                            >
-                              <Truck size={10} /> {v.estado_camion.llenos}ll · {v.estado_camion.vacios}vac
-                            </span>
-                          )}
                         </div>
                         {v.retiro.zona && <div className="stop-sub">📍 {v.retiro.zona}</div>}
-                        <div className="stop-sub">Contenedor a retirar: {v.retiro.contenedor_numero}</div>
-                        {v.retiro.cliente_nombre && (
-                          <div className="stop-sub" style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                            👤 {v.retiro.cliente_nombre}
-                          </div>
-                        )}
+                        <div className="stop-sub">{v.retiro.contenedor_numero}</div>
                         {v.retiro.cliente_telefono && <div className="stop-sub">📞 {v.retiro.cliente_telefono}</div>}
                         {v.retiro.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.retiro.horario_preferido}</div>}
-                        {v.retiro.importe && v.retiro.medio_pago === 'efectivo' && v.retiro.pago_estado !== 'aprobado' && (
-                          <div className="stop-sub" style={{ color: 'var(--danger)', fontWeight: 700 }}>
-                            💵 Cobrar en efectivo: ${v.retiro.importe.toLocaleString('es-AR')}
-                          </div>
-                        )}
                       </>
                     )}
                   </div>
