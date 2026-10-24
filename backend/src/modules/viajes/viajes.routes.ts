@@ -15,6 +15,7 @@ import { hoyMendozaISO } from '../../services/fechas.service';
 import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
 import { buscarRetiroActivo, RetiroActivo } from '../../services/retiroActivo.service';
 import { reglasDePago, subirComprobanteManual, pedirPagoPorWhatsApp } from '../../services/pagoManual.service';
+import { anularPagosDeViajesCancelados } from '../../services/pagoViajeCancelado.service';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -839,6 +840,7 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
     // confirmar una ruta: si no, el contenedor sigue figurando 'disponible' y
     // el bot puede volver a ofrecérselo a otro cliente (o el pago validarlo
     // solo) mientras "ya estaba asignado" en el panel.
+    let avisarAlertasPago = () => {};
     const row = await withTx(async (c) => {
       const { rows: viajeRows } = await c.query<{
         tipo: string; fecha: string; ruta_id: string | null; orden: number | null;
@@ -917,11 +919,19 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
         `UPDATE viajes SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
         params,
       );
+      // Cancelado: su pago todavía sin cobrar deja de esperar validación.
+      if (rows[0] && parsed.data.estado === 'cancelado' && viajeActual.estado !== 'cancelado') {
+        avisarAlertasPago = await anularPagosDeViajesCancelados(c, [req.params.id]);
+      }
       return rows[0] ? { ...rows[0], tarifaZonaNueva } : null;
     });
     if (!row) return res.status(404).json({ error: 'Viaje inexistente' });
 
     res.json(row);
+    if (parsed.data.estado === 'cancelado') {
+      emitRecursoActualizado('pagos');
+      avisarAlertasPago();
+    }
 
     // Reasignar chofer no pasa por broadcastCambios de la pestaña
     // Contenedores (esa ruta es '/viajes/...', solo avisa 'viajes') — sin

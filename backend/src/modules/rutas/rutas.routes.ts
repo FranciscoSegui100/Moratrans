@@ -15,6 +15,7 @@ import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitRecursoActualizado } from '../../config/socket';
 import { despacharPrimeraParada } from '../../services/despachoRutas.service';
 import { hoyMendozaISO } from '../../services/fechas.service';
+import { anularPagosDeViajesCancelados } from '../../services/pagoViajeCancelado.service';
 
 export const rutasRouter = Router();
 rutasRouter.use(requireAuth);
@@ -397,11 +398,15 @@ rutasRouter.post('/bolsa/:viajeId/cancelar', requireRol('admin', 'operador'), as
       }
 
       await c.query(`UPDATE viajes SET estado = 'cancelado' WHERE id = ANY($1::uuid[])`, [ids]);
-      return { viajeId: viaje!.id, telefono: viaje!.cliente_telefono };
+      // Su pago todavía sin cobrar deja de esperar validación.
+      const avisarAlertas = await anularPagosDeViajesCancelados(c, ids);
+      return { viajeId: viaje!.id, telefono: viaje!.cliente_telefono, avisarAlertas };
     });
 
     res.json({ ok: true });
     emitRecursoActualizado('viajes');
+    emitRecursoActualizado('pagos');
+    resultado.avisarAlertas();
 
     if (resultado.telefono) {
       sendText(
