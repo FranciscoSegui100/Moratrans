@@ -9,7 +9,7 @@ import { formatearFechaLarga } from '../../services/diasHabiles.service';
  */
 export async function notificarClienteChoferEnCamino(params: {
   clienteTelefono: string | null;
-  tipo: 'entrega' | 'retiro';
+  tipo: 'entrega' | 'retiro' | 'recambio';
   destinoDireccion: string | null;
   choferNombre: string | null;
   patente: string | null;
@@ -18,7 +18,12 @@ export async function notificarClienteChoferEnCamino(params: {
   const { clienteTelefono, tipo, destinoDireccion, choferNombre, patente, contenedorNumero } = params;
   if (!clienteTelefono) return;
 
-  const accion = tipo === 'entrega' ? 'entregar tu contenedor' : 'retirar el contenedor';
+  const accion =
+    tipo === 'recambio'
+      ? 'hacer el recambio de tu contenedor'
+      : tipo === 'entrega'
+      ? 'entregar tu contenedor'
+      : 'retirar el contenedor';
   const direccion = destinoDireccion ? `📍 *Destino:* ${destinoDireccion}\n` : '';
   const chofer = choferNombre ? `🚚 *Chofer:* ${choferNombre}${patente ? ` (Patente: ${patente})` : ''}\n` : '';
   const cont = contenedorNumero ? `📦 *Contenedor:* ${contenedorNumero}\n` : '';
@@ -50,14 +55,14 @@ export async function notificarClienteChoferEnCamino(params: {
  */
 export async function notificarClientePedidoConfirmado(params: {
   clienteTelefono: string | null;
-  tipo: 'entrega' | 'retiro';
+  tipo: 'entrega' | 'retiro' | 'recambio';
   destinoDireccion: string | null;
   fecha: string;
 }): Promise<void> {
   const { clienteTelefono, tipo, destinoDireccion, fecha } = params;
   if (!clienteTelefono) return;
 
-  const accion = tipo === 'entrega' ? 'la entrega' : 'el retiro';
+  const accion = tipo === 'recambio' ? 'el recambio' : tipo === 'entrega' ? 'la entrega' : 'el retiro';
   const direccion = destinoDireccion ? `📍 *Destino:* ${destinoDireccion}\n\n` : '';
 
   const mensaje =
@@ -79,13 +84,18 @@ export async function notificarClientePedidoConfirmado(params: {
  */
 export async function notificarClienteServicioFinalizado(params: {
   clienteTelefono: string | null;
-  tipo: 'entrega' | 'retiro';
+  tipo: 'entrega' | 'retiro' | 'recambio';
   contenedorNumero: string | null;
 }): Promise<void> {
   const { clienteTelefono, tipo, contenedorNumero } = params;
   if (!clienteTelefono) return;
 
-  const titulo = tipo === 'entrega' ? '¡Tu contenedor fue entregado! 📦' : '¡Tu contenedor fue retirado con éxito! 📥';
+  const titulo =
+    tipo === 'recambio'
+      ? '¡Tu recambio de contenedor fue realizado! 🔄'
+      : tipo === 'entrega'
+      ? '¡Tu contenedor fue entregado! 📦'
+      : '¡Tu contenedor fue retirado con éxito! 📥';
   const detalle = contenedorNumero ? `Contenedor: *${contenedorNumero}*\n\n` : '\n\n';
   const cuerpo =
     `✨ *${titulo}*\n\n` +

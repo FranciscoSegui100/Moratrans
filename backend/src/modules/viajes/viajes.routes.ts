@@ -497,9 +497,10 @@ export async function avisarSiguienteParadaDesde(rutaId: string, ordenActual: nu
         'SELECT nombre, patente FROM choferes WHERE id = $1',
         [choferId],
       );
+      const esRecambio = Boolean(entrega?.grupo_id && retiro);
       notificarClienteChoferEnCamino({
         clienteTelefono: viajeCliente.cliente_telefono,
-        tipo: viajeCliente.tipo,
+        tipo: esRecambio ? 'recambio' : viajeCliente.tipo,
         destinoDireccion: viajeCliente.destino_direccion,
         choferNombre: choferInfo?.nombre ?? null,
         patente: choferInfo?.patente ?? null,
