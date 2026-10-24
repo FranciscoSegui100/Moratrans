@@ -718,8 +718,8 @@ async function aplicarEstado(
         // los estados (ver elegirContenedor, que ya filtra por esto para no
         // ofrecerlo como opción en primer lugar; esto es la segunda barrera
         // por si igual llega un id de contenedor que no corresponde).
-        query<{ id: string; completada_en: string | null }>(
-          `SELECT id, completada_en FROM viajes
+        query<{ id: string; completada_en: string | null; grupo_id: string | null }>(
+          `SELECT id, completada_en, grupo_id FROM viajes
             WHERE contenedor_numero = $1 AND tipo = 'retiro' AND estado IN ('programado', 'en_curso')
             ORDER BY creado_en DESC LIMIT 1`,
           [numero],
@@ -752,7 +752,9 @@ async function aplicarEstado(
           RETURNING cliente_telefono`,
         [retiroExistente.id, choferId, entrega?.destino_direccion ?? null, entrega?.zona ?? null, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
       );
-      if (retiroActualizado?.cliente_telefono) {
+      // Si el retiro es parte de un recambio (grupo_id), la encuesta al cliente se envía
+      // al completar el recambio completo con el contenedor nuevo, no en la mitad-retiro.
+      if (retiroActualizado?.cliente_telefono && !retiroExistente.grupo_id) {
         notificarClienteServicioFinalizado({
           clienteTelefono: retiroActualizado.cliente_telefono,
           tipo: 'retiro',
@@ -850,10 +852,10 @@ async function aplicarEstado(
         [estado, DIAS_ALQUILER_ANTES_RETIRO, `chofer:${choferId}`, numero],
       ),
       estado === 'entregado'
-        ? query<{ id: string; cliente_telefono: string | null }>(
+        ? query<{ id: string; cliente_telefono: string | null; grupo_id: string | null }>(
             `UPDATE viajes SET completada_en = now()
               WHERE contenedor_numero = $1 AND chofer_id = $2 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso')
-              RETURNING id, cliente_telefono`,
+              RETURNING id, cliente_telefono, grupo_id`,
             [numero, choferId],
           )
         : [],
@@ -871,7 +873,7 @@ async function aplicarEstado(
       if (ec.cliente_telefono) {
         notificarClienteServicioFinalizado({
           clienteTelefono: ec.cliente_telefono,
-          tipo: 'entrega',
+          tipo: ec.grupo_id ? 'recambio' : 'entrega',
           contenedorNumero: numero,
         }).catch((e) => console.error('Error enviando encuesta de entrega al cliente:', e));
       }

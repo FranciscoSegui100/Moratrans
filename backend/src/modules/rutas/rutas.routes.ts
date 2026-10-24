@@ -9,6 +9,7 @@ import { finalizarRetiro } from '../../services/retiro.service';
 import { simularDisponibilidad, ParadaSimulada, CapacidadCamion, CAPACIDAD_CAMION_DEFAULT } from './disponibilidad.service';
 import { avisarChoferViaje, avisarChoferRecambio, avisarSiguienteParadaDesde } from '../viajes/viajes.routes';
 import { notificarClientePedidoConfirmado } from '../whatsapp/notificacionesCliente';
+import { calcularAvisosConfirmacion } from './avisosRuta.service';
 import { motivoErrorWa, sendText } from '../whatsapp/graphApi';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitRecursoActualizado } from '../../config/socket';
@@ -1203,15 +1204,11 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
     }
 
     // Notificación automática a los clientes con paradas recién confirmadas: pedido confirmado con fecha pactada
-    for (const v of resultado.confirmadasAhora) {
-      if (v.cliente_telefono) {
-        notificarClientePedidoConfirmado({
-          clienteTelefono: v.cliente_telefono,
-          tipo: v.tipo,
-          destinoDireccion: v.destino_direccion,
-          fecha: resultado.fecha,
-        }).catch((e) => console.error('Error notificando pedido confirmado al cliente:', e));
-      }
+    const avisos = calcularAvisosConfirmacion(resultado.confirmadasAhora, resultado.fecha);
+    for (const aviso of avisos) {
+      notificarClientePedidoConfirmado(aviso).catch((e) =>
+        console.error('Error notificando pedido confirmado al cliente:', e),
+      );
     }
 
     res.json({
