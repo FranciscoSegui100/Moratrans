@@ -9,6 +9,7 @@ import { DireccionMaps } from '../components/DireccionMaps';
 import { PedidoDetalleModal } from '../components/PedidoDetalleModal';
 import { formatearFecha, sumarDias } from '../lib/fechas';
 import { hoyISO } from '../lib/viajes';
+import { archivoABase64 } from '../lib/archivos';
 
 interface Ruta {
   id: string;
@@ -34,6 +35,7 @@ const OPCIONES_HORARIO_SUGERIDO = ['🌅 Mañana (8-12hs)', '🕐 Tarde (12-15hs
 const formViajeInicial = {
   tipo: 'entrega', fecha: '', horario_preferido: '', zona: '',
   destino_direccion: '', importe: '', ubicacion_id: '', cliente_telefono: '',
+  medio_pago: 'transferencia' as 'efectivo' | 'transferencia', pagado: true,
 };
 
 interface ViajePendiente {
@@ -1204,6 +1206,7 @@ export function Rutas() {
   const [formViaje, setFormViaje] = useState(() => ({ ...formViajeInicial, fecha: paramFecha || hoyISO() }));
   const [mostrarFormViaje, setMostrarFormViaje] = useState(() => paramNuevo === '1');
   const [creandoViaje, setCreandoViaje] = useState(false);
+  const [comprobanteViaje, setComprobanteViaje] = useState<File | null>(null);
   // Combobox de cliente del form: texto que se ve en el input (no
   // necesariamente igual al cliente elegido mientras se está buscando) y si
   // la lista de resultados está abierta. Separado de formViaje.cliente_telefono
@@ -1394,6 +1397,12 @@ export function Rutas() {
     if (!formViaje.fecha) return;
     setCreandoViaje(true);
     try {
+      let comprobante_base64: string | undefined;
+      let comprobante_content_type: string | undefined;
+      if (formViaje.importe && formViaje.pagado && formViaje.medio_pago === 'transferencia' && comprobanteViaje) {
+        comprobante_base64 = await archivoABase64(comprobanteViaje);
+        comprobante_content_type = comprobanteViaje.type;
+      }
       await api.post('/api/viajes', {
         ...formViaje,
         zona: formViaje.zona || undefined,
@@ -1401,12 +1410,19 @@ export function Rutas() {
         importe: formViaje.importe || undefined,
         ubicacion_id: formViaje.ubicacion_id || undefined,
         horario_preferido: formViaje.horario_preferido || undefined,
+        comprobante_base64,
+        comprobante_content_type,
       });
       setFormViaje(formViajeInicial);
       setClienteQuery('');
+      setComprobanteViaje(null);
       recargarListas();
       queryClient.invalidateQueries({ queryKey: ['viajes'] });
-      show('success', 'Viaje programado correctamente');
+      show(
+        'success',
+        'Viaje programado correctamente',
+        formViaje.importe && !formViaje.pagado ? 'Se le mandó el pedido de pago por WhatsApp (si no es cuenta corriente).' : undefined,
+      );
     } catch (err: any) {
       show('error', 'Error al programar', err.response?.data?.error || 'Error desconocido');
     } finally {
@@ -1902,6 +1918,42 @@ export function Rutas() {
                 onChange={(e) => setFormViaje({ ...formViaje, importe: e.target.value })}
               />
             </div>
+            {!!formViaje.importe && (
+              <>
+                <div className="form-group">
+                  <label className="form-label">Medio de pago</label>
+                  <select
+                    className="form-select"
+                    value={formViaje.medio_pago}
+                    onChange={(e) => setFormViaje({ ...formViaje, medio_pago: e.target.value as 'efectivo' | 'transferencia' })}
+                  >
+                    <option value="transferencia">Transferencia</option>
+                    <option value="efectivo">Efectivo</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <input
+                      type="checkbox"
+                      checked={formViaje.pagado}
+                      onChange={(e) => setFormViaje({ ...formViaje, pagado: e.target.checked })}
+                    />
+                    Ya está pagado
+                  </label>
+                  {!formViaje.pagado && (
+                    <div className="text-muted" style={{ fontSize: '0.78rem' }}>
+                      Queda como deuda del cliente — si no es cuenta corriente, se le manda el pedido de pago por WhatsApp.
+                    </div>
+                  )}
+                </div>
+                {formViaje.pagado && formViaje.medio_pago === 'transferencia' && (
+                  <div className="form-group">
+                    <label className="form-label">Comprobante (opcional)</label>
+                    <input type="file" accept="image/*,.pdf" onChange={(e) => setComprobanteViaje(e.target.files?.[0] ?? null)} />
+                  </div>
+                )}
+              </>
+            )}
             <button
               type="submit"
               className="btn btn-primary"

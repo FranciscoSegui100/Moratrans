@@ -14,6 +14,7 @@ import { notificarClienteChoferEnCamino } from '../whatsapp/notificacionesClient
 import { hoyMendozaISO } from '../../services/fechas.service';
 import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
 import { buscarRetiroActivo, RetiroActivo } from '../../services/retiroActivo.service';
+import { reglasDePago, subirComprobanteManual, pedirPagoPorWhatsApp } from '../../services/pagoManual.service';
 
 export const viajesRouter = Router();
 viajesRouter.use(requireAuth);
@@ -163,6 +164,14 @@ const nuevoSchema = z.object({
   // puede necesitarla — mismos textos que OPCIONES_HORARIO ahí, pero es
   // texto libre acá: no hace falta importarlos para validar.
   horario_preferido: z.string().optional(),
+  // Solo entrega con importe: cómo se cobra — mismo criterio que "viaje
+  // cargado a mano" (ver pagoManual.service.ts). Sin esto el importe quedaba
+  // escrito en viajes.importe pero invisible para la deuda del cliente (no
+  // había ninguna fila en `pagos` que lo reflejara).
+  medio_pago: z.enum(['efectivo', 'transferencia']).optional(),
+  pagado: z.boolean().optional(),
+  comprobante_base64: z.string().optional(),
+  comprobante_content_type: z.string().optional(),
 });
 
 /** Nombre del cliente para mostrarle al chofer en el aviso, si el viaje tiene un teléfono asociado. */
@@ -555,6 +564,35 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
     // 0 activas: se deja sin ubicación (todavía no se cargó ninguna en /ubicaciones).
   }
 
+  // Entrega con importe cargado a mano: mismas reglas de plata que el resto
+  // del panel (ver pagoManual.service.ts) — sin esto el importe quedaba
+  // escrito en viajes.importe pero invisible para la deuda del cliente (no
+  // aparecía ni en su ficha ni en Validar pagos).
+  let pagoEntrega: {
+    estado: string; cargoCC: boolean; esCC: boolean; monto: number;
+    medioPago: 'efectivo' | 'transferencia'; pagado: boolean; urlComprobante: string | null;
+  } | null = null;
+  if (v.tipo === 'entrega' && v.importe) {
+    const [cliente] = await query<{ cuenta_corriente_estado: string }>(
+      'SELECT cuenta_corriente_estado FROM clientes WHERE telefono = $1',
+      [v.cliente_telefono],
+    );
+    const pagado = v.pagado ?? true;
+    const medioPago = v.medio_pago ?? 'transferencia';
+    const { cargoCC, esCC, estado } = reglasDePago(cliente?.cuenta_corriente_estado, pagado);
+    let urlComprobante: string | null = null;
+    if (pagado && medioPago === 'transferencia' && v.comprobante_base64) {
+      try {
+        urlComprobante = await subirComprobanteManual(v.comprobante_base64, v.comprobante_content_type, `viaje_${v.cliente_telefono}`);
+      } catch (e: any) {
+        if (e.status) return res.status(e.status).json({ error: e.message });
+        console.error('Error subiendo comprobante de viaje manual:', e);
+        return res.status(502).json({ error: 'No se pudo guardar el comprobante' });
+      }
+    }
+    pagoEntrega = { estado, cargoCC, esCC, monto: v.importe, medioPago, pagado, urlComprobante };
+  }
+
   try {
     const resultado = await withTx(async (c) => {
       // reservarParaEntrega (backend/src/services/contenedorReserva.service.ts):
@@ -658,15 +696,31 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
         return { principal: rows[0], secundario: null as any };
       }
 
+      let pagoId: string | null = null;
+      if (pagoEntrega) {
+        const { rows: pagoRows } = await c.query<{ id: string }>(
+          `INSERT INTO pagos (cliente_telefono, tipo, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante)
+           VALUES ($1, 'flete', $2, $3, $4, $5, $6, $7) RETURNING id`,
+          [v.cliente_telefono, pagoEntrega.monto, pagoEntrega.medioPago, pagoEntrega.estado,
+           pagoEntrega.pagado && pagoEntrega.medioPago === 'efectivo', pagoEntrega.cargoCC, pagoEntrega.urlComprobante],
+        );
+        pagoId = pagoRows[0].id;
+      }
+
       const { rows } = await c.query(
-        `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, ubicacion_id, ubicacion_direccion, horario_preferido, canal)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, 'panel') RETURNING *`,
+        `INSERT INTO viajes (tipo, fecha, hora_estimada, chofer_id, contenedor_numero, cliente_telefono, zona, destino_direccion, notas, patente, remito, importe, ubicacion_id, ubicacion_direccion, horario_preferido, canal, pago_id, es_cuenta_corriente)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, 'panel', $16, $17) RETURNING *`,
         [v.tipo, v.fecha, v.hora_estimada || null, v.chofer_id ?? null, v.contenedor_numero ?? null,
          v.cliente_telefono ?? null, v.zona ?? null, v.destino_direccion ?? null, v.notas ?? null, patente,
-         v.remito ?? null, v.importe ?? null, ubicacion?.id ?? null, ubicacion?.direccion ?? null, v.horario_preferido ?? null],
+         v.remito ?? null, v.importe ?? null, ubicacion?.id ?? null, ubicacion?.direccion ?? null, v.horario_preferido ?? null,
+         pagoId, pagoEntrega?.cargoCC ?? false],
       );
       return { principal: rows[0], secundario: null as any };
     });
+
+    if (pagoEntrega && !pagoEntrega.pagado && !pagoEntrega.esCC) {
+      await pedirPagoPorWhatsApp(v.cliente_telefono, pagoEntrega.monto, 'viaje', pagoEntrega.medioPago);
+    }
 
     // Si es un recambio sin el lleno todavía asignado, no hay nada útil que
     // avisarle al chofer todavía — el aviso sale solo cuando se le asigna el

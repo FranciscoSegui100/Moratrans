@@ -9,11 +9,7 @@ import { buscarRetiroActivo } from '../../services/retiroActivo.service';
 import { reservarParaEntrega } from '../../services/contenedorReserva.service';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { diaHabilDesde, formatearFechaCorta } from '../../services/diasHabiles.service';
-import { encrypt, encryptBuffer } from '../../services/crypto.service';
-import { subirArchivo } from '../../services/storage.service';
-import { sendText, motivoErrorWa } from '../whatsapp/graphApi';
-import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
-import { datosBancarios } from '../whatsapp/flows/pago.flow';
+import { reglasDePago, subirComprobanteManual, pedirPagoPorWhatsApp } from '../../services/pagoManual.service';
 import { emitRecursoActualizado } from '../../config/socket';
 import { DIAS_ALARGUE, PORCENTAJE_ALARGUE } from '../../config/bot.config';
 
@@ -86,58 +82,6 @@ function fail(msg: string, status = 409): never {
   const err: any = new Error(msg);
   err.status = status;
   throw err;
-}
-
-/**
- * Sube y cifra un comprobante de transferencia — mismo criterio que uno que
- * llega por WhatsApp (ver pago.flow.ts) o que se carga a mano desde la ficha
- * del cliente (ver clientes.routes.ts POST /:telefono/viaje-manual).
- */
-async function subirComprobanteManual(base64: string, contentType: string | undefined, prefijo: string): Promise<string> {
-  const buffer = Buffer.from(base64, 'base64');
-  if (buffer.length > 8 * 1024 * 1024) fail('El comprobante no puede pesar más de 8MB', 400);
-  const mime = contentType || 'image/jpeg';
-  const ext = mime.includes('pdf') ? 'pdf' : mime.split('/')[1] || 'jpg';
-  const ruta = `comprobantes/${prefijo}_${Date.now()}.${ext}`;
-  await subirArchivo(encryptBuffer(buffer), ruta, 'application/octet-stream');
-  return encrypt(ruta);
-}
-
-/**
- * Reglas de plata compartidas por alargue y recambio manuales — mismo
- * criterio ya confirmado con el dueño del negocio para "viaje cargado a
- * mano" (ver clientes.routes.ts POST /:telefono/viaje-manual), con una
- * diferencia clave: ACÁ el viaje queda 'programado' de verdad (hay que
- * pasar a buscarlo/entregarlo), no 'completado' — esto es "lo pidió por
- * teléfono, hay que programarlo", no "cargar algo que ya pasó".
- *  - Pagado -> 'validado', nunca cargo de cuenta corriente.
- *  - No pagado + cuenta corriente (aprobada o pendiente) -> cargo directo
- *    (es_cuenta_corriente=TRUE, 'validado'), sin avisar nada — se cobra junto.
- *  - No pagado + ocasional -> 'pendiente' + se le manda la solicitud de pago
- *    por WhatsApp.
- */
-function reglasDePago(cont: ContenedorEntregado, pagado: boolean) {
-  const esCC = cont.cuenta_corriente_estado === 'aprobada' || cont.cuenta_corriente_estado === 'pendiente';
-  const cargoCC = esCC && !pagado;
-  const estado = cargoCC || pagado ? 'validado' : 'pendiente';
-  return { esCC, cargoCC, estado };
-}
-
-async function pedirPagoPorWhatsApp(telefono: string, monto: number, concepto: string, contenedorNumero: string, medioPago: 'efectivo' | 'transferencia'): Promise<void> {
-  const cuerpo =
-    `📋 Tenés un pago pendiente de *$${monto.toLocaleString('es-AR')}* — ${concepto} del contenedor ${contenedorNumero}.\n\n` +
-    (medioPago === 'transferencia'
-      ? `${datosBancarios()}\n\nCuando hagas la transferencia, mandanos la foto del comprobante por acá. 📎`
-      : '💵 Coordiná con nosotros el pago en efectivo cuando puedas.');
-  try {
-    await sendText(telefono, cuerpo);
-  } catch (e) {
-    const motivo = motivoErrorWa(e);
-    console.error('Error mandando solicitud de pago manual:', motivo);
-    notificarEnvioFallido(telefono, telefono, `solicitud de pago de ${concepto}`, motivo).catch((e2) =>
-      console.error('Error registrando alerta de envío fallido:', e2),
-    );
-  }
 }
 
 /**
@@ -540,7 +484,7 @@ contenedoresRouter.post('/:numero/alargue', requireRol('admin', 'operador'), asy
   if (!tarifa) return res.status(409).json({ error: `No hay tarifa activa cargada para ${cont.zona}.` });
   const monto = Math.round(Number(tarifa.precio) * PORCENTAJE_ALARGUE);
 
-  const { cargoCC, estado } = reglasDePago(cont, v.pagado);
+  const { cargoCC, estado } = reglasDePago(cont.cuenta_corriente_estado, v.pagado);
   let urlComprobante: string | null = null;
   if (v.pagado && v.medio_pago === 'transferencia' && v.comprobante_base64) {
     try {
@@ -585,8 +529,8 @@ contenedoresRouter.post('/:numero/alargue', requireRol('admin', 'operador'), asy
       return { venceEn: nuevoVenceEn, pagoId };
     });
 
-    if (!v.pagado && !reglasDePago(cont, v.pagado).esCC) {
-      await pedirPagoPorWhatsApp(cont.cliente_telefono, monto, 'extensión de retiro', numero, v.medio_pago);
+    if (!v.pagado && !reglasDePago(cont.cuenta_corriente_estado, v.pagado).esCC) {
+      await pedirPagoPorWhatsApp(cont.cliente_telefono, monto, 'extensión de retiro', v.medio_pago, numero);
     }
     emitRecursoActualizado('contenedores');
     emitRecursoActualizado('viajes');
@@ -637,7 +581,7 @@ contenedoresRouter.post('/:numero/recambio', requireRol('admin', 'operador'), as
   if (!tarifa) return res.status(409).json({ error: `No hay tarifa activa cargada para ${cont.zona}.` });
   const monto = Number(tarifa.precio);
 
-  const { cargoCC, estado } = reglasDePago(cont, v.pagado);
+  const { cargoCC, estado } = reglasDePago(cont.cuenta_corriente_estado, v.pagado);
   let urlComprobante: string | null = null;
   if (v.pagado && v.medio_pago === 'transferencia' && v.comprobante_base64) {
     try {
@@ -692,8 +636,8 @@ contenedoresRouter.post('/:numero/recambio', requireRol('admin', 'operador'), as
       return { retiroId, pagoId };
     });
 
-    if (!v.pagado && !reglasDePago(cont, v.pagado).esCC) {
-      await pedirPagoPorWhatsApp(cont.cliente_telefono, monto, 'recambio', numero, v.medio_pago);
+    if (!v.pagado && !reglasDePago(cont.cuenta_corriente_estado, v.pagado).esCC) {
+      await pedirPagoPorWhatsApp(cont.cliente_telefono, monto, 'recambio', v.medio_pago, numero);
     }
     emitRecursoActualizado('contenedores');
     emitRecursoActualizado('viajes');
