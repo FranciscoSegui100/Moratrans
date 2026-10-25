@@ -634,12 +634,23 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
   if (pagoTipo.tipo === 'abono_cc') return validarAbonoCC(req, res, pagoId);
   if (pagoTipo.tipo === 'pedido_catalogo') return validarPedidoCatalogo(req, res, pagoId);
   if (pagoTipo.tipo === 'flete') {
-    const [manual] = await query<{ es_manual: boolean }>(
-      `SELECT (p.pedido_id IS NULL AND EXISTS (SELECT 1 FROM viajes v WHERE v.pago_id = p.id)) AS es_manual
+    const [manual] = await query<{ sin_pedido: boolean; con_viaje: boolean }>(
+      `SELECT p.pedido_id IS NULL AS sin_pedido,
+              EXISTS (SELECT 1 FROM viajes v WHERE v.pago_id = p.id AND v.estado <> 'cancelado') AS con_viaje
          FROM pagos p WHERE p.id = $1`,
       [pagoId],
     );
-    if (manual?.es_manual) return validarPagoDeViajeManual(req, res, pagoId);
+    if (manual?.sin_pedido && manual.con_viaje) return validarPagoDeViajeManual(req, res, pagoId);
+    // Sin pedido y sin ningún viaje vigente (ej. el viaje cargado a mano se
+    // borró o se canceló): fn_validar_pago lo trataba como un pedido del bot y
+    // creaba una entrega nueva en la bolsa — sin zona ni dirección, porque no
+    // hay pedido de dónde sacarlas ("Creado al validar el pago (en bolsa sin
+    // rutear)"). No hay nada que entregar: se frena acá.
+    if (manual?.sin_pedido) {
+      return res.status(409).json({
+        error: 'Este pago no tiene ningún pedido ni viaje vigente asociado (probablemente se borró o canceló el viaje). Rechazalo, o volvé a cargar el viaje antes de validarlo.',
+      });
+    }
   }
 
   const parsed = validarSchema.safeParse(req.body ?? {});

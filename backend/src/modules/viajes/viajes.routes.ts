@@ -1015,12 +1015,18 @@ viajesRouter.delete('/:id', requireRol('admin'), async (req: Request, res: Respo
       if (viaje.tipo === 'entrega' && viaje.contenedor_numero) {
         await liberarReservaEntrega(c, viaje.contenedor_numero, `admin:${req.user!.id}`);
       }
+      // Igual que al cancelar: su pago todavía sin cobrar no queda suelto
+      // esperando en Validar pagos (validarlo después creaba una entrega
+      // nueva sin zona en la bolsa, ver POST /api/pagos/:id/validar).
+      const avisarAlertas = await anularPagosDeViajesCancelados(c, [viaje.id]);
       await c.query('DELETE FROM viajes WHERE id = $1', [viaje.id]);
-      return viaje;
+      return { ...viaje, avisarAlertas };
     });
     if (!row) return res.status(404).json({ error: 'Viaje inexistente' });
+    row.avisarAlertas();
     emitRecursoActualizado('viajes');
     emitRecursoActualizado('contenedores');
+    emitRecursoActualizado('pagos');
     res.json({ success: true });
   } catch (e: any) {
     console.error('Error al eliminar viaje:', e);
