@@ -41,12 +41,12 @@ async function obtenerContenedorEntregado(numero: string): Promise<ContenedorEnt
             ultima.zona, ultima.destino_direccion, ultima.destino_lat, ultima.destino_lng,
             (cl.id IS NOT NULL) AS cliente_existe
        FROM contenedores c
-       CROSS JOIN LATERAL (
+       LEFT JOIN LATERAL (
          SELECT v.cliente_telefono, v.zona, v.destino_direccion, v.destino_lat, v.destino_lng
            FROM viajes v
           WHERE v.contenedor_numero = c.numero AND v.tipo = 'entrega' AND v.estado <> 'cancelado'
           ORDER BY v.creado_en DESC LIMIT 1
-       ) ultima
+       ) ultima ON true
        LEFT JOIN clientes cl ON cl.telefono = ultima.cliente_telefono
       WHERE c.numero = $1 AND c.estado = 'entregado'`,
     [numero],

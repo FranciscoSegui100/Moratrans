@@ -10,6 +10,7 @@ import { PedidoDetalleModal } from '../components/PedidoDetalleModal';
 import { formatearFecha, sumarDias } from '../lib/fechas';
 import { hoyISO } from '../lib/viajes';
 import { archivoABase64 } from '../lib/archivos';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 interface Ruta {
   id: string;
@@ -1223,6 +1224,9 @@ export function Rutas() {
   } | null>(null);
   // Choferes cuya tarjeta destella porque el auto-armado les sumó pedidos.
   const [choferesDestello, setChoferesDestello] = useState<Set<string>>(new Set());
+
+  useEscapeKey(() => setPedidoDetalle(null), pedidoDetalle !== null);
+  useEscapeKey(() => !creandoViaje && setMostrarFormViaje(false), mostrarFormViaje);
 
   useEffect(() => {
     if (paramNuevo === '1') {

@@ -11,6 +11,7 @@ import { useAuth, tieneRol } from '../context/AuthContext';
 import { formatearFecha } from '../lib/fechas';
 import { hoyISO } from '../lib/viajes';
 import { archivoABase64 } from '../lib/archivos';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 interface Comprobante {
   id: string;
@@ -227,6 +228,11 @@ export function ClienteDetalle() {
   const [viajeForm, setViajeForm] = useState<ViajeManualForm>(formularioViajeVacio());
   const [comprobanteFile, setComprobanteFile] = useState<File | null>(null);
   const [guardandoViaje, setGuardandoViaje] = useState(false);
+
+  useEscapeKey(() => setViajeComprobantes(null), viajeComprobantes !== null);
+  useEscapeKey(() => !guardandoZona && setEditandoZona(null), editandoZona !== null);
+  useEscapeKey(() => setComprobanteAbono(null), comprobanteAbono !== null);
+  useEscapeKey(() => !guardandoViaje && setMostrarCargarViaje(false), mostrarCargarViaje);
 
   /**
    * Para el caso borde en que un pago (o alargue) quedó validado pero el

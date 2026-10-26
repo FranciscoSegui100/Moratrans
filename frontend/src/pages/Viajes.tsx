@@ -9,6 +9,7 @@ import { DireccionMaps } from '../components/DireccionMaps';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
 import { formatearFecha } from '../lib/fechas';
 import { hoyISO, sumarDias, fechaEnRango } from '../lib/viajes';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 interface Comprobante {
   id: string;
@@ -100,6 +101,9 @@ export function Viajes() {
   const [pestana, setPestana] = useState<PestanaViajes>('activos');
   const [viajeComprobantes, setViajeComprobantes] = useState<Viaje | null>(null);
   const [remitoImprimir, setRemitoImprimir] = useState<Viaje | null>(null);
+
+  useEscapeKey(() => setViajeComprobantes(null), viajeComprobantes !== null);
+  useEscapeKey(() => setRemitoImprimir(null), remitoImprimir !== null);
 
   const [preset, setPreset] = useState<PresetRango>(() => (fechaUrl ? 'custom' : 'semana'));
   const [customDesde, setCustomDesde] = useState(() => fechaUrl || hoyISO());

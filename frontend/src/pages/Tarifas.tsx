@@ -28,6 +28,7 @@ export function Tarifas() {
 
   async function crear(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
     try {
       await api.post('/api/tarifas', form);

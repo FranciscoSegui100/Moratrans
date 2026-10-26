@@ -5,6 +5,7 @@ import { api, descargarArchivo } from '../api/client';
 import { useAuth, tieneRol } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 import { RoleGate } from '../components/RoleGate';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 interface ResumenMes {
   mes: string;
@@ -40,6 +41,8 @@ export function Finanzas() {
   const [otroIngresoForm, setOtroIngresoForm] = useState(otroIngresoVacio);
   const [guardandoOtroIngreso, setGuardandoOtroIngreso] = useState(false);
   const esFinanzas = tieneRol(user, 'admin', 'finanzas');
+
+  useEscapeKey(() => !guardandoOtroIngreso && setMostrarOtroIngreso(false), mostrarOtroIngreso);
 
   const { data: resumen, isLoading } = useQuery({
     queryKey: ['finanzas', 'resumen', anio],

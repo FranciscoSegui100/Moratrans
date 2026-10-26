@@ -9,6 +9,7 @@ import { useAuth, tieneRol } from '../context/AuthContext';
 import { formatearFechaHora } from '../lib/fechas';
 import { hoyISO, sumarDias } from '../lib/viajes';
 import { archivoABase64 } from '../lib/archivos';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 interface Contenedor {
   numero: string;
@@ -132,6 +133,9 @@ export function Contenedores() {
   function cerrarGestion() {
     setGestionarNumero(null);
   }
+
+  useEscapeKey(cerrarGestion, gestionarNumero !== null);
+  useEscapeKey(() => { setHistorialNumero(null); setEditandoNumero(false); }, historialNumero !== null);
   /**
    * Cambia de pestaña (retiro anticipado / alargue / recambio) DENTRO del
    * mismo modal — y resetea el formulario. Sin este reset, "pagado",
@@ -238,6 +242,7 @@ export function Contenedores() {
 
   async function crear(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
     try {
       await api.post('/api/contenedores', { numero: form.numero, tamano: Number(form.tamano) });

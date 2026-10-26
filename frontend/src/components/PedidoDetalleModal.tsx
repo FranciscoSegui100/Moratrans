@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { X, AlertTriangle, ExternalLink } from 'lucide-react';
 import { DireccionMaps } from './DireccionMaps';
 import { formatearFecha } from '../lib/fechas';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 interface ViajePendiente {
   id: string;
@@ -62,6 +63,7 @@ export function PedidoDetalleModal({
   onAsignar: (choferId: string) => void;
   onClose: () => void;
 }) {
+  useEscapeKey(onClose);
   const { entrega, retiro } = visita;
   const base = entrega ?? retiro!;
   const esRecambio = !!entrega && !!retiro;
