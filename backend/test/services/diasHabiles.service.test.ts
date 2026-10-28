@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { proximosDiasHabiles, formatearFechaLarga } from '../../src/services/diasHabiles.service';
+import { proximosDiasHabiles, formatearFechaLarga, esFinDeSemana } from '../../src/services/diasHabiles.service';
 
 describe('diasHabiles.service', () => {
   afterEach(() => {
@@ -29,5 +29,31 @@ describe('diasHabiles.service', () => {
 
   it('formatea la fecha en formato largo legible', () => {
     expect(formatearFechaLarga('2026-10-22')).toBe('jueves 22 de octubre');
+  });
+
+  describe('esFinDeSemana', () => {
+    it('detecta correctamente sábado en horario de Mendoza', () => {
+      // Sábado 24 de octubre 2026, 12:00 Mendoza (15:00 UTC)
+      vi.setSystemTime(new Date('2026-10-24T15:00:00.000Z'));
+      expect(esFinDeSemana()).toBe(true);
+    });
+
+    it('detecta correctamente domingo a última hora en horario de Mendoza', () => {
+      // Domingo 25 de octubre 2026, 23:30 Mendoza (lunes 26 a las 02:30 UTC)
+      vi.setSystemTime(new Date('2026-10-26T02:30:00.000Z'));
+      expect(esFinDeSemana()).toBe(true);
+    });
+
+    it('devuelve false para viernes a la noche en Mendoza', () => {
+      // Viernes 23 de octubre 2026, 21:00 Mendoza (sábado 24 a las 00:00 UTC)
+      vi.setSystemTime(new Date('2026-10-24T00:00:00.000Z'));
+      expect(esFinDeSemana()).toBe(false);
+    });
+
+    it('devuelve false para lunes a la mañana en Mendoza', () => {
+      // Lunes 26 de octubre 2026, 08:00 Mendoza (11:00 UTC)
+      vi.setSystemTime(new Date('2026-10-26T11:00:00.000Z'));
+      expect(esFinDeSemana()).toBe(false);
+    });
   });
 });

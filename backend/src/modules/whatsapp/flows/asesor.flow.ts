@@ -3,6 +3,7 @@ import { sendText } from '../graphApi';
 import { setSesion, clearSesion } from '../session.store';
 import { emitAlerta, emitConversacionActualizada } from '../../../config/socket';
 import { INTENTOS_PARA_ESCALAR_ASESOR } from '../../../config/bot.config';
+import { esFinDeSemana } from '../../../services/diasHabiles.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -48,7 +49,9 @@ export async function escalarAAsesor(to: string, sesion: Sesion, motivo: string)
   // La conversación pasa a "Requiere vos": que la lista de Conversaciones lo
   // muestre en vivo, no recién tras un F5.
   emitConversacionActualizada({ telefono: to, modo_humano: true });
-  const textoAviso = '🙋 ¡Ya avisamos a un asesor! En breve te va a contactar por acá mismo.';
+  const textoAviso = esFinDeSemana()
+    ? '🙋 ¡Anotamos tu mensaje! El lunes nos comunicaremos con vos por acá mismo.'
+    : '🙋 ¡Ya avisamos a un asesor! En breve te va a contactar por acá mismo.';
   await sendText(to, textoAviso);
 }
 
@@ -66,12 +69,17 @@ export async function handleAsesor(m: MensajeEntrante, sesion: Sesion): Promise<
 
   if (intentos < INTENTOS_PARA_ESCALAR_ASESOR) {
     await setSesion({ ...sesion, contexto: { ...sesion.contexto, asesorCount: intentos } });
+    const finDeSemana = esFinDeSemana();
     const texto =
       intentos === 1
         ? '🙋 Puedo ayudarte yo mismo: escribí *Cotizar* o *Ya pagué* para enviar tu comprobante.\n' +
-          'Si preferís, seguí escribiendo *asesor* y en breve te comunicamos con una persona del equipo.'
+          (finDeSemana
+            ? 'Si preferís hablar con una persona, seguí escribiendo *asesor* y el lunes nos comunicaremos con vos.'
+            : 'Si preferís, seguí escribiendo *asesor* y en breve te comunicamos con una persona del equipo.')
         : '🙋 ¡Estás a punto de hablar con un asesor! Te recuerdo que también podés resolverlo vos mismo desde el *menú*.\n' +
-          'Si preferís seguir con una persona, escribí *asesor* una vez más.';
+          (finDeSemana
+            ? 'Si preferís seguir con una persona, escribí *asesor* una vez más y el lunes nos comunicaremos con vos.'
+            : 'Si preferís seguir con una persona, escribí *asesor* una vez más.');
     await sendText(to, texto);
     return;
   }

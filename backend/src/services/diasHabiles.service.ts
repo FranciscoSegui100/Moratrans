@@ -134,3 +134,13 @@ export function diaHabilAnterior(fechaISO: string): string {
   while (!esDiaHabil(f)) f = sumarDias(f, -1);
   return f;
 }
+
+/**
+ * ¿El instante actual (o fecha dada) cae en fin de semana (sábado o domingo) en horario Mendoza (UTC-3)?
+ */
+export function esFinDeSemana(instanteMs: number = Date.now()): boolean {
+  const ahoraMendoza = new Date(instanteMs - 3 * 60 * 60 * 1000);
+  const dia = ahoraMendoza.getUTCDay();
+  return dia === 0 || dia === 6; // 0 = domingo, 6 = sábado
+}
+
