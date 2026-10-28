@@ -3,7 +3,7 @@ import { sendText, sendList, sendButtons, sendLocationRequest } from '../graphAp
 import { setSesion, clearSesion } from '../session.store';
 import { opcionesMetodoPago, tieneCuentaCorrienteAprobada } from './pago.flow';
 import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
-import { reverseGeocode } from '../../../services/geocoding.service';
+import { direccionDeUbicacion } from '../../../services/geocoding.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { enviarTicketPorWhatsApp } from '../../../services/pdf.service';
 import { emitRecursoActualizado } from '../../../config/socket';
@@ -187,7 +187,7 @@ async function manejarUbicacionPin(m: MensajeEntrante, sesion: Sesion): Promise<
   const ubicacion = await resolverUbicacionMensaje(m);
 
   if (ubicacion.tipo === 'ubicacion') {
-    const destinoDireccion = ubicacion.direccionCruda ?? (await reverseGeocode(ubicacion.lat, ubicacion.lng));
+    const destinoDireccion = await direccionDeUbicacion(ubicacion.lat, ubicacion.lng, ubicacion.direccionCruda);
     const resultado = await verificarUbicacionConDepartamentoElegido(m, sesion, ubicacion.lat, ubicacion.lng, destinoDireccion, departamento, {
       requiereTarifa: true,
     });

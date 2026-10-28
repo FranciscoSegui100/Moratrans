@@ -8,7 +8,7 @@ import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { hoyMendozaISO } from '../../../services/fechas.service';
 import { obtenerOCrearCliente, necesitaNombre } from '../../../services/clientes.service';
 import { opcionesMetodoPago, tieneCuentaCorrienteAprobada, pedidosAbiertos, ofrecerPedidoPendiente } from './pago.flow';
-import { reverseGeocode } from '../../../services/geocoding.service';
+import { direccionDeUbicacion } from '../../../services/geocoding.service';
 import { proximosDiasHabiles, formatearFechaLarga } from '../../../services/diasHabiles.service';
 import { CANTIDAD_DIAS_HABILES_A_OFRECER } from '../../../config/bot.config';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
@@ -310,7 +310,7 @@ async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promis
   const ubicacion = await resolverUbicacionMensaje(m);
 
   if (ubicacion.tipo === 'ubicacion') {
-    const destinoDireccion = ubicacion.direccionCruda ?? (await reverseGeocode(ubicacion.lat, ubicacion.lng));
+    const destinoDireccion = await direccionDeUbicacion(ubicacion.lat, ubicacion.lng, ubicacion.direccionCruda);
 
     const numero = sesion.contexto.numero as string;
     const resultado = await verificarUbicacionConDepartamentoElegido(m, sesion, ubicacion.lat, ubicacion.lng, destinoDireccion, departamento, {

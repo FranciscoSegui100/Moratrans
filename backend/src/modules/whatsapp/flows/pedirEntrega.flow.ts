@@ -3,7 +3,7 @@ import { sendText, sendButtons, sendList, sendLocationRequest } from '../graphAp
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
-import { reverseGeocode } from '../../../services/geocoding.service';
+import { direccionDeUbicacion } from '../../../services/geocoding.service';
 import { proximosDiasHabiles, formatearFechaLarga } from '../../../services/diasHabiles.service';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { manejarRespuestaInvalida } from '../estados';
@@ -141,7 +141,7 @@ async function manejarUbicacionPin(m: MensajeEntrante, sesion: Sesion): Promise<
   const ubicacion = await resolverUbicacionMensaje(m);
 
   if (ubicacion.tipo === 'ubicacion') {
-    const destinoDireccion = ubicacion.direccionCruda ?? (await reverseGeocode(ubicacion.lat, ubicacion.lng));
+    const destinoDireccion = await direccionDeUbicacion(ubicacion.lat, ubicacion.lng, ubicacion.direccionCruda);
 
     const resultado = await verificarUbicacionConDepartamentoElegido(m, sesion, ubicacion.lat, ubicacion.lng, destinoDireccion, departamento, {
       requiereTarifa: true,

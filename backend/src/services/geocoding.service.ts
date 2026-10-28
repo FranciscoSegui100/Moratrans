@@ -28,3 +28,16 @@ export async function reverseGeocode(lat: number, lng: number): Promise<string |
     return null;
   }
 }
+
+/**
+ * Dirección a guardar para un pin de WhatsApp: la que trae el propio pin, o
+ * la de Nominatim, o — si Nominatim no contestó (timeout, límite de uso) —
+ * las coordenadas tal cual. Antes ese último caso guardaba NULL y el chofer
+ * recibía "Sin dirección registrada" aunque el viaje tenía el punto exacto;
+ * con las coordenadas como texto el link de Google Maps del aviso lo abre
+ * igual (ver avisarChoferViaje).
+ */
+export async function direccionDeUbicacion(lat: number, lng: number, direccionCruda: string | null | undefined): Promise<string> {
+  if (direccionCruda) return direccionCruda;
+  return (await reverseGeocode(lat, lng)) ?? `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+}
