@@ -656,6 +656,11 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
   const parsed = validarSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
   const { diasDemora, choferId, venceEn, contenedorNumero, fechaEntrega, ubicacionId } = parsed.data;
+  // Mismo flujo en todos lados: el contenedor de la entrega lo elige el
+  // chofer al tocar "Ya entregué" (ver asignacionEntrega.service.ts).
+  if (contenedorNumero) {
+    return res.status(400).json({ error: 'El contenedor de una entrega lo elige el chofer al entregar — no se asigna al validar el pago.' });
+  }
   const contenedorNorm = contenedorNumero?.trim().toUpperCase() || null;
 
   // Depósito de donde sale el contenedor de esta entrega. A diferencia de

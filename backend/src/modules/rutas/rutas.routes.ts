@@ -1065,87 +1065,13 @@ rutasRouter.patch('/:id/orden', requireRol('admin', 'operador'), async (req: Req
   }
 });
 
-const contenedorParadaSchema = z.object({ contenedor_numero: z.string().min(1) });
-
-/**
- * PATCH /api/rutas/:id/paradas/:viajeId/contenedor — asigna contenedor
- * validado contra la disponibilidad simulada.
- *
- * Corre dentro de una transacción con la ruta lockeada (FOR UPDATE), mismo
- * patrón que el resto de los endpoints de este archivo: sin esto, dos
- * operadores asignando contenedor a paradas distintas de la misma ruta casi
- * al mismo tiempo podían leer disponibilidad ANTES de que la otra asignación
- * se confirmara y terminar eligiendo el mismo contenedor para las dos.
- */
-rutasRouter.patch('/:id/paradas/:viajeId/contenedor', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
-  const { id: rutaId, viajeId } = req.params;
-  const parsed = contenedorParadaSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
-  const { contenedor_numero } = parsed.data;
-
-  try {
-    await withTx(async (c) => {
-      const ejecutar = async (sql: string, params: any[]) => (await c.query(sql, params)).rows;
-      const { rows: rutaRows } = await c.query('SELECT id FROM rutas WHERE id = $1 FOR UPDATE', [rutaId]);
-      if (!rutaRows[0]) fail('Ruta no encontrada.', 404);
-
-      const { rows: viajeRows } = await c.query<{
-        orden: number | null; tipo: string; completada_en: string | null;
-        contenedor_numero: string | null; ruta_confirmada_en: string | null; fecha: string;
-      }>(
-        `SELECT orden, tipo, completada_en, contenedor_numero, ruta_confirmada_en, fecha FROM viajes WHERE id = $1 AND ruta_id = $2`,
-        [viajeId, rutaId],
-      );
-      const viaje = viajeRows[0];
-      if (!viaje) fail('Parada no encontrada en esta ruta.', 404);
-      if (viaje!.tipo !== 'entrega') fail('Solo se asigna contenedor en una parada de entrega.', 400);
-      if (viaje!.completada_en != null) fail('Esta parada ya la terminó el chofer; no se le puede cambiar el contenedor.');
-      const contenedorAnterior = viaje!.contenedor_numero;
-
-      const { porOrden } = await calcularDisponibilidadRuta(rutaId, ejecutar);
-      const disponibles = porOrden.get(viaje!.orden!) ?? [];
-      if (!disponibles.includes(contenedor_numero)) {
-        fail(`El contenedor ${contenedor_numero} no está disponible en esta parada.`, 409);
-      }
-
-      // Barrera dura contra ux_viajes_activo_por_tipo (un viaje activo por
-      // contenedor+tipo): si el contenedor ya está en otra entrega activa
-      // —otra ruta, o sin rutear— sin esto el UPDATE de abajo tira un 500 de
-      // constraint en vez de este 409.
-      const { rows: conflicto } = await c.query(
-        `SELECT 1 FROM viajes
-          WHERE contenedor_numero = $1 AND tipo = 'entrega'
-            AND estado IN ('programado', 'en_curso') AND id <> $2
-          LIMIT 1`,
-        [contenedor_numero, viajeId],
-      );
-      if (conflicto[0]) {
-        fail(`El contenedor ${contenedor_numero} ya está asignado a otra entrega activa.`, 409);
-      }
-
-      // Si esta parada ya estaba confirmada (reservó un contenedor al
-      // confirmar la ruta, ver POST /:id/confirmar), cambiarlo acá tiene que
-      // actualizar la reserva real además del puntero en `viajes` — si no, el
-      // contenedor viejo queda "reservado" fantasma para siempre (sin ningún
-      // viaje activo que lo use) y el nuevo sigue figurando "disponible"
-      // aunque ya esté comprometido con este cliente (bug real: pasó en
-      // producción armando una ruta para el día siguiente). Antes de
-      // confirmar no hace falta tocar `contenedores` acá — la reserva de
-      // verdad recién pasa al confirmar.
-      if (viaje!.ruta_confirmada_en != null && contenedorAnterior !== contenedor_numero) {
-        if (contenedorAnterior) await liberarReservaEntrega(c, contenedorAnterior, `operador:${req.user!.id}`);
-        await reservarParaEntrega(c, contenedor_numero, viaje!.fecha, `operador:${req.user!.id}`, { excluirViajeId: viajeId });
-      }
-
-      await c.query(`UPDATE viajes SET contenedor_numero = $1 WHERE id = $2`, [contenedor_numero, viajeId]);
-    });
-    emitRecursoActualizado('viajes');
-    emitRecursoActualizado('contenedores');
-    res.json({ ok: true });
-  } catch (error: any) {
-    if (error.status) res.status(error.status).json({ error: error.message });
-    else throw error;
-  }
+/** PATCH /api/rutas/:id/paradas/:viajeId/contenedor — ya no se usa (ver abajo). */
+rutasRouter.patch('/:id/paradas/:viajeId/contenedor', requireRol('admin', 'operador'), (_req: Request, res: Response) => {
+  // El contenedor de una entrega (o el vacío de un recambio) ya no se asigna
+  // al armar la ruta: lo elige el chofer al tocar "Ya entregué" (ver
+  // asignacionEntrega.service.ts). La ruta queda solo para que una pantalla
+  // vieja reciba un mensaje claro en vez de un 404.
+  res.status(409).json({ error: 'El contenedor de una entrega lo elige el chofer al tocar "Ya entregué" — no se asigna al armar la ruta.' });
 });
 
 /**

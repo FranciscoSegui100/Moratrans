@@ -213,6 +213,11 @@ export function ClienteDetalle() {
   const puedeEditarZona = tieneRol(user, 'admin', 'operador');
   const [enviando, setEnviando] = useState(false);
   const [editandoRemito, setEditandoRemito] = useState<string | null>(null);
+  // Corregir el contenedor de una entrega ya hecha (el chofer eligió mal al
+  // tocar "Ya entregué") — mismo POST que el "Cambiar" de Viajes.
+  const puedeCambiarContenedor = tieneRol(user, 'admin', 'operador');
+  const [cambiandoContenedor, setCambiandoContenedor] = useState<string | null>(null);
+  const [contenedorNuevo, setContenedorNuevo] = useState('');
   const [remitoForm, setRemitoForm] = useState('');
   const [editandoZona, setEditandoZona] = useState<ViajeCliente | null>(null);
   const [zonaForm, setZonaForm] = useState('');
@@ -251,6 +256,22 @@ export function ClienteDetalle() {
       show('error', 'No se pudo reenviar', err.response?.data?.error);
     } finally {
       setReenviando(null);
+    }
+  }
+
+  async function cambiarContenedor(viajeId: string) {
+    if (!contenedorNuevo) return;
+    try {
+      const { data } = await api.post<{ anterior: string; nuevo: string }>(`/api/viajes/${viajeId}/cambiar-contenedor`, {
+        contenedor_numero: contenedorNuevo,
+      });
+      queryClient.invalidateQueries({ queryKey: ['clientes', telefono, 'viajes'] });
+      queryClient.invalidateQueries({ queryKey: ['contenedores'] });
+      setCambiandoContenedor(null);
+      setContenedorNuevo('');
+      show('success', 'Contenedor corregido', `${data.anterior} → ${data.nuevo}`);
+    } catch (err: any) {
+      show('error', 'No se pudo corregir', err.response?.data?.error);
     }
   }
 
@@ -470,6 +491,14 @@ export function ClienteDetalle() {
     queryKey: ['tarifas'],
     queryFn: () => api.get<Tarifa[]>('/api/tarifas').then((r) => r.data),
   });
+
+  // Mismo query key que Contenedores.tsx: si ya se visitó, sale de caché.
+  const { data: contenedores = [] } = useQuery({
+    queryKey: ['contenedores'],
+    queryFn: () => api.get<{ numero: string; estado: string; tamano: number | null }[]>('/api/contenedores').then((r) => r.data),
+    enabled: puedeCambiarContenedor,
+  });
+  const disponiblesParaCambio = contenedores.filter((c) => c.estado === 'disponible');
 
   const { data: viajesReales = [] } = useQuery({
     queryKey: ['clientes', telefono, 'viajes'],
@@ -959,7 +988,42 @@ export function ClienteDetalle() {
                           );
                         })()}
                       </td>
-                      <td className="mono">{v.contenedor_numero ?? '—'}</td>
+                      <td className="mono">
+                        {cambiandoContenedor === v.id ? (
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <select
+                              className="form-select"
+                              style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                              value={contenedorNuevo}
+                              onChange={(e) => setContenedorNuevo(e.target.value)}
+                            >
+                              <option value="">— Correcto —</option>
+                              {disponiblesParaCambio.map((c) => (
+                                <option key={c.numero} value={c.numero}>{c.tamano ? `${c.numero} (${c.tamano} m³)` : c.numero}</option>
+                              ))}
+                            </select>
+                            <button className="btn btn-success btn-sm" onClick={() => cambiarContenedor(v.id)}>OK</button>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setCambiandoContenedor(null)}>✕</button>
+                          </div>
+                        ) : v.contenedor_numero ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            {v.contenedor_numero}
+                            {/* Entrega ya hecha y con el ciclo abierto: se puede corregir si el chofer eligió mal. */}
+                            {puedeCambiarContenedor && v.tipo === 'entrega' && v.estado_visible === 'entregado' && v.estado !== 'completado' && (
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                title="El chofer eligió mal: cambiar por el contenedor que dejó de verdad"
+                                onClick={() => { setCambiandoContenedor(v.id); setContenedorNuevo(''); }}
+                              >
+                                Cambiar <Pencil size={11} strokeWidth={1.75} />
+                              </button>
+                            )}
+                          </span>
+                        ) : v.tipo === 'entrega' && v.estado_visible !== 'cancelado' ? (
+                          // El contenedor de una entrega lo elige el chofer al tocar "Ya entregué".
+                          <span className="text-muted" style={{ fontFamily: 'inherit' }}>Lo elige el chofer</span>
+                        ) : '—'}
+                      </td>
                       <td className="mono">
                         {editandoRemito === v.id ? (
                           <div style={{ display: 'flex', gap: '4px' }}>

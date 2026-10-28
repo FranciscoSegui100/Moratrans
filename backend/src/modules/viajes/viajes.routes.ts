@@ -538,6 +538,13 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
   if (!parsed.success) return res.status(400).json({ error: 'Datos inválidos' });
   const v = parsed.data;
 
+  // Mismo flujo en todos lados: el contenedor de una entrega (o el vacío de
+  // un recambio) lo elige el chofer al entregar, nunca antes (ver
+  // asignacionEntrega.service.ts).
+  if ((v.tipo === 'entrega' && v.contenedor_numero) || (v.tipo === 'recambio' && v.contenedor_numero_entrega)) {
+    return res.status(400).json({ error: 'El contenedor de una entrega lo elige el chofer al tocar "Ya entregué" — no se asigna antes.' });
+  }
+
   // Retiro/recambio sin esta validación se podía armar para cualquier
   // contenedor "entregado" que hubiera, sin importar a quién — mismo
   // criterio que ya usa el bot (pedirRetiro.flow.ts, recambio.flow.ts) vía
@@ -919,6 +926,13 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
         }
       }
 
+      if ('contenedor_numero' in parsed.data && parsed.data.contenedor_numero && viajeActual.tipo === 'entrega') {
+        // Una entrega pendiente no lleva contenedor (lo elige el chofer al
+        // entregar); una ya hecha se corrige con POST /:id/cambiar-contenedor.
+        return fail(viajeActual.completada_en
+          ? 'Para corregir el contenedor de una entrega ya hecha usá "Cambiar".'
+          : 'El contenedor de una entrega lo elige el chofer al tocar "Ya entregué" — no se asigna antes.', 409);
+      }
       if ('contenedor_numero' in parsed.data && parsed.data.contenedor_numero) {
         if (viajeActual.tipo === 'entrega') {
           // Cambiar el contenedor de una entrega libera la reserva del anterior

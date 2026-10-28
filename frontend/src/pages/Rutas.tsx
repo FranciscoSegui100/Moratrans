@@ -1919,6 +1919,9 @@ export function Rutas() {
                 )}
               </>
             )}
+            <div className="text-muted" style={{ fontSize: '0.78rem', alignSelf: 'center' }}>
+              El contenedor lo elige el chofer al entregar.
+            </div>
             <button
               type="submit"
               className="btn btn-primary"
