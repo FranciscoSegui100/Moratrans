@@ -1,7 +1,7 @@
 import { query } from '../../../config/db';
 import { sendText, sendList, sendButtons, downloadMedia } from '../graphApi';
 import { setSesion, clearSesion, registrarIntentoInvalido } from '../session.store';
-import { emitAlerta, emitMensajeChat, emitRecursoActualizado } from '../../../config/socket';
+import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 
 import { finalizarRetiro } from '../../../services/retiro.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
@@ -58,6 +58,43 @@ if (chofer.length === 0) {
   await sendText(to, '⚠️ No se reconoce el número de chofer.');
   return;
 }
+
+  if (sesion.paso === 'esperando_foto_entrega' && sesion.contexto?.viajeId) {
+    const viajeId = sesion.contexto.viajeId as string;
+    const num = (sesion.contexto.numero as string) || '';
+    const sinMenuSuelto = Boolean(sesion.contexto.sinMenuSuelto);
+
+    if ((m.tipo === 'image' || m.tipo === 'document') && m.mediaId) {
+      try {
+        const { buffer, mime } = await downloadMedia(m.mediaId);
+        const ext = detectarExtensionSegura(buffer, mime) || 'jpg';
+        const filename = `entrega_${viajeId}_${Date.now()}.${ext}`;
+        const rutaStorage = `comprobantes/${filename}`;
+        await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
+        const rutaCifrada = encrypt(rutaStorage);
+
+        await query(
+          `UPDATE viajes SET foto_entrega_url = $2 WHERE id = $1`,
+          [viajeId, rutaCifrada],
+        );
+        emitRecursoActualizado('viajes');
+        await adjuntarAUltimoMensaje(to, rutaCifrada);
+
+        await sendText(to, `📸 ¡Foto recibida y guardada! Muchas gracias, ${chofer[0].nombre}. 🙌`);
+      } catch (err: any) {
+        console.error('Error guardando foto de entrega del chofer:', err.message);
+        await sendText(to, `⚠️ No pudimos procesar la foto. Por favor, intentá enviarla de nuevo.`);
+        return;
+      }
+      return continuarPostFotoEntrega(to, chofer[0].nombre, viajeId, sinMenuSuelto);
+    }
+
+    await sendText(
+      to,
+      `📸 Por favor, enviá la *foto del contenedor${num ? ` ${num}` : ''} en la locación* para poder continuar.`,
+    );
+    return;
+  }
 
   // 2) Chofer reconocido: manejar cambio de estado, elección de contenedor,
   // y las dos acciones self-service (vaciado y autoasignación del vacío de
@@ -120,58 +157,6 @@ if (chofer.length === 0) {
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recvacio:') && sesion.paso === 'elegir_vacio_recambio') {
     return aplicarVacioRecambio(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('recvacio:', ''), sesion);
   }
-  if (esSeleccion && m.seleccionId?.startsWith('omitir_foto:')) {
-    const viajeId = m.seleccionId.replace('omitir_foto:', '') || (sesion.contexto?.viajeId as string);
-    const sinMenuSuelto = Boolean(sesion.contexto?.sinMenuSuelto);
-    await sendText(to, `👍 Entendido, continuamos sin foto.`);
-    if (viajeId) {
-      return continuarPostFotoEntrega(to, chofer[0].nombre, viajeId, sinMenuSuelto);
-    }
-    await clearSesion(to);
-    return menuChofer(to, chofer[0].nombre);
-  }
-  if ((m.tipo === 'image' || m.tipo === 'document') && m.mediaId && sesion.paso === 'esperando_foto_entrega') {
-    const viajeId = sesion.contexto?.viajeId as string | undefined;
-    const numero = sesion.contexto?.numero as string | undefined;
-    const sinMenuSuelto = Boolean(sesion.contexto?.sinMenuSuelto);
-    if (viajeId) {
-      try {
-        const { buffer, mime } = await downloadMedia(m.mediaId);
-        const ext = detectarExtensionSegura(buffer, mime) || 'jpg';
-        const filename = `entrega_${viajeId}_${Date.now()}.${ext}`;
-        const rutaStorage = `comprobantes/${filename}`;
-        await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
-        const rutaCifrada = encrypt(rutaStorage);
-
-        const [viajeRow] = await query<{ cliente_telefono: string | null; contenedor_numero: string | null }>(
-          `UPDATE viajes SET foto_entrega_url = $2 WHERE id = $1 RETURNING cliente_telefono, contenedor_numero`,
-          [viajeId, rutaCifrada],
-        );
-        emitRecursoActualizado('viajes');
-        await adjuntarAUltimoMensaje(to, rutaCifrada);
-
-        if (viajeRow?.cliente_telefono) {
-          const contNum = viajeRow.contenedor_numero ?? numero ?? '';
-          const textoFoto = `📸 Foto de entrega del contenedor${contNum ? ` *${contNum}*` : ''} en la locación (enviada por ${chofer[0].nombre}).`;
-          const [msgCliente] = await query(
-            `INSERT INTO mensajes_chat (telefono, origen, texto, adjunto_ruta)
-             VALUES ($1, 'bot', $2, $3)
-             RETURNING id, telefono, origen, texto, creado_en`,
-            [viajeRow.cliente_telefono, textoFoto, rutaCifrada],
-          );
-          if (msgCliente) {
-            emitMensajeChat({ ...msgCliente, tiene_adjunto: true });
-          }
-        }
-
-        await sendText(to, `📸 ¡Foto recibida y guardada! Muchas gracias, ${chofer[0].nombre}. 🙌`);
-      } catch (err: any) {
-        console.error('Error guardando foto de entrega del chofer:', err.message);
-        await sendText(to, `⚠️ No pudimos guardar la foto, pero tu entrega ya quedó registrada. Continuamos.`);
-      }
-      return continuarPostFotoEntrega(to, chofer[0].nombre, viajeId, sinMenuSuelto);
-    }
-  }
 
   // Soporte para respuestas por texto libre o si el cliente no usa botones interactivos
   const txt = (m.texto ?? '').toLowerCase().trim();
@@ -218,17 +203,6 @@ if (chofer.length === 0) {
   // debería tener que tocar nada más, así que al segundo intento fallido
   // seguido se avisa directo al panel en vez de insistir con el mismo
   // mensaje para siempre.
-  if (sesion.paso === 'esperando_foto_entrega' && sesion.contexto?.viajeId) {
-    const vId = sesion.contexto.viajeId as string;
-    const num = (sesion.contexto.numero as string) || '';
-    await sendButtons(
-      to,
-      `📸 Por favor, adjuntá la *foto del contenedor${num ? ` ${num}` : ''} en la locación* o tocá *Omitir foto* para continuar.`,
-      [{ id: `omitir_foto:${vId}`, title: '⏭️ Omitir foto' }],
-    );
-    return;
-  }
-
   const intentosFallidos = await registrarIntentoInvalido(to);
   if (intentosFallidos < LIMITE_INTENTOS_INVALIDOS) {
     await sendText(
@@ -582,10 +556,9 @@ async function pedirFotoEntrega(
     paso: 'esperando_foto_entrega',
     contexto: { viajeId, numero, sinMenuSuelto },
   });
-  await sendButtons(
+  await sendText(
     to,
-    `📸 *Foto de entrega*\n\nPor favor, adjuntá una *foto del contenedor ${numero} en la locación* para dejar constancia de la entrega.`,
-    [{ id: `omitir_foto:${viajeId}`, title: '⏭️ Omitir foto' }],
+    `📸 *Foto de entrega*\n\nPor favor, adjuntá una *foto del contenedor ${numero} en la locación* para dejar constancia de la entrega y continuar.`,
   );
 }
 
