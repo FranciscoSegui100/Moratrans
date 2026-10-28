@@ -9,7 +9,17 @@ import { api } from '../api/client';
  * vez de `pagoId`) descarga el archivo que el cliente mandó en ese mensaje
  * del chat, que puede no estar todavía registrado como pago.
  */
-export function ComprobanteViewer({ pagoId, adjuntoId, mensajeId }: { pagoId?: string; adjuntoId?: string; mensajeId?: string }) {
+export function ComprobanteViewer({
+  pagoId,
+  adjuntoId,
+  mensajeId,
+  viajeFotoId,
+}: {
+  pagoId?: string;
+  adjuntoId?: string;
+  mensajeId?: string;
+  viajeFotoId?: string;
+}) {
   const [url, setUrl] = useState<string | null>(null);
   const [esPdf, setEsPdf] = useState(false);
   const [error, setError] = useState(false);
@@ -17,11 +27,13 @@ export function ComprobanteViewer({ pagoId, adjuntoId, mensajeId }: { pagoId?: s
   useEffect(() => {
     let objectUrl: string | null = null;
     let cancelado = false;
-    const endpoint = mensajeId
-      ? `/api/chat/mensaje/${mensajeId}/adjunto`
-      : adjuntoId
-        ? `/api/pagos/${pagoId}/adjuntos/${adjuntoId}`
-        : `/api/pagos/${pagoId}/comprobante`;
+    const endpoint = viajeFotoId
+      ? `/api/clientes/viajes/${viajeFotoId}/foto-entrega`
+      : mensajeId
+        ? `/api/chat/mensaje/${mensajeId}/adjunto`
+        : adjuntoId
+          ? `/api/pagos/${pagoId}/adjuntos/${adjuntoId}`
+          : `/api/pagos/${pagoId}/comprobante`;
 
     api
       .get(endpoint, { responseType: 'blob' })
@@ -37,7 +49,7 @@ export function ComprobanteViewer({ pagoId, adjuntoId, mensajeId }: { pagoId?: s
       cancelado = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [pagoId, adjuntoId, mensajeId]);
+  }, [pagoId, adjuntoId, mensajeId, viajeFotoId]);
 
   if (error) return <div className="comprobante-error">No se pudo cargar el comprobante</div>;
   if (!url) return <div className="comprobante-loading">Cargando comprobante…</div>;

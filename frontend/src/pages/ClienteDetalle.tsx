@@ -92,6 +92,7 @@ interface ViajeCliente {
   chofer_nombre: string | null;
   es_cuenta_corriente?: boolean;
   vence_en: string | null;
+  tiene_foto_entrega?: boolean;
   comprobantes?: Comprobante[];
 }
 
@@ -217,6 +218,7 @@ export function ClienteDetalle() {
   const [zonaForm, setZonaForm] = useState('');
   const [guardandoZona, setGuardandoZona] = useState(false);
   const [viajeComprobantes, setViajeComprobantes] = useState<ViajeCliente | null>(null);
+  const [viajeFotoEntrega, setViajeFotoEntrega] = useState<ViajeCliente | null>(null);
   const [comprobanteAbono, setComprobanteAbono] = useState<{ id: string; fecha: string; monto: number } | null>(null);
   const [reenviando, setReenviando] = useState<string | null>(null);
   const [editandoAbono, setEditandoAbono] = useState<string | null>(null);
@@ -230,6 +232,7 @@ export function ClienteDetalle() {
   const [guardandoViaje, setGuardandoViaje] = useState(false);
 
   useEscapeKey(() => setViajeComprobantes(null), viajeComprobantes !== null);
+  useEscapeKey(() => setViajeFotoEntrega(null), viajeFotoEntrega !== null);
   useEscapeKey(() => !guardandoZona && setEditandoZona(null), editandoZona !== null);
   useEscapeKey(() => setComprobanteAbono(null), comprobanteAbono !== null);
   useEscapeKey(() => !guardandoViaje && setMostrarCargarViaje(false), mostrarCargarViaje);
@@ -1036,10 +1039,23 @@ export function ClienteDetalle() {
                       <td style={{ whiteSpace: 'nowrap' }}>{v.vence_en ? formatearFecha(v.vence_en) : <span className="text-muted">—</span>}</td>
                       <td>{v.chofer_nombre ?? '—'}</td>
                       <td>
-                        {(() => {
-                          const e = ESTADO_VISIBLE[v.estado_visible] ?? { texto: v.estado, badge: v.estado };
-                          return <span className={`badge ${e.badge}`}>{e.texto}</span>;
-                        })()}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                          {(() => {
+                            const e = ESTADO_VISIBLE[v.estado_visible] ?? { texto: v.estado, badge: v.estado };
+                            return <span className={`badge ${e.badge}`}>{e.texto}</span>;
+                          })()}
+                          {v.tiene_foto_entrega && (
+                            <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => setViajeFotoEntrega(v)}
+                                title="Ver foto del contenedor entregado en la locación"
+                              >
+                                📸 Ver foto
+                              </button>
+                            </RoleGate>
+                          )}
+                        </div>
                       </td>
                     </tr>
                     );
@@ -1049,6 +1065,29 @@ export function ClienteDetalle() {
             </div>
           </div>
         ))
+      )}
+
+      {viajeFotoEntrega && (
+        <div className="modal-overlay" onClick={() => setViajeFotoEntrega(null)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="section-title" style={{ margin: 0 }}>
+                📸 Foto de entrega{viajeFotoEntrega.contenedor_numero ? ` · Contenedor ${viajeFotoEntrega.contenedor_numero}` : ''}
+              </div>
+              <button className="modal-close" onClick={() => setViajeFotoEntrega(null)}>
+                <X size={18} strokeWidth={2} />
+              </button>
+            </div>
+            <p className="text-muted" style={{ marginTop: 0, marginBottom: 8 }}>
+              {formatearFecha(viajeFotoEntrega.fecha)} · {tipoBulto(viajeFotoEntrega)}
+              {viajeFotoEntrega.destino_direccion
+                ? ` · ${viajeFotoEntrega.destino_direccion}`
+                : viajeFotoEntrega.zona ? ` · ${viajeFotoEntrega.zona}` : ''}
+              {viajeFotoEntrega.chofer_nombre ? ` · Chofer: ${viajeFotoEntrega.chofer_nombre}` : ''}
+            </p>
+            <ComprobanteViewer viajeFotoId={viajeFotoEntrega.id} />
+          </div>
+        </div>
       )}
 
       {viajeComprobantes && (() => {

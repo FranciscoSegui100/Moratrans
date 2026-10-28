@@ -8,8 +8,10 @@ import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
 import { datosBancarios, pedidosAbiertos } from '../whatsapp/flows/pago.flow';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitRecursoActualizado } from '../../config/socket';
-import { encrypt, encryptBuffer } from '../../services/crypto.service';
-import { subirArchivo } from '../../services/storage.service';
+import path from 'path';
+import { decrypt, decryptBuffer, encrypt, encryptBuffer } from '../../services/crypto.service';
+import { descargarArchivo, subirArchivo } from '../../services/storage.service';
+import { mimeDeExtension } from '../pagos/pagos.routes';
 import { normalizarTelefonoAR } from '../../services/telefono.service';
 import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
 
@@ -487,6 +489,7 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
             v.grupo_id, ch.nombre AS chofer_nombre,
             (v.es_cuenta_corriente AND NOT (v.tipo = 'retiro' AND v.grupo_id IS NOT NULL)) AS es_cuenta_corriente,
             co.vence_en,
+            (v.foto_entrega_url IS NOT NULL) AS tiene_foto_entrega,
             -- Solo el pago propio del viaje. Las extensiones de retiro ya no se
             -- anidan acá: cada una es su propia fila (rama de abajo del UNION),
             -- así en la ficha cada fila es una sola cosa — entrega, retiro,
@@ -524,6 +527,7 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
             NULL::numeric AS destino_lat, NULL::numeric AS destino_lng,
             NULL::text AS remito, p.monto AS importe, NULL::uuid AS grupo_id, NULL::text AS chofer_nombre,
             p.es_cuenta_corriente, co.vence_en,
+            FALSE AS tiene_foto_entrega,
             json_build_array(json_build_object(
               'id', p.id, 'tipo', p.tipo, 'monto', p.monto, 'estado', p.estado,
               'es_cuenta_corriente', p.es_cuenta_corriente,
@@ -539,6 +543,29 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
     [req.params.telefono, mes],
   );
   res.json(rows);
+});
+
+/**
+ * GET /api/clientes/viajes/:viajeId/foto-entrega — devuelve la foto tomada por
+ * el chofer al entregar el contenedor en la locación. Se descifra en memoria
+ * igual que los comprobantes de pago.
+ */
+clientesRouter.get('/viajes/:viajeId/foto-entrega', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
+  const [viaje] = await query<{ foto_entrega_url: string | null }>(
+    'SELECT foto_entrega_url FROM viajes WHERE id = $1',
+    [req.params.viajeId],
+  );
+  if (!viaje?.foto_entrega_url) return res.status(404).json({ error: 'Foto de entrega no encontrada' });
+
+  const filename = path.basename(decrypt(viaje.foto_entrega_url));
+  try {
+    const buffer = decryptBuffer(await descargarArchivo(`comprobantes/${filename}`));
+    res.setHeader('Content-Type', mimeDeExtension(path.extname(filename)));
+    res.send(buffer);
+  } catch (e) {
+    console.error('Error descargando foto de entrega de Supabase Storage:', e);
+    res.status(404).json({ error: 'Archivo no encontrado en el storage' });
+  }
 });
 
 const createSchema = z.object({

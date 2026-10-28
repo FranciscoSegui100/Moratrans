@@ -69,6 +69,7 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
             v.remito, v.importe, v.ubicacion_id, v.ubicacion_direccion, v.ruta_id, v.orden,
             v.ruta_confirmada_en, v.completada_en, v.chofer_notificado_en,
             v.es_cuenta_corriente, v.pago_id,
+            (v.foto_entrega_url IS NOT NULL) AS tiene_foto_entrega,
             -- Origen/destino final del viaje: la entrega sale del depósito
             -- (ubicacion_direccion) y llega a lo del cliente (destino_direccion);
             -- el retiro sale de lo del cliente y llega al vaciadero. No se

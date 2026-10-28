@@ -1,13 +1,16 @@
 import { query } from '../../../config/db';
-import { sendText, sendList, sendButtons } from '../graphApi';
+import { sendText, sendList, sendButtons, downloadMedia } from '../graphApi';
 import { setSesion, clearSesion, registrarIntentoInvalido } from '../session.store';
-import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
+import { emitAlerta, emitMensajeChat, emitRecursoActualizado } from '../../../config/socket';
 
 import { finalizarRetiro } from '../../../services/retiro.service';
 import { resolverUbicacion } from '../../../services/ubicaciones.service';
 import { DIAS_ALQUILER_ANTES_RETIRO, LIMITE_INTENTOS_INVALIDOS } from '../../../config/bot.config';
 import { avisarSiguienteParadaRuta, avisarSiguienteParadaDesde, avisarChoferViaje, avisarChoferRecambio } from '../../viajes/viajes.routes';
 import { notificarClienteServicioFinalizado } from '../notificacionesCliente';
+import { subirArchivo, detectarExtensionSegura } from '../../../services/storage.service';
+import { encrypt, encryptBuffer } from '../../../services/crypto.service';
+import { adjuntarAUltimoMensaje } from '../chatLog.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
 
@@ -117,6 +120,58 @@ if (chofer.length === 0) {
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recvacio:') && sesion.paso === 'elegir_vacio_recambio') {
     return aplicarVacioRecambio(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('recvacio:', ''), sesion);
   }
+  if (esSeleccion && m.seleccionId?.startsWith('omitir_foto:')) {
+    const viajeId = m.seleccionId.replace('omitir_foto:', '') || (sesion.contexto?.viajeId as string);
+    const sinMenuSuelto = Boolean(sesion.contexto?.sinMenuSuelto);
+    await sendText(to, `👍 Entendido, continuamos sin foto.`);
+    if (viajeId) {
+      return continuarPostFotoEntrega(to, chofer[0].nombre, viajeId, sinMenuSuelto);
+    }
+    await clearSesion(to);
+    return menuChofer(to, chofer[0].nombre);
+  }
+  if ((m.tipo === 'image' || m.tipo === 'document') && m.mediaId && sesion.paso === 'esperando_foto_entrega') {
+    const viajeId = sesion.contexto?.viajeId as string | undefined;
+    const numero = sesion.contexto?.numero as string | undefined;
+    const sinMenuSuelto = Boolean(sesion.contexto?.sinMenuSuelto);
+    if (viajeId) {
+      try {
+        const { buffer, mime } = await downloadMedia(m.mediaId);
+        const ext = detectarExtensionSegura(buffer, mime) || 'jpg';
+        const filename = `entrega_${viajeId}_${Date.now()}.${ext}`;
+        const rutaStorage = `comprobantes/${filename}`;
+        await subirArchivo(encryptBuffer(buffer), rutaStorage, 'application/octet-stream');
+        const rutaCifrada = encrypt(rutaStorage);
+
+        const [viajeRow] = await query<{ cliente_telefono: string | null; contenedor_numero: string | null }>(
+          `UPDATE viajes SET foto_entrega_url = $2 WHERE id = $1 RETURNING cliente_telefono, contenedor_numero`,
+          [viajeId, rutaCifrada],
+        );
+        emitRecursoActualizado('viajes');
+        await adjuntarAUltimoMensaje(to, rutaCifrada);
+
+        if (viajeRow?.cliente_telefono) {
+          const contNum = viajeRow.contenedor_numero ?? numero ?? '';
+          const textoFoto = `📸 Foto de entrega del contenedor${contNum ? ` *${contNum}*` : ''} en la locación (enviada por ${chofer[0].nombre}).`;
+          const [msgCliente] = await query(
+            `INSERT INTO mensajes_chat (telefono, origen, texto, adjunto_ruta)
+             VALUES ($1, 'bot', $2, $3)
+             RETURNING id, telefono, origen, texto, creado_en`,
+            [viajeRow.cliente_telefono, textoFoto, rutaCifrada],
+          );
+          if (msgCliente) {
+            emitMensajeChat({ ...msgCliente, tiene_adjunto: true });
+          }
+        }
+
+        await sendText(to, `📸 ¡Foto recibida y guardada! Muchas gracias, ${chofer[0].nombre}. 🙌`);
+      } catch (err: any) {
+        console.error('Error guardando foto de entrega del chofer:', err.message);
+        await sendText(to, `⚠️ No pudimos guardar la foto, pero tu entrega ya quedó registrada. Continuamos.`);
+      }
+      return continuarPostFotoEntrega(to, chofer[0].nombre, viajeId, sinMenuSuelto);
+    }
+  }
 
   // Soporte para respuestas por texto libre o si el cliente no usa botones interactivos
   const txt = (m.texto ?? '').toLowerCase().trim();
@@ -163,6 +218,17 @@ if (chofer.length === 0) {
   // debería tener que tocar nada más, así que al segundo intento fallido
   // seguido se avisa directo al panel en vez de insistir con el mismo
   // mensaje para siempre.
+  if (sesion.paso === 'esperando_foto_entrega' && sesion.contexto?.viajeId) {
+    const vId = sesion.contexto.viajeId as string;
+    const num = (sesion.contexto.numero as string) || '';
+    await sendButtons(
+      to,
+      `📸 Por favor, adjuntá la *foto del contenedor${num ? ` ${num}` : ''} en la locación* o tocá *Omitir foto* para continuar.`,
+      [{ id: `omitir_foto:${vId}`, title: '⏭️ Omitir foto' }],
+    );
+    return;
+  }
+
   const intentosFallidos = await registrarIntentoInvalido(to);
   if (intentosFallidos < LIMITE_INTENTOS_INVALIDOS) {
     await sendText(
@@ -435,14 +501,14 @@ async function cascadearParejaRecambio(
   numero: string,
   choferId: string,
   choferNombre: string,
-): Promise<string> {
+): Promise<{ texto: string; entregaCascada?: { id: string; numero: string } }> {
   const [propio] = await query<{ tipo: string; grupo_id: string | null }>(
     `SELECT tipo, grupo_id FROM viajes
       WHERE contenedor_numero = $1 AND chofer_id = $2 AND grupo_id IS NOT NULL AND estado IN ('programado', 'en_curso')
       ORDER BY creado_en DESC LIMIT 1`,
     [numero, choferId],
   );
-  if (!propio?.grupo_id) return '';
+  if (!propio?.grupo_id) return { texto: '' };
 
   const parejaTipo = propio.tipo === 'retiro' ? 'entrega' : 'retiro';
   const [pareja] = await query<{ id: string; contenedor_numero: string | null }>(
@@ -451,13 +517,13 @@ async function cascadearParejaRecambio(
       ORDER BY creado_en DESC LIMIT 1`,
     [propio.grupo_id, parejaTipo],
   );
-  if (!pareja?.contenedor_numero) return ''; // el vacío todavía no se asignó — nada para cascadear
+  if (!pareja?.contenedor_numero) return { texto: '' }; // el vacío todavía no se asignó — nada para cascadear
 
   const [cont] = await query<{ estado: string }>('SELECT estado FROM contenedores WHERE numero = $1', [pareja.contenedor_numero]);
 
   if (parejaTipo === 'entrega') {
     // La pareja es el vacío: se entrega si está 'reservado' (ya asignado, esperando salir).
-    if (cont?.estado !== 'reservado') return '';
+    if (cont?.estado !== 'reservado') return { texto: '' };
     // Mismo vencimiento que cualquier entrega (días de alquiler desde AHORA):
     // antes acá no se cargaba vence_en y el vacío de un recambio quedaba sin
     // fecha — nunca le llegaba el recordatorio ni el retiro automático.
@@ -470,11 +536,14 @@ async function cascadearParejaRecambio(
     // para que valga sin importar el orden en que el llamador emita lo suyo.
     emitRecursoActualizado('contenedores');
     emitRecursoActualizado('viajes');
-    return ` y entregaste *${pareja.contenedor_numero}*`;
+    return {
+      texto: ` y entregaste *${pareja.contenedor_numero}*`,
+      entregaCascada: { id: pareja.id, numero: pareja.contenedor_numero },
+    };
   }
 
   // La pareja es el lleno: se retira (yendo a vaciar) si está 'entregado'.
-  if (cont?.estado !== 'entregado') return '';
+  if (cont?.estado !== 'entregado') return { texto: '' };
   const vaciadero = await resolverUbicacion('vaciadero');
   await query(
     `UPDATE viajes SET estado = 'en_curso', completada_en = now(),
@@ -493,7 +562,53 @@ async function cascadearParejaRecambio(
     [pareja.contenedor_numero, `${choferNombre} completó el recambio: retiró ${pareja.contenedor_numero}, va camino al vaciadero.`],
   );
   if (alerta) emitAlerta(alerta);
-  return ` y retiraste *${pareja.contenedor_numero}* (yendo a vaciar)`;
+  return { texto: ` y retiraste *${pareja.contenedor_numero}* (yendo a vaciar)` };
+}
+
+/**
+ * Luego de registrar la entrega de un contenedor, pide al chofer que adjunte
+ * una foto del contenedor en la locación antes de continuar con el cobro en
+ * efectivo o la siguiente parada de la ruta.
+ */
+async function pedirFotoEntrega(
+  to: string,
+  viajeId: string,
+  numero: string,
+  sinMenuSuelto = false,
+): Promise<void> {
+  await setSesion({
+    telefono: to,
+    flujo: 'chofer',
+    paso: 'esperando_foto_entrega',
+    contexto: { viajeId, numero, sinMenuSuelto },
+  });
+  await sendButtons(
+    to,
+    `📸 *Foto de entrega*\n\nPor favor, adjuntá una *foto del contenedor ${numero} en la locación* para dejar constancia de la entrega.`,
+    [{ id: `omitir_foto:${viajeId}`, title: '⏭️ Omitir foto' }],
+  );
+}
+
+/**
+ * Continúa el flujo de entrega una vez que el chofer envió la foto (o la omitió):
+ * pregunta por el cobro en efectivo si aplica y, si no, avisa la siguiente parada.
+ */
+async function continuarPostFotoEntrega(
+  to: string,
+  choferNombre: string,
+  viajeId: string,
+  sinMenuSuelto = false,
+): Promise<void> {
+  await clearSesion(to);
+  if (await preguntarCobroEfectivo(to, viajeId)) return;
+
+  const siguienteEnviada = await avisarSiguienteParadaRuta(viajeId).catch((e) => {
+    console.error('Error avisando siguiente parada:', e.message);
+    return false;
+  });
+  if (!siguienteEnviada && !sinMenuSuelto) {
+    return menuChofer(to, choferNombre);
+  }
 }
 
 /**
@@ -596,7 +711,7 @@ async function aplicarVacioRecambio(
       }).catch((e) => console.error('Error enviando encuesta al cliente (recambio):', e));
     }
 
-    const mensajeLleno = await cascadearParejaRecambio(numero, choferId, choferNombre);
+    const { texto: mensajeLleno } = await cascadearParejaRecambio(numero, choferId, choferNombre);
 
     emitRecursoActualizado('contenedores');
     emitRecursoActualizado('viajes');
@@ -605,19 +720,7 @@ async function aplicarVacioRecambio(
       `✅ Recambio registrado. Contenedor *${numero}* entregado${mensajeLleno}. ${mensajeLleno ? 'Avisame por acá cuando vacíes el lleno (opción 🗑️ del menú). ' : ''}Gracias por tu trabajo. 🙌`,
     );
 
-    // Si se preguntó el cobro, la parada siguiente sale cuando conteste (de a una).
-    if (await preguntarCobroEfectivo(to, entregaId)) return;
-
-    // Después de la confirmación: avisar la parada siguiente de la ruta (una
-    // sola vez, con las dos mitades del recambio ya completas). Si se retiró
-    // el lleno no se manda el menú suelto: traería la lista de "¿ya vaciaste?"
-    // pegada al recambio recién hecho — el vaciado lo avisa el chofer después.
-    const siguienteEntrega = await avisarSiguienteParadaRuta(entregaId).catch((e) => {
-      console.error('Error avisando siguiente parada:', e.message);
-      return false;
-    });
-    if (!siguienteEntrega && !mensajeLleno) return menuChofer(to, choferNombre);
-    return;
+    return pedirFotoEntrega(to, entregaId, numero, !!mensajeLleno);
   } catch (err: any) {
     await sendText(to, `⚠️ No pudimos completar el recambio con el contenedor ${numero}. Probá de nuevo.`);
     console.error('Error en aplicarVacioRecambio:', err.message);
@@ -806,7 +909,7 @@ async function aplicarEstado(
       // Si este lleno es parte de un recambio y el vacío pareja ya está
       // asignado y en 'reservado', se entrega en el mismo momento — así no
       // importa si el chofer marca primero el lleno o el vacío.
-      const extraVacio = await cascadearParejaRecambio(numero, choferId, choferNombre);
+      const { texto: extraVacio, entregaCascada } = await cascadearParejaRecambio(numero, choferId, choferNombre);
       emitRecursoActualizado('contenedores');
       emitRecursoActualizado('viajes');
       await clearSesion(to);
@@ -814,6 +917,9 @@ async function aplicarEstado(
         to,
         `📥 Registrado. Contenedor *${numero}* marcado como retirado${extraVacio}. ¡Gracias por tu trabajo! 🙌`,
       );
+      if (entregaCascada) {
+        return pedirFotoEntrega(to, entregaCascada.id, entregaCascada.numero, true);
+      }
       // Recambio pagado en efectivo: igual que una entrega, preguntar si cobró.
       // Si se preguntó, la parada siguiente sale cuando conteste (de a una).
       if (await preguntarCobroEfectivo(to, retiroId)) return;
@@ -909,27 +1015,11 @@ async function aplicarEstado(
     // Si esto es el vacío de un recambio y el lleno pareja ya está listo
     // (entregado), se retira en el mismo momento (yendo a vaciar) — así no
     // importa si el chofer marca primero el vacío o el lleno.
-    const extra = await cascadearParejaRecambio(numero, choferId, choferNombre);
-    // Si de yapa se retiró el lleno de un recambio, sin menú suelto (mismo
-    // criterio que el branch 'retirado': nada de "¿ya vaciaste?" pegado).
-    if (extra) siguienteEnviada = true;
+    const { texto: extra } = await cascadearParejaRecambio(numero, choferId, choferNombre);
     await clearSesion(to);
     await sendText(to, `✅ Registrado. Contenedor *${numero}* marcado como *${estado.replace('_', ' ')}*${extra}. 💪`);
 
-    // Si se preguntó el cobro, la parada siguiente sale cuando conteste (de a
-    // una) — y tampoco el menú suelto de abajo.
-    const cobroPreguntado = await preguntarCobroEfectivo(to, entregaAsignada.id);
-    if (cobroPreguntado) siguienteEnviada = true;
-
-    // Después de la confirmación: si hay una parada siguiente en la ruta se la
-    // avisa (ese aviso trae su propio menú, así que abajo no se manda el suelto).
-    for (const v of cobroPreguntado ? [] : entregasCompletadas) {
-      const enviada = await avisarSiguienteParadaRuta(v.id).catch((e) => {
-        console.error('Error avisando siguiente parada:', e.message);
-        return false;
-      });
-      if (enviada) siguienteEnviada = true;
-    }
+    return pedirFotoEntrega(to, entregaAsignada.id, numero, !!extra);
   } catch (err: any) {
     // Error de transición inválida u otro. Se suma el estado actual real del
     // contenedor al mensaje — "puede que no esté en el estado correcto" sin

@@ -52,6 +52,7 @@ interface Viaje {
   orden: number | null;
   ruta_confirmada_en: string | null;
   completada_en: string | null;
+  tiene_foto_entrega?: boolean;
   comprobantes: Comprobante[];
 }
 interface Contenedor { numero: string; estado: string; vence_en: string | null; }
@@ -100,9 +101,11 @@ export function Viajes() {
   const [asignarContenedorNumero, setAsignarContenedorNumero] = useState('');
   const [pestana, setPestana] = useState<PestanaViajes>('activos');
   const [viajeComprobantes, setViajeComprobantes] = useState<Viaje | null>(null);
+  const [viajeFotoEntrega, setViajeFotoEntrega] = useState<Viaje | null>(null);
   const [remitoImprimir, setRemitoImprimir] = useState<Viaje | null>(null);
 
   useEscapeKey(() => setViajeComprobantes(null), viajeComprobantes !== null);
+  useEscapeKey(() => setViajeFotoEntrega(null), viajeFotoEntrega !== null);
   useEscapeKey(() => setRemitoImprimir(null), remitoImprimir !== null);
 
   const [preset, setPreset] = useState<PresetRango>(() => (fechaUrl ? 'custom' : 'semana'));
@@ -462,7 +465,7 @@ export function Viajes() {
                     const inicial = v.comprobantes.find((c) => c.tipo !== 'alargue_retiro');
                     const extensiones = v.comprobantes.filter((c) => c.tipo === 'alargue_retiro');
                     const esCC = v.es_cuenta_corriente || inicial?.es_cuenta_corriente;
-                    if (!esCC && !inicial && extensiones.length === 0) {
+                    if (!esCC && !inicial && extensiones.length === 0 && !v.tiene_foto_entrega) {
                       return <span className="text-muted">—</span>;
                     }
                     return (
@@ -480,6 +483,17 @@ export function Viajes() {
                           <RoleGate roles={['admin', 'operador', 'finanzas']}>
                             <button className="btn btn-ghost btn-sm" onClick={() => setViajeComprobantes(v)}>
                               ⏳ Extensión{extensiones.length > 1 ? ` (${extensiones.length})` : ''}
+                            </button>
+                          </RoleGate>
+                        )}
+                        {v.tiene_foto_entrega && (
+                          <RoleGate roles={['admin', 'operador', 'finanzas']}>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => setViajeFotoEntrega(v)}
+                              title="Ver foto del contenedor entregado en la locación"
+                            >
+                              📸 Foto
                             </button>
                           </RoleGate>
                         )}
@@ -513,6 +527,25 @@ export function Viajes() {
           </tbody>
         </table>
       </div>
+
+      {viajeFotoEntrega && (
+        <div className="modal-overlay" onClick={() => setViajeFotoEntrega(null)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="section-title" style={{ margin: 0 }}>
+                📸 Foto de entrega{viajeFotoEntrega.contenedor_numero ? ` · ${viajeFotoEntrega.contenedor_numero}` : ''}
+              </div>
+              <button className="modal-close" onClick={() => setViajeFotoEntrega(null)}>
+                <X size={18} strokeWidth={2} />
+              </button>
+            </div>
+            <p className="text-muted" style={{ marginTop: 0 }}>
+              {formatearFecha(viajeFotoEntrega.fecha)} · {viajeFotoEntrega.cliente_telefono ?? '—'} · {viajeFotoEntrega.destino_final_direccion ?? viajeFotoEntrega.destino_direccion ?? '—'}
+            </p>
+            <ComprobanteViewer viajeFotoId={viajeFotoEntrega.id} />
+          </div>
+        </div>
+      )}
 
       {viajeComprobantes && (
         <div className="modal-overlay" onClick={() => setViajeComprobantes(null)}>
