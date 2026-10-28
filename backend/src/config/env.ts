@@ -19,7 +19,12 @@ const schema = z.object({
   JWT_SECRET: z.string().min(16),
   JWT_ACCESS_EXPIRES: z.string().default('2h'),
   // Vida del refresh token (opaco, hasheado en la tabla `sesiones`, cookie mt_rt).
-  REFRESH_TTL_DIAS: z.coerce.number().default(7),
+  // Sin "Recordarme": se cierra tras estas horas SIN USO real del panel
+  // (mouse/teclado/toques, ver frontend/src/lib/actividad.ts) — no cuenta la
+  // renovación automática de fondo, que si no mantenía viva para siempre una
+  // pestaña abierta en una compu de la oficina.
+  SESION_INACTIVIDAD_HORAS: z.coerce.number().positive().default(12),
+  // Con "Recordarme": días desde el último uso (pensado para el celular o la compu personal).
   REFRESH_TTL_RECORDAR_DIAS: z.coerce.number().default(30),
   WA_GRAPH_VERSION: z.string().default('v21.0'),
   WA_PHONE_NUMBER_ID: z.string().default('000000000000000'),

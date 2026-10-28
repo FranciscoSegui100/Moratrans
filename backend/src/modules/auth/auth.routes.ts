@@ -32,6 +32,7 @@ import {
   REFRESH_COOKIE,
   crearSesion,
   revocarSesionPorId,
+  restanteSinRecordarMs,
   revocarSesionPorHash,
   revocarTodasLasSesiones,
   hashToken,
@@ -73,9 +74,9 @@ function firmarAccessToken(user: UsuarioFila) {
 }
 
 /** Emite un par de cookies (access + refresh) nuevo para un usuario ya autenticado. */
-async function emitirSesion(res: Response, req: Request, user: UsuarioFila, recordar: boolean, reemplazaA?: string) {
+async function emitirSesion(res: Response, req: Request, user: UsuarioFila, recordar: boolean, reemplazaA?: string, inactivoMs?: number) {
   const accessToken = firmarAccessToken(user);
-  const { refreshToken, dias } = await crearSesion({ usuarioId: user.id, req, recordar, reemplazaA });
+  const { refreshToken, dias } = await crearSesion({ usuarioId: user.id, req, recordar, reemplazaA, inactivoMs });
   setAccessCookie(res, accessToken);
   setRefreshCookie(res, refreshToken, dias);
   setCsrfCookie(res, dias * 24 * 60 * 60 * 1000);
@@ -179,7 +180,7 @@ authRouter.post('/login', loginLimiter, async (req: Request, res: Response) => {
   await emitirSesion(res, req, user, recordar);
   await registrarEventoAuth({ usuarioId: user.id, email, tipo: 'login_exitoso', req });
   await chequearDispositivoNuevo(user.id, user.email, req);
-  res.json({ user: { id: user.id, email: user.email, rol: user.rol, mfaEnabled: false, mfaMetodo: null } });
+  res.json({ user: { id: user.id, email: user.email, rol: user.rol, mfaEnabled: false, mfaMetodo: null, recordar } });
 });
 
 const mfaVerifySchema = z.object({
@@ -262,7 +263,7 @@ authRouter.post('/mfa/verify', mfaLimiter, async (req: Request, res: Response) =
   await registrarEventoAuth({ usuarioId: user.id, email: user.email, tipo: 'login_exitoso', req, detalle: { via: viaBackup ? 'mfa_backup' : 'mfa' } });
   await chequearDispositivoNuevo(user.id, user.email, req);
   res.json({
-    user: { id: user.id, email: user.email, rol: user.rol, mfaEnabled: true, mfaMetodo: user.mfa_secret_enc ? 'totp' : 'email' },
+    user: { id: user.id, email: user.email, rol: user.rol, mfaEnabled: true, mfaMetodo: user.mfa_secret_enc ? 'totp' : 'email', recordar: challenge.recordar },
     backupCodeUsado: viaBackup,
   });
 });
@@ -404,6 +405,18 @@ authRouter.post('/refresh', refreshLimiter, requireCsrf, async (req: Request, re
     return res.status(401).json({ error: 'Sesión expirada' });
   }
 
+  // El panel avisa hace cuánto no hay uso real (mouse/teclado, ver
+  // frontend/src/lib/actividad.ts): la renovación automática de fondo no
+  // cuenta como uso. Sin "Recordarme", pasado el límite la sesión se cierra.
+  const inactivoMs = Number(req.header('x-inactivo-ms'));
+  const inactivo = Number.isFinite(inactivoMs) && inactivoMs > 0 ? inactivoMs : 0;
+  if (!sesion.recordar && restanteSinRecordarMs(inactivo) === 0) {
+    await revocarSesionPorId(sesion.id);
+    await registrarEventoAuth({ usuarioId: sesion.usuario_id, tipo: 'logout', req, detalle: { motivo: 'inactividad' } });
+    clearAuthCookies(res);
+    return res.status(401).json({ error: 'La sesión se cerró por inactividad' });
+  }
+
   const userRows = await query<UsuarioFila>(
     'SELECT id, email, rol, activo, token_version FROM usuarios WHERE id = $1',
     [sesion.usuario_id],
@@ -415,8 +428,8 @@ authRouter.post('/refresh', refreshLimiter, requireCsrf, async (req: Request, re
   }
 
   await revocarSesionPorId(sesion.id);
-  await emitirSesion(res, req, user, sesion.recordar, sesion.id);
-  res.json({ user: { id: user.id, email: user.email, rol: user.rol } });
+  await emitirSesion(res, req, user, sesion.recordar, sesion.id, inactivo);
+  res.json({ user: { id: user.id, email: user.email, rol: user.rol, recordar: sesion.recordar } });
 });
 
 authRouter.post('/logout', requireCsrf, async (req: Request, res: Response) => {
@@ -441,6 +454,12 @@ authRouter.get('/me', requireAuth, async (req: Request, res: Response) => {
     [req.user!.id],
   );
   const fila = rows[0];
+  // ¿Esta sesión es "Recordarme"? El panel lo necesita para saber si aplica
+  // el cierre por inactividad (la cookie del refresh viaja a /api/auth/*).
+  const refresh = req.cookies?.[REFRESH_COOKIE];
+  const [sesion] = refresh
+    ? await query<{ recordar: boolean }>('SELECT recordar FROM sesiones WHERE refresh_token_hash = $1', [hashToken(refresh)])
+    : [];
   res.json({
     user: {
       id: req.user!.id,
@@ -448,6 +467,7 @@ authRouter.get('/me', requireAuth, async (req: Request, res: Response) => {
       rol: req.user!.rol,
       mfaEnabled: fila?.mfa_enabled ?? false,
       mfaMetodo: !fila?.mfa_enabled ? null : fila.mfa_secret_enc ? 'totp' : 'email',
+      recordar: sesion?.recordar ?? false,
     },
   });
 });

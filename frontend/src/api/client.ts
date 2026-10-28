@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { msDesdeUltimaActividad } from '../lib/actividad';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -26,7 +27,12 @@ api.interceptors.request.use((config) => {
 let refrescando: Promise<boolean> | null = null;
 export function intentarRefresh(): Promise<boolean> {
   if (!refrescando) {
-    refrescando = api.post('/api/auth/refresh')
+    // Hace cuánto no hay uso real: la renovación de fondo no cuenta como uso
+    // (ver lib/actividad.ts) — sin "Recordarme" el backend cierra la sesión
+    // pasado el límite de inactividad.
+    refrescando = api.post('/api/auth/refresh', null, {
+      headers: { 'X-Inactivo-Ms': String(Math.round(msDesdeUltimaActividad())) },
+    })
       .then(() => true)
       .catch(() => false)
       .finally(() => { refrescando = null; });

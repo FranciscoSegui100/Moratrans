@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { api, intentarRefresh } from '../api/client';
+import { INACTIVIDAD_MAX_MS, msDesdeUltimaActividad, registrarActividad, seguirActividad } from '../lib/actividad';
 
 // El access token dura 2h (ver JWT_ACCESS_EXPIRES): con el panel abierto
 // horas de corrido, hay que renovarlo antes de que venza para que ni las
@@ -14,6 +15,8 @@ export interface Usuario {
   rol: Rol;
   mfaEnabled: boolean;
   mfaMetodo: 'totp' | 'email' | null;
+  /** Sesión con "Recordarme": no se cierra a las 12h sin uso (ver lib/actividad.ts). */
+  recordar?: boolean;
 }
 
 type ResultadoLogin = { mfaRequired: true; challengeId: string; metodo: 'totp' | 'email' } | { mfaRequired: false };
@@ -38,36 +41,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     api.get('/api/auth/me')
-      .then(({ data }) => setUser(data.user))
+      .then(({ data }) => {
+        // Abrir el panel cuenta como uso — salvo que la sesión ya esté vencida
+        // por inactividad, que lo resuelve el chequeo de abajo.
+        if (data.user?.recordar || msDesdeUltimaActividad() < INACTIVIDAD_MAX_MS) registrarActividad();
+        setUser(data.user);
+      })
       .catch(() => setUser(null))
       .finally(() => setCargando(false));
   }, []);
 
   useEffect(() => {
     if (!user) return;
-    const id = setInterval(() => { intentarRefresh(); }, INTERVALO_REFRESH_MS);
+    // Sin "Recordarme": pasadas 12h sin uso real (no cuenta la renovación de
+    // fondo de acá abajo) se cierra la sesión — si no, una pestaña abierta en
+    // una compu de la oficina quedaba logueada para siempre.
+    const vencidaPorInactividad = () => !user.recordar && msDesdeUltimaActividad() >= INACTIVIDAD_MAX_MS;
+    const tick = () => {
+      if (vencidaPorInactividad()) { logout(); return; }
+      intentarRefresh();
+    };
+    // Al abrir/recargar el panel con la sesión ya vencida por inactividad, cerrar al toque.
+    if (vencidaPorInactividad()) { logout(); return; }
+    const id = setInterval(tick, INTERVALO_REFRESH_MS);
     // El setInterval de arriba no alcanza solo: los navegadores frenan los
     // temporizadores de una pestaña en segundo plano (minimizada, otra
     // pestaña activa, compu suspendida) — si pasan más de 2h así, la
     // cookie vence sin que nadie la renueve. Al volver a esta pestaña,
     // renovamos al toque en vez de esperar al próximo tick del intervalo.
-    const alVolver = () => { if (document.visibilityState === 'visible') intentarRefresh(); };
+    const alVolver = () => { if (document.visibilityState === 'visible') tick(); };
     document.addEventListener('visibilitychange', alVolver);
+    const dejarDeSeguir = seguirActividad();
     return () => {
       clearInterval(id);
       document.removeEventListener('visibilitychange', alVolver);
+      dejarDeSeguir();
     };
   }, [user]);
 
   async function login(email: string, password: string, recordar = false): Promise<ResultadoLogin> {
     const { data } = await api.post('/api/auth/login', { email, password, recordar });
     if (data.mfaRequired) return { mfaRequired: true, challengeId: data.challengeId, metodo: data.metodo };
+    registrarActividad();
     setUser(data.user);
     return { mfaRequired: false };
   }
 
   async function verificarMfa(challengeId: string, code: string) {
     const { data } = await api.post('/api/auth/mfa/verify', { challengeId, code });
+    registrarActividad();
     setUser(data.user);
   }
 

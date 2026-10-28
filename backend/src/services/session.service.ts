@@ -84,13 +84,29 @@ interface CrearSesionParams {
   req: Request;
   recordar: boolean;
   reemplazaA?: string;
+  /** Hace cuánto (ms) fue la última actividad real del usuario en el panel — solo en una renovación. */
+  inactivoMs?: number;
+}
+
+const MS_DIA = 24 * 60 * 60 * 1000;
+
+/**
+ * Cuánto le queda a una sesión sin "Recordarme": SESION_INACTIVIDAD_HORAS
+ * contadas desde la última actividad real, no desde esta renovación — la
+ * renovación de fondo del panel no cuenta como uso. 0 = ya venció.
+ */
+export function restanteSinRecordarMs(inactivoMs = 0): number {
+  const limite = env.SESION_INACTIVIDAD_HORAS * 60 * 60 * 1000;
+  return Math.max(0, limite - Math.min(Math.max(inactivoMs, 0), limite));
 }
 
 /** Crea una fila de sesión nueva y devuelve el refresh token en claro (sólo existe acá, nunca se persiste). */
-export async function crearSesion({ usuarioId, req, recordar, reemplazaA }: CrearSesionParams) {
+export async function crearSesion({ usuarioId, req, recordar, reemplazaA, inactivoMs }: CrearSesionParams) {
   const refreshToken = crypto.randomBytes(32).toString('hex');
-  const dias = recordar ? env.REFRESH_TTL_RECORDAR_DIAS : env.REFRESH_TTL_DIAS;
-  const expiraEn = new Date(Date.now() + dias * 24 * 60 * 60 * 1000);
+  const vidaMs = recordar ? env.REFRESH_TTL_RECORDAR_DIAS * MS_DIA : restanteSinRecordarMs(inactivoMs);
+  // En días (puede ser fracción) para las cookies, que se calculan así.
+  const dias = vidaMs / MS_DIA;
+  const expiraEn = new Date(Date.now() + vidaMs);
 
   await query(
     `INSERT INTO sesiones (usuario_id, refresh_token_hash, device_hash, user_agent, ip, recordar, reemplaza_a, expira_en)
