@@ -599,21 +599,89 @@ export function ClienteDetalle() {
           onClick={() => {
             const win = window.open('', '_blank');
             if (!win) return;
-            const movimientos = [
-              ...(cuentaCorriente?.cargos ?? []).map((c) => ({ fecha: c.fecha, concepto: `Servicio flete (${c.zona ?? 'Sin zona'})`, debe: Number(c.monto || 0), haber: 0 })),
-              ...(cuentaCorriente?.abonos ?? []).map((a) => ({ fecha: a.fecha, concepto: 'Pago recibido / Acreditado', debe: 0, haber: Number(a.monto || 0) })),
-            ].sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+            // 1. Movimientos de cuenta corriente
+            const movsCC = [
+              ...(cuentaCorriente?.cargos ?? []).map((c) => ({
+                fecha: c.fecha,
+                concepto: `Servicio flete (${c.zona ?? 'Sin zona'})`,
+                debe: Number(c.monto || 0),
+                haber: 0,
+              })),
+              ...(cuentaCorriente?.abonos ?? []).map((a) => ({
+                fecha: a.fecha,
+                concepto: 'Pago recibido / Acreditado',
+                debe: 0,
+                haber: Number(a.monto || 0),
+              })),
+            ];
+
+            // 2. Pedidos y viajes fuera de cuenta corriente (efectivo, transferencia, ocasionales)
+            const movsViajes: { fecha: string; concepto: string; debe: number; haber: number }[] = [];
+            for (const v of viajes) {
+              if (v.estado_visible === 'cancelado') continue;
+              if (v.tipo === 'retiro' && v.grupo_id != null) continue; // Pata retiro de recambio no duplica importe
+
+              const comprobantes = v.comprobantes ?? [];
+              const inicial = elegirInicial(v.tipo, comprobantes);
+              if (v.es_cuenta_corriente || inicial?.es_cuenta_corriente) continue;
+
+              const monto = Number(v.importe ?? inicial?.monto ?? 0);
+              if (monto <= 0) continue;
+
+              let concepto = tipoBulto(v);
+              if (v.zona) concepto += ` (${v.zona})`;
+              if (v.contenedor_numero) concepto += ` · Cont. ${v.contenedor_numero}`;
+
+              let haber = 0;
+              if (inicial?.medio_pago === 'efectivo') {
+                if (inicial.efectivo_cobrado) haber = monto;
+              } else if (inicial?.medio_pago === 'transferencia') {
+                if (inicial.estado === 'validado') haber = monto;
+              }
+
+              movsViajes.push({
+                fecha: v.fecha,
+                concepto,
+                debe: monto,
+                haber,
+              });
+            }
+
+            // 3. Deuda ocasional adicional que aún no tenga viaje creado (pedidos pendientes)
+            const movsDeudaExtra: { fecha: string; concepto: string; debe: number; haber: number }[] = [];
+            if (deuda?.items) {
+              for (const it of deuda.items) {
+                const monto = Number(it.monto || 0);
+                if (monto <= 0) continue;
+                const yaEsta = movsViajes.some((mv) => mv.fecha.slice(0, 10) === it.fecha.slice(0, 10) && mv.debe === monto);
+                if (!yaEsta) {
+                  movsDeudaExtra.push({
+                    fecha: it.fecha,
+                    concepto: it.concepto + (it.contenedor_numero ? ` · Cont. ${it.contenedor_numero}` : ''),
+                    debe: monto,
+                    haber: 0,
+                  });
+                }
+              }
+            }
+
+            const movimientos = [...movsCC, ...movsViajes, ...movsDeudaExtra].sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+            const totalCargos = movimientos.reduce((s, m) => s + m.debe, 0);
+            const totalPagado = movimientos.reduce((s, m) => s + m.haber, 0);
+            const saldoPendiente = totalCargos - totalPagado;
 
             let saldoAcumulado = 0;
             const filasHtml = movimientos.map((m) => {
               saldoAcumulado += (m.debe - m.haber);
               return `
                 <tr>
-                  <td style="padding: 8px; border: 1px solid #ddd;">${m.fecha}</td>
+                  <td style="padding: 8px; border: 1px solid #ddd;">${m.fecha.slice(0, 10)}</td>
                   <td style="padding: 8px; border: 1px solid #ddd;">${m.concepto}</td>
                   <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">${m.debe > 0 ? '$' + m.debe.toLocaleString('es-AR') : '—'}</td>
                   <td style="padding: 8px; border: 1px solid #ddd; text-align: right; color: green;">${m.haber > 0 ? '$' + m.haber.toLocaleString('es-AR') : '—'}</td>
-                  <td style="padding: 8px; border: 1px solid #ddd; text-align: right; font-weight: bold;">$${saldoAcumulado.toLocaleString('es-AR')}</td>
+                  <td style="padding: 8px; border: 1px solid #ddd; text-align: right; font-weight: bold; color: ${saldoAcumulado > 0 ? '#b91c1c' : '#15803d'};">$${saldoAcumulado.toLocaleString('es-AR')}</td>
                 </tr>
               `;
             }).join('');
@@ -635,7 +703,7 @@ export function ClienteDetalle() {
                 <body>
                   <div class="header">
                     <div>
-                      <h2 style="margin: 0;">MORATRANS - ESTADO DE CUENTA CORRIENTE</h2>
+                      <h2 style="margin: 0;">MORATRANS - ESTADO DE CUENTA${esCC ? ' CORRIENTE' : ''}</h2>
                       <p style="margin: 4px 0 0; color: #666;">Alquiler y Traslado de Contenedores</p>
                     </div>
                     <div style="text-align: right;">
@@ -648,16 +716,16 @@ export function ClienteDetalle() {
                   <div class="kpis">
                     <div class="kpi">
                       <div style="color: #666; font-size: 0.85rem;">Total Cargos</div>
-                      <div class="kpi-val">$${(cuentaCorriente?.totalCargos ?? 0).toLocaleString('es-AR')}</div>
+                      <div class="kpi-val">$${totalCargos.toLocaleString('es-AR')}</div>
                     </div>
                     <div class="kpi">
                       <div style="color: #666; font-size: 0.85rem;">Total Pagado</div>
-                      <div class="kpi-val" style="color: green;">$${(cuentaCorriente?.totalAbonos ?? 0).toLocaleString('es-AR')}</div>
+                      <div class="kpi-val" style="color: green;">$${totalPagado.toLocaleString('es-AR')}</div>
                     </div>
                     <div class="kpi">
                       <div style="color: #666; font-size: 0.85rem;">Saldo Pendiente</div>
-                      <div class="kpi-val" style="color: ${(cuentaCorriente?.saldo ?? 0) > 0 ? '#b91c1c' : '#15803d'};">
-                        $${(cuentaCorriente?.saldo ?? 0).toLocaleString('es-AR')}
+                      <div class="kpi-val" style="color: ${saldoPendiente > 0 ? '#b91c1c' : '#15803d'};">
+                        $${saldoPendiente.toLocaleString('es-AR')}
                       </div>
                     </div>
                   </div>

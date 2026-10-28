@@ -78,6 +78,15 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
               WHERE pg4.cliente_telefono = cl.telefono AND pg4.tipo = 'alargue_retiro' AND pg4.es_cuenta_corriente = FALSE
                 AND ((pg4.medio_pago = 'efectivo' AND pg4.efectivo_cobrado = FALSE)
                      OR (pg4.medio_pago = 'transferencia' AND pg4.estado <> 'validado'))
+             UNION ALL
+             SELECT pe.precio AS monto
+               FROM pedidos pe
+               JOIN pagos pg ON pg.pedido_id = pe.id
+              WHERE pe.cliente_telefono = cl.telefono
+                AND pe.estado <> 'cancelado'
+                AND NOT EXISTS (SELECT 1 FROM viajes v WHERE v.pago_id = pg.id)
+                AND ((pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado = FALSE)
+                     OR (pg.medio_pago = 'transferencia' AND pg.estado <> 'validado'))
            ) items
          ) oc ON true
      )

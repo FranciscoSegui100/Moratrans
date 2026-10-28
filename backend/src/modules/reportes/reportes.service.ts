@@ -696,6 +696,19 @@ async function itemsDeuda(telefono: string): Promise<ItemDeuda[]> {
           (pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado = FALSE)
           OR (pg.medio_pago = 'transferencia' AND pg.estado <> 'validado')
         )
+     UNION ALL
+     SELECT pe.creado_en::text AS fecha, NULL::text AS contenedor_numero,
+            'Pedido (' || COALESCE(pe.zona, 'Sin zona') || ')' AS concepto,
+            pe.precio::text AS monto
+       FROM pedidos pe
+       JOIN pagos pg ON pg.pedido_id = pe.id
+      WHERE pe.cliente_telefono = $1
+        AND pe.estado <> 'cancelado'
+        AND NOT EXISTS (SELECT 1 FROM viajes v WHERE v.pago_id = pg.id)
+        AND (
+          (pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado = FALSE)
+          OR (pg.medio_pago = 'transferencia' AND pg.estado <> 'validado')
+        )
       ORDER BY fecha`,
     [telefono],
   );
