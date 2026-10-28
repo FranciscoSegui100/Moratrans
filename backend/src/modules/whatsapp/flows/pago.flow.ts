@@ -25,9 +25,9 @@ export type PedidoCandidato = { id: string; zona: string; precio: string };
 export function datosBancarios(): string {
   return (
     `🏦 *Datos para transferir*\n` +
-    `CBU: ${env.PAGO_CBU}\n` +
-    `Alias: ${env.PAGO_ALIAS}\n` +
-    `Titular: ${env.PAGO_TITULAR_CUENTA}`
+      `ALIAS: ${env.PAGO_ALIAS}\n` +
+    `CVU: ${env.PAGO_CBU}` +
+    (env.PAGO_TITULAR_CUENTA ? `\nTitular: ${env.PAGO_TITULAR_CUENTA}` : '')
   );
 }
 
@@ -82,7 +82,7 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     await manejarRespuestaInvalida(
       m,
       `📎 Estoy esperando la *foto o PDF* del comprobante.\n\n${datosBancarios()}\n\n` +
-        '_Si querés cambiar la forma de pago, tocá *Enviar comprobante* de nuevo, o escribí *menú* para volver al inicio._',
+      '_Si querés cambiar la forma de pago, tocá *Enviar comprobante* de nuevo, o escribí *menú* para volver al inicio._',
     );
     return;
   }
@@ -254,8 +254,8 @@ export async function avisarAdjuntoSinContexto(m: MensajeEntrante, sesion: Sesio
   // bot abierto, el contexto es claro — se toma como el comprobante de ese
   // pago sin hacerle tocar ningún botón. En modo humano no: pisaría la sesión.
   if (!sesion.contexto?.modoHumano
-      && (await pedidosAbiertos(to)).length === 0
-      && (await pagosManualesPendientes(to)).length > 0) {
+    && (await pedidosAbiertos(to)).length === 0
+    && (await pagosManualesPendientes(to)).length > 0) {
     return handlePago(m, { ...sesion, flujo: 'pago', paso: 'esperando_comprobante', contexto: {} });
   }
   try {
@@ -404,13 +404,13 @@ async function registrarComprobantePagoManual(
     await sendText(
       to,
       '✅ ¡Recibido! Tu comprobante quedó registrado.\n\n' +
-        'Como es fin de semana, el día lunes un operador lo validará para confirmar tu pago.',
+      'Como es fin de semana, el día lunes un operador lo validará para confirmar tu pago.',
     );
   } else {
     await sendText(
       to,
       '✅ ¡Recibido! Tu comprobante quedó *pendiente de validación* por un operador.\n\n' +
-        '_Si en un rato no tenés novedades, escribí *asesor*._',
+      '_Si en un rato no tenés novedades, escribí *asesor*._',
     );
   }
 }
@@ -504,8 +504,8 @@ async function manejarMetodoPago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     await sendText(
       to,
       `${datosBancarios()}\n\n` +
-        '💸 Transferí y mandame por acá la *foto o PDF* del comprobante.\n\n' +
-        '_Escribí *menú* si te arrepentiste y querés volver al inicio._',
+      '💸 Transferí y mandame por acá la *foto o PDF* del comprobante.\n\n' +
+      '_Escribí *menú* si te arrepentiste y querés volver al inicio._',
     );
     return;
   }
@@ -625,13 +625,13 @@ async function registrarCuentaCorriente(to: string, pedido: PedidoCandidato | un
     await sendText(
       to,
       '📋 Anotado. Tu pedido quedó registrado. Como es fin de semana, el día lunes un operador revisará tu cuenta corriente para confirmar el pedido.\n\n' +
-        '_El día lunes nos comunicaremos con vos._',
+      '_El día lunes nos comunicaremos con vos._',
     );
   } else {
     await sendText(
       to,
       '📋 Anotado. Tu cuenta corriente todavía tiene que aprobarla un operador — en cuanto la revisen seguimos con tu pedido.\n\n' +
-        '_Si en un rato no tenés novedades, escribí *asesor*._',
+      '_Si en un rato no tenés novedades, escribí *asesor*._',
     );
   }
 }
@@ -723,14 +723,14 @@ async function registrarPagoEfectivo(to: string, pedido: PedidoCandidato | undef
     await sendText(
       to,
       '💵 ¡Anotado! Vas a pagar en *efectivo* al momento de la entrega.\n\n' +
-        'Tu pedido quedó anotado. Como es fin de semana, el día lunes se comunicará un agente para confirmar tu pedido y enviarte el *ticket*. 📦',
+      'Tu pedido quedó anotado. Como es fin de semana, el día lunes se comunicará un agente para confirmar tu pedido y enviarte el *ticket*. 📦',
     );
   } else {
     await sendText(
       to,
       '💵 ¡Anotado! Vas a pagar en *efectivo* al momento de la entrega.\n\n' +
-        'Un agente va a confirmar tu pedido en breve — en cuanto lo hagamos, te mandamos el *ticket*. 📦\n\n' +
-        '_Si en un rato no tenés novedades, escribí *asesor*._',
+      'Un agente va a confirmar tu pedido en breve — en cuanto lo hagamos, te mandamos el *ticket*. 📦\n\n' +
+      '_Si en un rato no tenés novedades, escribí *asesor*._',
     );
   }
 }
@@ -791,13 +791,13 @@ async function registrarAbonoCuentaCorriente(m: MensajeEntrante): Promise<void> 
       await sendText(
         to,
         '✅ ¡Recibido! Tu comprobante quedó registrado.\n\n' +
-          'Como es fin de semana, el día lunes lo confirmaremos y lo descontaremos de tu cuenta corriente.',
+        'Como es fin de semana, el día lunes lo confirmaremos y lo descontaremos de tu cuenta corriente.',
       );
     } else {
       await sendText(
         to,
         '✅ ¡Recibido! Tu comprobante quedó *pendiente de validación* — en cuanto lo confirmemos, lo descontamos de tu cuenta corriente.\n\n' +
-          '_Si en un rato no tenés novedades, escribí *asesor*._',
+        '_Si en un rato no tenés novedades, escribí *asesor*._',
       );
     }
   } catch (err) {
@@ -948,20 +948,20 @@ async function registrarComprobante(
     await sendText(
       to,
       '✅ ¡Recibido! Tu pedido quedó anotado y el comprobante registrado.\n\n' +
-        'El día lunes se comunicará un agente para confirmar tu pedido y enviarte el *ticket*. 📦',
+      'El día lunes se comunicará un agente para confirmar tu pedido y enviarte el *ticket*. 📦',
     );
   } else {
     await sendText(
       to,
       esAdjunto
         ? '✅ ¡Recibido! Sumamos este comprobante a tu solicitud que ya estaba *pendiente de validación*.\n' +
-          'En cuanto la confirmemos te mandamos el *ticket*. 📦\n\n' +
-          '_Si en un rato no tenés novedades, escribí *asesor*._'
+        'En cuanto la confirmemos te mandamos el *ticket*. 📦\n\n' +
+        '_Si en un rato no tenés novedades, escribí *asesor*._'
         : esReenviado
-        ? '✅ ¡Recibido! Tu nuevo comprobante fue enviado y quedó *pendiente de validación* por un operador.\n' +
+          ? '✅ ¡Recibido! Tu nuevo comprobante fue enviado y quedó *pendiente de validación* por un operador.\n' +
           'En cuanto lo confirmemos te mandamos el *ticket*. 📦\n\n' +
           '_Si en un rato no tenés novedades, escribí *asesor*._'
-        : '✅ ¡Recibido! Tu comprobante quedó *pendiente de validación* por un operador.\n' +
+          : '✅ ¡Recibido! Tu comprobante quedó *pendiente de validación* por un operador.\n' +
           'En cuanto lo confirmemos te mandamos el *ticket*. 📦\n\n' +
           '_Si en un rato no tenés novedades, escribí *asesor*._',
     );
