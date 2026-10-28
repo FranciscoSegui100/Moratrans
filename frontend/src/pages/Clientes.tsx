@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { Download, Pencil, Plus, MessageCircle, ArrowUpDown } from 'lucide-react';
+import { Download, Pencil, Plus, MessageCircle, ArrowUpDown, Trash2 } from 'lucide-react';
 import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
@@ -48,6 +48,7 @@ export function Clientes() {
     { nombre: '', telefono: telefonoFijo ?? '', tipo: 'cuenta_corriente' },
   );
   const [creando, setCreando] = useState(false);
+  const [eliminandoOcasionales, setEliminandoOcasionales] = useState(false);
 
   const { data: todosLosClientes = [] } = useQuery({
     queryKey: ['clientes'],
@@ -55,6 +56,7 @@ export function Clientes() {
   });
   const clientesCC = todosLosClientes.filter(esCuentaCorriente);
   const clientesOcasionales = todosLosClientes.filter((c) => !esCuentaCorriente(c));
+  const ocasionalesSinDeuda = clientesOcasionales.filter((c) => Number(c.deuda) <= 0);
   const clientesPestana = pestana === 'cuenta_corriente' ? clientesCC : clientesOcasionales;
 
   // Con 100 clientes el orden alfabético de la API no alcanza para
@@ -108,6 +110,36 @@ export function Clientes() {
       show('success', 'Nº de plan actualizado');
     } catch (err: any) {
       show('error', 'No se pudo guardar', err.response?.data?.error);
+    }
+  }
+
+  async function eliminarOcasionalesSinDeuda() {
+    if (ocasionalesSinDeuda.length === 0) return;
+    const conDeuda = clientesOcasionales.length - ocasionalesSinDeuda.length;
+    const notaDeuda = conDeuda > 0
+      ? ` Los ${conDeuda} cliente(s) con deuda pendiente NO se eliminarán.`
+      : '';
+    if (!confirm(`¿Eliminar a los ${ocasionalesSinDeuda.length} cliente(s) ocasionales sin deuda pendiente?${notaDeuda}`)) return;
+    setEliminandoOcasionales(true);
+    try {
+      const { data } = await api.delete<{ ok: true; eliminados: number }>('/api/clientes/ocasionales-sin-deuda');
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      show('success', 'Clientes ocasionales eliminados', `Se eliminaron ${data.eliminados} cliente(s) sin deuda.`);
+    } catch (err: any) {
+      show('error', 'No se pudieron eliminar', err.response?.data?.error || 'Error desconocido');
+    } finally {
+      setEliminandoOcasionales(false);
+    }
+  }
+
+  async function eliminarClienteIndividual(c: Cliente) {
+    if (!confirm(`¿Eliminar al cliente ocasional ${c.nombre} (${c.telefono})?`)) return;
+    try {
+      await api.delete(`/api/clientes/${c.id}`);
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      show('success', 'Cliente eliminado', `${c.nombre} fue eliminado del padrón.`);
+    } catch (err: any) {
+      show('error', 'No se pudo eliminar', err.response?.data?.error || 'Error desconocido');
     }
   }
 
@@ -182,7 +214,7 @@ export function Clientes() {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
         <button
           className={`btn btn-sm ${pestana === 'cuenta_corriente' ? 'btn-primary' : 'btn-ghost'}`}
           onClick={() => setPestana('cuenta_corriente')}
@@ -195,6 +227,21 @@ export function Clientes() {
         >
           Ocasionales ({clientesOcasionales.length})
         </button>
+        {pestana === 'ocasionales' && ocasionalesSinDeuda.length > 0 && (
+          <RoleGate roles={['admin', 'operador', 'finanzas']}>
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={eliminarOcasionalesSinDeuda}
+              disabled={eliminandoOcasionales}
+              title="Elimina todos los clientes ocasionales que no tienen deuda pendiente"
+            >
+              <Trash2 size={14} strokeWidth={2} />{' '}
+              {eliminandoOcasionales
+                ? 'Eliminando...'
+                : `Eliminar ocasionales sin deuda (${ocasionalesSinDeuda.length})`}
+            </button>
+          </RoleGate>
+        )}
         <button
           className={`btn btn-sm ${soloConDeuda ? 'btn-primary' : 'btn-ghost'}`}
           onClick={() => setSoloConDeuda((v) => !v)}
@@ -277,9 +324,22 @@ export function Clientes() {
                         ? <span className="badge rechazado">Debe ${Number(c.deuda).toLocaleString('es-AR')}</span>
                         : <span className="badge disponible">Al día</span>
                     ) : (
-                      debe
-                        ? <span className="badge rechazado">Sí · ${Number(c.deuda).toLocaleString('es-AR')}</span>
-                        : <span className="badge disponible">No</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {debe
+                          ? <span className="badge rechazado">Sí · ${Number(c.deuda).toLocaleString('es-AR')}</span>
+                          : <span className="badge disponible">No</span>}
+                        {!debe && puedeEditarPlan && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={(e) => { e.stopPropagation(); eliminarClienteIndividual(c); }}
+                            title="Eliminar cliente ocasional sin deuda"
+                            style={{ padding: '4px 6px', color: 'var(--danger)' }}
+                          >
+                            <Trash2 size={14} strokeWidth={1.75} />
+                          </button>
+                        )}
+                      </div>
                     )}
                   </td>
                 </tr>

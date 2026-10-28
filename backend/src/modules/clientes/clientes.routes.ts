@@ -641,30 +641,107 @@ clientesRouter.patch('/:id', requireRol('admin', 'operador', 'finanzas'), async 
 });
 
 /**
+ * DELETE /api/clientes/ocasionales-sin-deuda — elimina en bloque a todos los
+ * clientes ocasionales (`cuenta_corriente_estado IN ('sin_pedir', 'rechazada')`)
+ * que no tengan ninguna deuda pendiente de pago (`deuda <= 0`, mismo criterio
+ * exacto que GET /api/clientes). Va ANTES de `DELETE /:id` para que Express no
+ * tome `ocasionales-sin-deuda` como `:id`.
+ */
+clientesRouter.delete('/ocasionales-sin-deuda', requireRol('admin', 'operador', 'finanzas'), async (_req: Request, res: Response) => {
+  const eliminados = await query<{ id: string }>(
+    `WITH candidatos AS (
+       SELECT cl.id,
+              GREATEST(COALESCE(cc.saldo, 0), 0) + COALESCE(oc.deuda, 0) AS deuda
+         FROM clientes cl
+         LEFT JOIN LATERAL (
+           SELECT
+             COALESCE((
+               SELECT SUM(monto) FROM (
+                 SELECT pe.precio AS monto
+                   FROM pedidos pe
+                  WHERE pe.cliente_telefono = cl.telefono
+                    AND EXISTS (SELECT 1 FROM pagos pg WHERE pg.pedido_id = pe.id AND pg.es_cuenta_corriente = TRUE) AND pe.estado <> 'cancelado'
+                 UNION ALL
+                 SELECT v2.importe AS monto FROM viajes v2
+                  WHERE v2.cliente_telefono = cl.telefono AND v2.es_cuenta_corriente = TRUE AND v2.estado <> 'cancelado'
+                 UNION ALL
+                 SELECT pg2.monto FROM pagos pg2
+                  WHERE pg2.cliente_telefono = cl.telefono AND pg2.tipo = 'alargue_retiro' AND pg2.es_cuenta_corriente = TRUE
+               ) cargos
+             ), 0)
+             -
+             COALESCE((
+               SELECT SUM(monto) FROM pagos
+                WHERE cliente_telefono = cl.telefono AND tipo = 'abono_cc' AND estado = 'validado'
+             ), 0) AS saldo
+         ) cc ON true
+         LEFT JOIN LATERAL (
+           SELECT COALESCE(SUM(monto), 0) AS deuda FROM (
+             SELECT v3.importe AS monto
+               FROM viajes v3
+               LEFT JOIN pagos pg3 ON pg3.id = v3.pago_id
+              WHERE v3.cliente_telefono = cl.telefono
+                AND NOT (v3.tipo = 'retiro' AND v3.grupo_id IS NULL)
+                AND v3.es_cuenta_corriente = FALSE AND v3.estado <> 'cancelado'
+                AND ((pg3.medio_pago = 'efectivo' AND pg3.efectivo_cobrado = FALSE)
+                     OR (pg3.medio_pago = 'transferencia' AND pg3.estado <> 'validado'))
+             UNION ALL
+             SELECT pg4.monto
+               FROM pagos pg4
+              WHERE pg4.cliente_telefono = cl.telefono AND pg4.tipo = 'alargue_retiro' AND pg4.es_cuenta_corriente = FALSE
+                AND ((pg4.medio_pago = 'efectivo' AND pg4.efectivo_cobrado = FALSE)
+                     OR (pg4.medio_pago = 'transferencia' AND pg4.estado <> 'validado'))
+             UNION ALL
+             SELECT pe.precio AS monto
+               FROM pedidos pe
+               JOIN pagos pg ON pg.pedido_id = pe.id
+              WHERE pe.cliente_telefono = cl.telefono
+                AND pe.estado <> 'cancelado'
+                AND NOT EXISTS (SELECT 1 FROM viajes v WHERE v.pago_id = pg.id)
+                AND ((pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado = FALSE)
+                     OR (pg.medio_pago = 'transferencia' AND pg.estado <> 'validado'))
+           ) items
+         ) oc ON true
+        WHERE cl.cuenta_corriente_estado IN ('sin_pedir', 'rechazada')
+     )
+     DELETE FROM clientes
+      WHERE id IN (SELECT id FROM candidatos WHERE deuda <= 0)
+     RETURNING id`,
+  );
+  emitRecursoActualizado('clientes');
+  res.json({ ok: true, eliminados: eliminados.length });
+});
+
+/**
  * DELETE /api/clientes/:id — borrar un cliente ocasional cargado por error o
- * que no corresponde mantener (ej. un duplicado, un número de prueba). No
- * hay ON DELETE CASCADE desde viajes/pagos (se vinculan por teléfono, no por
- * FK a clientes.id) así que esto no borra ningún historial de viajes; sólo
- * contenedores.cliente_id se pone en NULL si tenía alguno asignado.
- *
- * Solo se permite si nunca pidió cuenta corriente (cuenta_corriente_estado =
- * 'sin_pedir') — borrar un cliente 'aprobada'/'pendiente'/'rechazada' haría
- * desaparecer silenciosamente ese estado: como viajes/pagos se vinculan por
- * teléfono y no por FK, el saldo/historial de deuda sigue existiendo pero
- * queda huérfano, y si el cliente vuelve a cotizar por WhatsApp se le crea
- * una fila nueva arrancando en 'sin_pedir', perdiendo la aprobación.
+ * que no corresponde mantener (ej. un duplicado, un número de prueba), siempre
+ * que no tenga deuda pendiente de pago. No hay ON DELETE CASCADE desde
+ * viajes/pagos (se vinculan por teléfono, no por FK a clientes.id) así que
+ * esto no borra ningún historial de viajes; sólo contenedores.cliente_id se
+ * pone en NULL si tenía alguno asignado.
  */
 clientesRouter.delete('/:id', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
-  const [cliente] = await query<{ cuenta_corriente_estado: string }>(
-    'SELECT cuenta_corriente_estado FROM clientes WHERE id = $1',
+  const [cliente] = await query<{ cuenta_corriente_estado: string; telefono: string }>(
+    'SELECT cuenta_corriente_estado, telefono FROM clientes WHERE id = $1',
     [req.params.id],
   );
   if (!cliente) return res.status(404).json({ error: 'Cliente inexistente' });
-  if (cliente.cuenta_corriente_estado !== 'sin_pedir') {
+  if (cliente.cuenta_corriente_estado === 'aprobada' || cliente.cuenta_corriente_estado === 'pendiente') {
     return res.status(409).json({
-      error: 'Este cliente tiene (o tuvo) cuenta corriente — no se puede eliminar para no perder ese historial. Solo se pueden borrar clientes ocasionales.',
+      error: 'Este cliente tiene cuenta corriente — no se puede eliminar para no perder ese historial. Solo se pueden borrar clientes ocasionales.',
+    });
+  }
+  const [saldoCC, deudaOc] = await Promise.all([
+    resumenCuentaCorriente(cliente.telefono).then((r) => r.saldo),
+    deudaCliente(cliente.telefono),
+  ]);
+  const deudaPendiente = Math.max(saldoCC, 0) + deudaOc.total;
+  if (deudaPendiente > 0) {
+    return res.status(409).json({
+      error: `Este cliente tiene una deuda pendiente de $${deudaPendiente.toLocaleString('es-AR')} y no se puede eliminar hasta que esté saldada.`,
     });
   }
   await query(`DELETE FROM clientes WHERE id = $1`, [req.params.id]);
+  emitRecursoActualizado('clientes');
   res.status(204).send();
 });
