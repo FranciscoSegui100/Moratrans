@@ -406,7 +406,6 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   // manual, validación de pago). Es la MISMA lista contra la que se validan
   // los selects de contenedor de cada parada, así que el número de arriba no
   // puede quedar inflado con contenedores que después no se pueden asignar.
-  const stockDeposito = ruta?.stock_deposito ?? [];
 
   async function agregarVaciado(e: React.FormEvent) {
     e.preventDefault();
@@ -684,16 +683,8 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
 
       <RoleGate roles={['admin', 'operador']}>
         <div style={{ padding: '16px 18px' }}>
-          <div className="abordo-label" style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-            Contenedores disponibles en depósito ({stockDeposito.length}):
-          </div>
-          <div className="abordo">
-            {stockDeposito.length === 0 && <span className="cchip none">no hay contenedores libres en depósito</span>}
-            {stockDeposito.map((c) => <span key={c} className="cchip">{c}</span>)}
-          </div>
-
           {ruta.advertencias.length > 0 && (
-            <div className="rc-warn" style={{ marginTop: '10px', marginBottom: '8px', flexDirection: 'column', alignItems: 'flex-start', gap: '4px', background: 'var(--warning-bg)', padding: '8px 12px', borderRadius: 'var(--radius)' }}>
+            <div className="rc-warn" style={{ marginTop: 0, marginBottom: '8px', flexDirection: 'column', alignItems: 'flex-start', gap: '4px', background: 'var(--warning-bg)', padding: '8px 12px', borderRadius: 'var(--radius)' }}>
               {ruta.advertencias.map((a, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <AlertTriangle size={14} strokeWidth={2} /> {a.mensaje}
