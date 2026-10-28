@@ -17,7 +17,7 @@ import { despacharPrimeraParada } from '../../services/despachoRutas.service';
 import { hoyMendozaISO } from '../../services/fechas.service';
 import { anularPagosDeViajesCancelados } from '../../services/pagoViajeCancelado.service';
 import { sincronizarRetirosPorVencimiento } from '../../services/retiroAutomatico.service';
-import { pdfHojaRuta } from './hojaRuta.service';
+import { pdfHojaRuta, pdfHojaRutaPorChofer } from './hojaRuta.service';
 
 export const rutasRouter = Router();
 rutasRouter.use(requireAuth);
@@ -384,6 +384,20 @@ rutasRouter.get('/bolsa.pdf', async (req: Request, res: Response) => {
   const buf = await pdfHojaRuta(fecha);
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="hoja-de-ruta-${fecha}.pdf"`);
+  res.send(buf);
+});
+
+/**
+ * GET /api/rutas/choferes.pdf?fecha=YYYY-MM-DD — las rutas ya armadas de ese
+ * día, una por chofer (ver pdfHojaRutaPorChofer), con el recuadro para
+ * anotar el orden de paradas. Va antes de GET /:id para que no lo tome como id.
+ */
+rutasRouter.get('/choferes.pdf', async (req: Request, res: Response) => {
+  const { fecha } = req.query as Record<string, string>;
+  if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return res.status(400).json({ error: 'Fecha inválida' });
+  const buf = await pdfHojaRutaPorChofer(fecha);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="rutas-por-chofer-${fecha}.pdf"`);
   res.send(buf);
 });
 

@@ -14,7 +14,7 @@ import {
   dibujarTituloSeccion,
 } from '../../services/pdf.service';
 
-interface FilaBolsa {
+interface FilaViaje {
   id: string;
   tipo: 'entrega' | 'retiro';
   fecha: string;
@@ -31,9 +31,10 @@ interface FilaBolsa {
 
 /** Una parada de la hoja: un recambio (retiro+entrega con el mismo grupo_id) cuenta como una sola, igual que en la bolsa del panel. */
 interface ParadaHoja {
-  tipo: 'Entrega' | 'Retiro' | 'Recambio';
+  tipo: 'Entrega' | 'Retiro' | 'Recambio' | 'Vaciado';
   fecha: string;
   zona: string;
+  /** Para un vaciado, el nombre del vaciadero. */
   direccion: string | null;
   horario: string | null;
   clienteNombre: string | null;
@@ -42,6 +43,46 @@ interface ParadaHoja {
   contenedorRetiro: string | null;
   notas: string[];
   remito: string | null;
+}
+
+const COLUMNAS_VIAJE = `v.id, v.tipo, v.fecha::text AS fecha, v.zona, v.contenedor_numero, v.destino_direccion,
+            v.horario_preferido, v.cliente_telefono, v.grupo_id, v.notas, v.remito,
+            NULLIF(cl.nombre, 'Sin nombre') AS cliente_nombre`;
+
+/** Junta las dos mitades de cada recambio (mismo grupo_id) en una sola visita, respetando el orden de llegada. */
+function agruparVisitas<T extends FilaViaje>(filas: T[]): T[][] {
+  const porGrupo = new Map<string, T[]>();
+  const visitas: T[][] = [];
+  for (const f of filas) {
+    if (!f.grupo_id) { visitas.push([f]); continue; }
+    const grupo = porGrupo.get(f.grupo_id);
+    if (grupo) { grupo.push(f); continue; }
+    const nuevo = [f];
+    porGrupo.set(f.grupo_id, nuevo);
+    visitas.push(nuevo);
+  }
+  return visitas;
+}
+
+function visitaAParada(grupo: FilaViaje[]): ParadaHoja {
+  const entrega = grupo.find((f) => f.tipo === 'entrega');
+  const retiro = grupo.find((f) => f.tipo === 'retiro');
+  const primero = (campo: 'zona' | 'destino_direccion' | 'horario_preferido' | 'cliente_nombre' | 'cliente_telefono' | 'remito') =>
+    grupo.map((f) => f[campo]).find((x) => x) ?? null;
+  const direccion = primero('destino_direccion');
+  return {
+    tipo: entrega && retiro ? 'Recambio' : entrega ? 'Entrega' : 'Retiro',
+    fecha: grupo[0].fecha,
+    zona: primero('zona') ?? (direccion ? direccion.split(',')[0] : 'Sin zona'),
+    direccion,
+    horario: primero('horario_preferido'),
+    clienteNombre: primero('cliente_nombre'),
+    clienteTelefono: primero('cliente_telefono'),
+    contenedorEntrega: entrega?.contenedor_numero ?? null,
+    contenedorRetiro: retiro?.contenedor_numero ?? null,
+    notas: [...new Set(grupo.map((f) => f.notas?.trim()).filter((n): n is string => !!n))],
+    remito: primero('remito'),
+  };
 }
 
 /**
@@ -54,10 +95,8 @@ async function paradasDeLaBolsa(fecha: string): Promise<ParadaHoja[]> {
   const hoy = hoyMendozaISO();
   if (fecha < hoy) return [];
   const condFecha = fecha === hoy ? `v.fecha <= $1` : `v.fecha = $1`;
-  const filas = await query<FilaBolsa>(
-    `SELECT v.id, v.tipo, v.fecha::text AS fecha, v.zona, v.contenedor_numero, v.destino_direccion,
-            v.horario_preferido, v.cliente_telefono, v.grupo_id, v.notas, v.remito,
-            NULLIF(cl.nombre, 'Sin nombre') AS cliente_nombre
+  const filas = await query<FilaViaje>(
+    `SELECT ${COLUMNAS_VIAJE}
        FROM viajes v
        LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
       WHERE v.ruta_id IS NULL AND v.estado IN ('programado', 'en_curso') AND ${condFecha}
@@ -65,40 +104,76 @@ async function paradasDeLaBolsa(fecha: string): Promise<ParadaHoja[]> {
     [fecha],
   );
 
-  const porGrupo = new Map<string, FilaBolsa[]>();
-  const visitas: FilaBolsa[][] = [];
-  for (const f of filas) {
-    if (!f.grupo_id) { visitas.push([f]); continue; }
-    const grupo = porGrupo.get(f.grupo_id);
-    if (grupo) { grupo.push(f); continue; }
-    const nuevo = [f];
-    porGrupo.set(f.grupo_id, nuevo);
-    visitas.push(nuevo);
-  }
-
-  const paradas = visitas.map((grupo): ParadaHoja => {
-    const entrega = grupo.find((f) => f.tipo === 'entrega');
-    const retiro = grupo.find((f) => f.tipo === 'retiro');
-    const primero = (campo: 'zona' | 'destino_direccion' | 'horario_preferido' | 'cliente_nombre' | 'cliente_telefono' | 'remito') =>
-      grupo.map((f) => f[campo]).find((x) => x) ?? null;
-    const direccion = primero('destino_direccion');
-    return {
-      tipo: entrega && retiro ? 'Recambio' : entrega ? 'Entrega' : 'Retiro',
-      fecha: grupo[0].fecha,
-      zona: primero('zona') ?? (direccion ? direccion.split(',')[0] : 'Sin zona'),
-      direccion,
-      horario: primero('horario_preferido'),
-      clienteNombre: primero('cliente_nombre'),
-      clienteTelefono: primero('cliente_telefono'),
-      contenedorEntrega: entrega?.contenedor_numero ?? null,
-      contenedorRetiro: retiro?.contenedor_numero ?? null,
-      notas: [...new Set(grupo.map((f) => f.notas?.trim()).filter((n): n is string => !!n))],
-      remito: primero('remito'),
-    };
-  });
-
-  return paradas.sort((a, b) =>
+  return agruparVisitas(filas).map(visitaAParada).sort((a, b) =>
     a.zona.localeCompare(b.zona, 'es') || a.fecha.localeCompare(b.fecha) || (a.horario ?? '').localeCompare(b.horario ?? ''));
+}
+
+interface RutaHoja {
+  choferNombre: string;
+  patente: string | null;
+  paradas: ParadaHoja[];
+}
+
+/**
+ * Rutas del día con sus paradas todavía sin completar, en el orden que tienen
+ * hoy en el panel (vaciados incluidos, entrega antes que retiro dentro de un
+ * mismo `orden`, igual que GET /:id). Una ruta sin nada pendiente no sale.
+ */
+async function rutasDelDia(fecha: string): Promise<RutaHoja[]> {
+  const [rutas, viajes, vaciados] = await Promise.all([
+    query<{ id: string; chofer_nombre: string | null; patente: string | null }>(
+      `SELECT r.id, c.nombre AS chofer_nombre, r.patente
+         FROM rutas r LEFT JOIN choferes c ON c.id = r.chofer_id
+        WHERE r.fecha = $1
+        ORDER BY c.nombre NULLS LAST, r.creado_en`,
+      [fecha],
+    ),
+    query<FilaViaje & { ruta_id: string; orden: number }>(
+      `SELECT ${COLUMNAS_VIAJE}, v.ruta_id, v.orden
+         FROM viajes v
+         JOIN rutas r ON r.id = v.ruta_id
+         LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
+        WHERE r.fecha = $1 AND v.estado <> 'cancelado' AND v.completada_en IS NULL
+        ORDER BY v.orden, (v.tipo = 'retiro')`,
+      [fecha],
+    ),
+    query<{ ruta_id: string; orden: number; ubicacion_nombre: string | null; contenedor_numero: string | null; notas: string | null }>(
+      `SELECT rv.ruta_id, rv.orden, u.nombre AS ubicacion_nombre, rv.contenedor_numero, rv.notas
+         FROM ruta_vaciados rv
+         JOIN rutas r ON r.id = rv.ruta_id
+         LEFT JOIN ubicaciones u ON u.id = rv.ubicacion_id
+        WHERE r.fecha = $1
+        ORDER BY rv.orden`,
+      [fecha],
+    ),
+  ]);
+
+  return rutas.flatMap((r): RutaHoja[] => {
+    const deLaRuta = viajes.filter((v) => v.ruta_id === r.id);
+    if (deLaRuta.length === 0) return [];
+    const paradas: { orden: number; prioridad: number; parada: ParadaHoja }[] = [
+      ...agruparVisitas(deLaRuta).map((grupo) => ({ orden: grupo[0].orden, prioridad: 0, parada: visitaAParada(grupo) })),
+      ...vaciados.filter((v) => v.ruta_id === r.id).map((v) => ({
+        orden: v.orden,
+        prioridad: -1,
+        parada: {
+          tipo: 'Vaciado' as const,
+          fecha,
+          zona: '',
+          direccion: v.ubicacion_nombre,
+          horario: null,
+          clienteNombre: null,
+          clienteTelefono: null,
+          contenedorEntrega: null,
+          contenedorRetiro: v.contenedor_numero,
+          notas: v.notas?.trim() ? [v.notas.trim()] : [],
+          remito: null,
+        },
+      })),
+    ];
+    paradas.sort((a, b) => a.orden - b.orden || a.prioridad - b.prioridad);
+    return [{ choferNombre: r.chofer_nombre ?? 'Sin chofer', patente: r.patente, paradas: paradas.map((p) => p.parada) }];
+  });
 }
 
 const ALTO_PIE = 70;
@@ -137,32 +212,45 @@ function lineaDetalle(doc: PDFKit.PDFDocument, x: number, y: number, ancho: numb
 /**
  * Dibuja (o solo mide, con `medir`) la tarjeta de una parada: a la izquierda
  * un recuadro vacío para anotar a mano el N° de orden, a la derecha los datos
- * del pedido y abajo la línea para escribir el chofer.
+ * del pedido y, con `conChofer`, abajo la línea para escribir el chofer.
  */
-function tarjetaParada(doc: PDFKit.PDFDocument, y: number, p: ParadaHoja, fechaHoja: string, medir = false): number {
+function tarjetaParada(
+  doc: PDFKit.PDFDocument,
+  y: number,
+  p: ParadaHoja,
+  fechaHoja: string,
+  opts: { medir?: boolean; conChofer?: boolean } = {},
+): number {
+  const { medir = false, conChofer = false } = opts;
   const anchoUtil = doc.page.width - MARGEN * 2;
   const xDatos = MARGEN + ANCHO_ORDEN + 12;
   const anchoDatos = anchoUtil - ANCHO_ORDEN - 22;
   const pad = 8;
 
   const detalles: [string, string][] = [];
-  detalles.push(['Cliente', [p.clienteNombre, p.clienteTelefono].filter(Boolean).join(' · ') || '—']);
-  detalles.push(['Dirección', p.direccion ?? 'Sin dirección']);
-  if (p.horario) detalles.push(['Horario', p.horario]);
-  if (p.tipo === 'Recambio') {
-    detalles.push(['Contenedores', `retira ${p.contenedorRetiro ?? 'a definir'} · entrega ${p.contenedorEntrega ?? 'a asignar'}`]);
-  } else if (p.tipo === 'Retiro') {
-    detalles.push(['Contenedor', p.contenedorRetiro ?? 'a definir']);
+  if (p.tipo === 'Vaciado') {
+    detalles.push(['Vaciadero', p.direccion ?? 'a definir']);
+    if (p.contenedorRetiro) detalles.push(['Contenedor', p.contenedorRetiro]);
   } else {
-    detalles.push(['Contenedor', p.contenedorEntrega ?? 'a asignar']);
+    detalles.push(['Cliente', [p.clienteNombre, p.clienteTelefono].filter(Boolean).join(' · ') || '—']);
+    detalles.push(['Dirección', p.direccion ?? 'Sin dirección']);
+    if (p.horario) detalles.push(['Horario', p.horario]);
+    if (p.tipo === 'Recambio') {
+      detalles.push(['Contenedores', `retira ${p.contenedorRetiro ?? 'a definir'} · entrega ${p.contenedorEntrega ?? 'a asignar'}`]);
+    } else if (p.tipo === 'Retiro') {
+      detalles.push(['Contenedor', p.contenedorRetiro ?? 'a definir']);
+    } else {
+      detalles.push(['Contenedor', p.contenedorEntrega ?? 'a asignar']);
+    }
+    if (p.remito) detalles.push(['Remito', p.remito]);
   }
-  if (p.remito) detalles.push(['Remito', p.remito]);
   if (p.notas.length) detalles.push(['Notas', p.notas.join(' / ')]);
 
   let yy = y + pad;
   // Título: tipo + aviso de atrasado.
   if (!medir) {
-    doc.fillColor(p.tipo === 'Retiro' ? ROJO : AZUL).font('Helvetica-Bold').fontSize(11).text(p.tipo.toUpperCase(), xDatos, yy, { lineBreak: false });
+    const colorTipo = p.tipo === 'Retiro' ? ROJO : p.tipo === 'Vaciado' ? GRIS_MUTED : AZUL;
+    doc.fillColor(colorTipo).font('Helvetica-Bold').fontSize(11).text(p.tipo.toUpperCase(), xDatos, yy, { lineBreak: false });
     if (p.fecha < fechaHoja) {
       doc.fillColor(ROJO).font('Helvetica-Bold').fontSize(8)
         .text(`ATRASADO · era para el ${formatearFechaCorta(p.fecha)}`, xDatos, yy + 2, { width: anchoDatos, align: 'right', lineBreak: false });
@@ -172,16 +260,19 @@ function tarjetaParada(doc: PDFKit.PDFDocument, y: number, p: ParadaHoja, fechaH
   for (const [etiqueta, valor] of detalles) {
     yy += lineaDetalle(doc, xDatos, yy, anchoDatos, etiqueta, valor, medir);
   }
-  yy += 8;
-  // Renglón para escribir el chofer a mano.
-  if (!medir) {
-    doc.fillColor(GRIS_MUTED).font('Helvetica').fontSize(9).text('Chofer:', xDatos, yy + 4, { lineBreak: false });
-    const xLinea = xDatos + doc.widthOfString('Chofer: ') + 4;
-    doc.moveTo(xLinea, yy + 14).lineTo(xDatos + anchoDatos, yy + 14).lineWidth(0.7).strokeColor(GRIS_MUTED).stroke();
+  if (conChofer) {
+    yy += 8;
+    // Renglón para escribir el chofer a mano.
+    if (!medir) {
+      doc.fillColor(GRIS_MUTED).font('Helvetica').fontSize(9).text('Chofer:', xDatos, yy + 4, { lineBreak: false });
+      const xLinea = xDatos + doc.widthOfString('Chofer: ') + 4;
+      doc.moveTo(xLinea, yy + 14).lineTo(xDatos + anchoDatos, yy + 14).lineWidth(0.7).strokeColor(GRIS_MUTED).stroke();
+    }
+    yy += 18;
   }
-  yy += 18 + pad;
+  yy += pad;
 
-  const alto = Math.max(yy - y, 80);
+  const alto = Math.max(yy - y, 70);
   if (!medir) {
     doc.rect(MARGEN, y, anchoUtil, alto).lineWidth(0.8).strokeColor(AZUL_CLARO).stroke();
     // Recuadro del N° de orden.
@@ -195,6 +286,60 @@ function tarjetaParada(doc: PDFKit.PDFDocument, y: number, p: ParadaHoja, fechaH
 }
 
 /**
+ * Arma un PDF A4 con el encabezado de marca y lleva la cuenta de páginas.
+ * `dibujar` recibe helpers para saber cuánto lugar queda y para saltar de
+ * página (cada página nueva arranca con el mismo encabezado).
+ */
+function generarHoja(
+  dibujar: (doc: PDFKit.PDFDocument, h: {
+    y: number;
+    limite: () => number;
+    nuevaPagina: (lineasEncabezado?: string[]) => number;
+  }) => void,
+  lineasEncabezado: string[],
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 0 });
+    const chunks: Buffer[] = [];
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    let pagina = 1;
+    const y = dibujarEncabezado(doc, 'HOJA DE RUTA', lineasEncabezado) + 20;
+    dibujar(doc, {
+      y,
+      limite: () => doc.page.height - ALTO_PIE - 15,
+      nuevaPagina: (lineas = lineasEncabezado) => {
+        dibujarPieHoja(doc, pagina);
+        doc.addPage({ size: 'A4', margin: 0 });
+        pagina++;
+        return dibujarEncabezado(doc, 'HOJA DE RUTA', lineas) + 20;
+      },
+    });
+    dibujarPieHoja(doc, pagina);
+    doc.end();
+  });
+}
+
+const generadaEn = () => `Generada ${new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Mendoza' })}`;
+
+function lineaResumen(doc: PDFKit.PDFDocument, y: number, paradas: ParadaHoja[], textoTotal: string): number {
+  const cuenta = (t: ParadaHoja['tipo']) => paradas.filter((p) => p.tipo === t).length;
+  const vaciados = cuenta('Vaciado');
+  const partes = [
+    textoTotal,
+    `${cuenta('Entrega')} entregas`,
+    `${cuenta('Retiro')} retiros`,
+    `${cuenta('Recambio')} recambios`,
+    ...(vaciados ? [`${vaciados} vaciados`] : []),
+  ];
+  doc.fillColor(GRIS_TEXTO).font('Helvetica-Bold').fontSize(10)
+    .text(partes.join('  ·  '), MARGEN, y, { width: doc.page.width - MARGEN * 2 });
+  return y + 16;
+}
+
+/**
  * GET /api/rutas/bolsa.pdf: hoja imprimible con los pedidos pendientes del
  * día, agrupados por zona, para que quien arma la ruta la ordene en papel
  * (orden de paradas y chofer a mano) antes de cargarla en el panel.
@@ -203,39 +348,16 @@ export async function pdfHojaRuta(fecha: string): Promise<Buffer> {
   const paradas = await paradasDeLaBolsa(fecha);
   const choferes = await query<{ nombre: string }>(`SELECT nombre FROM choferes WHERE activo ORDER BY nombre`);
 
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 0 });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-
+  return generarHoja((doc, h) => {
     const anchoUtil = doc.page.width - MARGEN * 2;
-    const limite = () => doc.page.height - ALTO_PIE - 15;
-    const cuenta = (t: ParadaHoja['tipo']) => paradas.filter((p) => p.tipo === t).length;
-    const lineasEncabezado = [`Reparto del ${formatearFechaCorta(fecha)}`, `Generada ${new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Mendoza' })}`];
-    let pagina = 1;
-
-    let y = dibujarEncabezado(doc, 'HOJA DE RUTA', lineasEncabezado);
-    y += 20;
-
-    // Resumen + choferes activos, para tener a mano a quién repartir.
-    doc.fillColor(GRIS_TEXTO).font('Helvetica-Bold').fontSize(10)
-      .text(`${paradas.length} paradas pendientes  ·  ${cuenta('Entrega')} entregas  ·  ${cuenta('Retiro')} retiros  ·  ${cuenta('Recambio')} recambios`, MARGEN, y, { width: anchoUtil });
-    y += 16;
+    let y = lineaResumen(doc, h.y, paradas, `${paradas.length} paradas pendientes`);
+    // Choferes activos, para tener a mano a quién repartir.
     if (choferes.length) {
       const textoChoferes = `Choferes activos: ${choferes.map((c) => c.nombre).join(', ')}`;
       doc.fillColor(GRIS_MUTED).font('Helvetica').fontSize(9).text(textoChoferes, MARGEN, y, { width: anchoUtil });
       y += doc.heightOfString(textoChoferes, { width: anchoUtil }) + 4;
     }
     y += 12;
-
-    const nuevaPagina = () => {
-      dibujarPieHoja(doc, pagina);
-      doc.addPage({ size: 'A4', margin: 0 });
-      pagina++;
-      y = dibujarEncabezado(doc, 'HOJA DE RUTA', lineasEncabezado) + 20;
-    };
 
     if (paradas.length === 0) {
       y = dibujarTituloSeccion(doc, y, 'Sin pedidos');
@@ -245,13 +367,13 @@ export async function pdfHojaRuta(fecha: string): Promise<Buffer> {
 
     let zonaActual: string | null = null;
     for (const p of paradas) {
-      const altoTarjeta = tarjetaParada(doc, 0, p, fecha, true);
+      const altoTarjeta = tarjetaParada(doc, 0, p, fecha, { medir: true, conChofer: true });
       let titulo: string | null = null;
       if (p.zona !== zonaActual) {
         titulo = `${limpiarTexto(p.zona)} (${paradas.filter((x) => x.zona === p.zona).length})`;
       }
-      if (y + altoTarjeta + 32 > limite()) {
-        nuevaPagina();
+      if (y + altoTarjeta + 32 > h.limite()) {
+        y = h.nuevaPagina();
         // Si la zona sigue en la página nueva, se repite el título para no perder de qué zona es.
         titulo ??= `${limpiarTexto(p.zona)} (continuación)`;
       }
@@ -259,10 +381,50 @@ export async function pdfHojaRuta(fecha: string): Promise<Buffer> {
         y = dibujarTituloSeccion(doc, y, titulo);
         zonaActual = p.zona;
       }
-      y = tarjetaParada(doc, y, p, fecha) + 10;
+      y = tarjetaParada(doc, y, p, fecha, { conChofer: true }) + 10;
+    }
+  }, [`Reparto del ${formatearFechaCorta(fecha)}`, generadaEn()]);
+}
+
+/**
+ * GET /api/rutas/choferes.pdf: las rutas ya armadas del día, una por chofer
+ * (cada chofer arranca en página nueva, para poder repartir las hojas), con
+ * las paradas pendientes en el orden actual del panel y el recuadro vacío
+ * para reordenarlas a mano.
+ */
+export async function pdfHojaRutaPorChofer(fecha: string): Promise<Buffer> {
+  const rutas = await rutasDelDia(fecha);
+  const lineasDe = (r: RutaHoja) => [
+    `${r.choferNombre}${r.patente ? ` · ${r.patente}` : ''}`,
+    `Reparto del ${formatearFechaCorta(fecha)}`,
+    generadaEn(),
+  ];
+
+  return generarHoja((doc, h) => {
+    const anchoUtil = doc.page.width - MARGEN * 2;
+    let y = h.y;
+
+    if (rutas.length === 0) {
+      y = dibujarTituloSeccion(doc, y, 'Sin rutas');
+      doc.fillColor(GRIS_TEXTO).font('Helvetica').fontSize(10)
+        .text('No hay viajes pendientes asignados a choferes para este día.', MARGEN, y, { width: anchoUtil });
+      return;
     }
 
-    dibujarPieHoja(doc, pagina);
-    doc.end();
-  });
+    rutas.forEach((r, i) => {
+      if (i > 0) y = h.nuevaPagina(lineasDe(r));
+      const tituloChofer = `${r.choferNombre}${r.patente ? ` · Patente ${r.patente}` : ''}`;
+      y = dibujarTituloSeccion(doc, y, tituloChofer);
+      y = lineaResumen(doc, y, r.paradas, `${r.paradas.length} paradas`) + 8;
+
+      for (const p of r.paradas) {
+        const altoTarjeta = tarjetaParada(doc, 0, p, fecha, { medir: true });
+        if (y + altoTarjeta > h.limite()) {
+          y = h.nuevaPagina(lineasDe(r));
+          y = dibujarTituloSeccion(doc, y, `${tituloChofer} (continuación)`);
+        }
+        y = tarjetaParada(doc, y, p, fecha) + 10;
+      }
+    });
+  }, rutas.length ? lineasDe(rutas[0]) : [`Reparto del ${formatearFechaCorta(fecha)}`, generadaEn()]);
 }

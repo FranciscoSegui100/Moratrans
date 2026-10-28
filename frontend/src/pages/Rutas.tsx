@@ -1217,6 +1217,7 @@ export function Rutas() {
   const clienteBoxRef = useRef<HTMLDivElement>(null);
   const [autoArmando, setAutoArmando] = useState(false);
   const [descargandoHoja, setDescargandoHoja] = useState(false);
+  const [descargandoHojaChoferes, setDescargandoHojaChoferes] = useState(false);
   // Último auto-armado, para poder deshacerlo: el aviso queda fijo hasta cerrarlo o volver a auto-armar.
   const [ultimoAutoArmado, setUltimoAutoArmado] = useState<{
     paradas: { rutaId: string; viajeId: string }[];
@@ -1638,6 +1639,18 @@ export function Rutas() {
       show('error', 'No se pudo generar la hoja de ruta');
     } finally {
       setDescargandoHoja(false);
+    }
+  }
+
+  /** PDF con las rutas ya armadas del día, una por chofer, con el recuadro para reordenar a mano. */
+  async function descargarHojaChoferes() {
+    setDescargandoHojaChoferes(true);
+    try {
+      await descargarArchivo(`/api/rutas/choferes.pdf?fecha=${fecha}`, `rutas-por-chofer-${fecha}.pdf`);
+    } catch {
+      show('error', 'No se pudo generar la hoja de rutas por chofer');
+    } finally {
+      setDescargandoHojaChoferes(false);
     }
   }
 
@@ -2288,6 +2301,17 @@ export function Rutas() {
               <div className="section-title" style={{ fontSize: '0.9rem', fontWeight: 700, marginBottom: 0 }}>
                 Choferes y Rutas del Día
               </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={descargarHojaChoferes}
+                disabled={descargandoHojaChoferes || ruteados === 0}
+                title={ruteados === 0
+                  ? 'Todavía no hay viajes asignados a choferes para este día'
+                  : 'Descarga un PDF con los viajes de cada chofer en su propia hoja, con el recuadro para anotar el orden de paradas.'}
+              >
+                <Printer size={14} strokeWidth={1.75} /> {descargandoHojaChoferes ? 'Generando…' : 'Imprimir rutas por chofer'}
+              </button>
             </div>
             <div className="routes-grid">
               {choferes.map((chofer) => {
