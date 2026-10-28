@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown, ChevronLeft, ChevronRight, Search, UserPlus } from 'lucide-react';
-import { api } from '../api/client';
+import { AlertTriangle, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Plus, X, RefreshCw, CheckCircle2, GripVertical, ChevronDown, ChevronLeft, ChevronRight, Search, UserPlus, Printer } from 'lucide-react';
+import { api, descargarArchivo } from '../api/client';
 import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
@@ -1216,6 +1216,7 @@ export function Rutas() {
   const [clienteListaAbierta, setClienteListaAbierta] = useState(false);
   const clienteBoxRef = useRef<HTMLDivElement>(null);
   const [autoArmando, setAutoArmando] = useState(false);
+  const [descargandoHoja, setDescargandoHoja] = useState(false);
   // Último auto-armado, para poder deshacerlo: el aviso queda fijo hasta cerrarlo o volver a auto-armar.
   const [ultimoAutoArmado, setUltimoAutoArmado] = useState<{
     paradas: { rutaId: string; viajeId: string }[];
@@ -1628,6 +1629,18 @@ export function Rutas() {
    * mano: nadie recibe aviso hasta tocar "Confirmar ruta". Se puede deshacer
    * hasta que se cierre el aviso o se vuelva a auto-armar.
    */
+  /** PDF para imprimir con los pedidos de la bolsa del día, para ordenar la ruta a mano (orden y chofer). */
+  async function descargarHojaRuta() {
+    setDescargandoHoja(true);
+    try {
+      await descargarArchivo(`/api/rutas/bolsa.pdf?fecha=${fecha}`, `hoja-de-ruta-${fecha}.pdf`);
+    } catch {
+      show('error', 'No se pudo generar la hoja de ruta');
+    } finally {
+      setDescargandoHoja(false);
+    }
+  }
+
   async function autoArmarRutas() {
     // Mismo criterio que la bolsa (fecha efectiva): no arma rutas fechadas en el pasado.
     const visitasParaArmar = agruparPendientes(cola).filter(
@@ -2073,6 +2086,15 @@ export function Rutas() {
                   {autoArmando ? 'Armando rutas…' : '⚡ Auto-armar rutas del día'}
                 </button>
               </RoleGate>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={descargarHojaRuta}
+                disabled={descargandoHoja}
+                title="Descarga un PDF con los pedidos pendientes de este día, con lugar para anotar a mano el orden de paradas y el chofer."
+              >
+                <Printer size={14} strokeWidth={1.75} /> {descargandoHoja ? 'Generando…' : 'Imprimir hoja de ruta'}
+              </button>
             </div>
             <span
               className={`badge ${atrasadosSinRutear > 0 ? 'danger' : 'programado'}`}

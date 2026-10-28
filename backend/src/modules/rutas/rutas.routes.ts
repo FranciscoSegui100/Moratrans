@@ -17,6 +17,7 @@ import { despacharPrimeraParada } from '../../services/despachoRutas.service';
 import { hoyMendozaISO } from '../../services/fechas.service';
 import { anularPagosDeViajesCancelados } from '../../services/pagoViajeCancelado.service';
 import { sincronizarRetirosPorVencimiento } from '../../services/retiroAutomatico.service';
+import { pdfHojaRuta } from './hojaRuta.service';
 
 export const rutasRouter = Router();
 rutasRouter.use(requireAuth);
@@ -369,6 +370,21 @@ rutasRouter.get('/bolsa', async (req: Request, res: Response) => {
     params,
   );
   res.json(rows);
+});
+
+/**
+ * GET /api/rutas/bolsa.pdf?fecha=YYYY-MM-DD — hoja para imprimir con los
+ * pedidos de la bolsa de ese día (ver pdfHojaRuta), con lugar para anotar a
+ * mano el orden de paradas y el chofer.
+ */
+rutasRouter.get('/bolsa.pdf', async (req: Request, res: Response) => {
+  const { fecha } = req.query as Record<string, string>;
+  if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return res.status(400).json({ error: 'Fecha inválida' });
+  await sincronizarRetirosPorVencimiento().catch((e) => console.error('Error sincronizando retiros por vencimiento:', e.message));
+  const buf = await pdfHojaRuta(fecha);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="hoja-de-ruta-${fecha}.pdf"`);
+  res.send(buf);
 });
 
 /**
