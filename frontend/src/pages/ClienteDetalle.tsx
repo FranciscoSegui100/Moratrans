@@ -648,25 +648,7 @@ export function ClienteDetalle() {
               });
             }
 
-            // 3. Deuda ocasional adicional que aún no tenga viaje creado (pedidos pendientes)
-            const movsDeudaExtra: { fecha: string; concepto: string; debe: number; haber: number }[] = [];
-            if (deuda?.items) {
-              for (const it of deuda.items) {
-                const monto = Number(it.monto || 0);
-                if (monto <= 0) continue;
-                const yaEsta = movsViajes.some((mv) => mv.fecha.slice(0, 10) === it.fecha.slice(0, 10) && mv.debe === monto);
-                if (!yaEsta) {
-                  movsDeudaExtra.push({
-                    fecha: it.fecha,
-                    concepto: it.concepto + (it.contenedor_numero ? ` · Cont. ${it.contenedor_numero}` : ''),
-                    debe: monto,
-                    haber: 0,
-                  });
-                }
-              }
-            }
-
-            const movimientos = [...movsCC, ...movsViajes, ...movsDeudaExtra].sort((a, b) => a.fecha.localeCompare(b.fecha));
+            const movimientos = [...movsCC, ...movsViajes].sort((a, b) => a.fecha.localeCompare(b.fecha));
 
             const totalCargos = movimientos.reduce((s, m) => s + m.debe, 0);
             const totalPagado = movimientos.reduce((s, m) => s + m.haber, 0);
