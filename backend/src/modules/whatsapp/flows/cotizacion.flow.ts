@@ -21,7 +21,7 @@ import {
 } from './ubicacionZona.helper';
 import { OPCIONES_HORARIO, pedirHorarioPreferido } from './horarioPreferido.flow';
 import { contenedoresDelCliente } from '../../../services/contenedorCliente.service';
-import { proximosDiasHabiles, formatearFechaLarga, sumarDias } from '../../../services/diasHabiles.service';
+import { proximosDiasHabiles, formatearFechaLarga, venceHabil } from '../../../services/diasHabiles.service';
 import { manejarRespuestaInvalida } from '../estados';
 import { TIPOS_LUGAR, DIAS_ALQUILER_ANTES_RETIRO, HORARIO_BARRIO_PRIVADO } from '../../../config/bot.config';
 import type { MensajeEntrante } from '../messageRouter';
@@ -539,7 +539,7 @@ async function mostrarResumenYConfirmar(to: string, sesion: Sesion, opcion: { ti
     return;
   }
   const { precio } = tarifa;
-  const fechaRetiroEstimada = sumarDias(fechaEntrega, DIAS_ALQUILER_ANTES_RETIRO);
+  const fechaRetiroEstimada = venceHabil(fechaEntrega, DIAS_ALQUILER_ANTES_RETIRO);
   const resumenUbicacion =
     destinoLat != null && destinoLng != null
       ? `${destinoDireccion ? destinoDireccion + '\n' : ''}https://www.google.com/maps?q=${destinoLat},${destinoLng}`

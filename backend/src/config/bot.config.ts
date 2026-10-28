@@ -11,8 +11,12 @@ export const LIMITE_INTENTOS_INVALIDOS = 2;
 /** Veces que el cliente tiene que pedir "asesor" espontáneamente antes de escalar. */
 export const INTENTOS_PARA_ESCALAR_ASESOR = 3;
 
-/** Días de alquiler antes de que corresponda el retiro (se cuentan desde la entrega o el recambio). */
-export const DIAS_ALQUILER_ANTES_RETIRO = 7;
+/**
+ * Días de alquiler antes de que corresponda el retiro (se cuentan desde la
+ * entrega o el recambio). Si el vencimiento cae sábado o domingo pasa al
+ * lunes (fn_vencimiento_habil en la base, venceHabil en el código).
+ */
+export const DIAS_ALQUILER_ANTES_RETIRO = 10;
 
 /** Cantidad de próximos días hábiles (lunes a viernes) que se le ofrecen al cliente para elegir. */
 export const CANTIDAD_DIAS_HABILES_A_OFRECER = 6;
@@ -20,7 +24,10 @@ export const CANTIDAD_DIAS_HABILES_A_OFRECER = 6;
 /** Hasta esta hora (Mendoza, exclusiva) el bot ofrece "hoy" como día de entrega/retiro. A partir de ahí arranca mañana. */
 export const HORA_LIMITE_PEDIDO_MISMO_DIA = 15;
 
-/** Días que suma "extender el retiro". Solo se puede aplicar una vez por ciclo (ver alargarRetiro.flow.ts). */
+/**
+ * Días que suma "extender el retiro" a los días de alquiler (10 + 5; ver
+ * fn_vencimiento_alargado). Solo se puede aplicar una vez por ciclo (ver alargarRetiro.flow.ts).
+ */
 export const DIAS_ALARGUE = 5;
 
 /** El alargue cuesta esta fracción de la tarifa vigente de la zona del contenedor (ver alargarRetiro.flow.ts). */

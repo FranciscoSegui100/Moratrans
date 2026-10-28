@@ -136,7 +136,7 @@ export async function asignarContenedorAEntrega(params: {
       await c.query(`UPDATE contenedores SET estado = 'reservado', actualizado_por = $2 WHERE numero = $1`, [cont.numero, actualizadoPor]);
     }
     await c.query(
-      `UPDATE contenedores SET estado = 'entregado', vence_en = now() + make_interval(days => $2), actualizado_por = $3
+      `UPDATE contenedores SET estado = 'entregado', vence_en = fn_vencimiento_habil(now(), $2), actualizado_por = $3
         WHERE numero = $1`,
       [cont.numero, DIAS_ALQUILER_ANTES_RETIRO, actualizadoPor],
     );

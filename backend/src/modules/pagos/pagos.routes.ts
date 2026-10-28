@@ -15,7 +15,7 @@ import { avisoPagoChofer } from '../whatsapp/avisoEfectivo';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
-import { formatearFechaCorta, formatearFechaLarga, medianocheArgentina, sumarDias } from '../../services/diasHabiles.service';
+import { formatearFechaCorta, formatearFechaLarga, medianocheArgentina, venceHabil } from '../../services/diasHabiles.service';
 import { hoyMendozaISO } from '../../services/fechas.service';
 import { saldoCuentaCorriente } from '../reportes/reportes.service';
 import { DIAS_ALQUILER_ANTES_RETIRO, DIAS_ALARGUE } from '../../config/bot.config';
@@ -232,10 +232,10 @@ async function validarAlargue(req: Request, res: Response, pagoId: string): Prom
 
   const [cont] = await query<{ vence_en: Date }>(
     `UPDATE contenedores
-        SET vence_en = COALESCE(vence_en, now()) + make_interval(days => $2)
+        SET vence_en = fn_vencimiento_alargado(numero, $3, $2)
       WHERE numero = $1
       RETURNING vence_en`,
-    [pago.contenedor_numero, DIAS_ALARGUE],
+    [pago.contenedor_numero, DIAS_ALARGUE, DIAS_ALQUILER_ANTES_RETIRO],
   );
   // Alargue aprobado: el retiro automático del vencimiento viejo (si ya
   // estaba en la bolsa) se cancela; el cron lo recrea para la fecha nueva.
@@ -750,7 +750,7 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
         // en Argentina se ve como las 21hs del día anterior.
         await query(
           'UPDATE contenedores SET vence_en = $1 WHERE numero = $2',
-          [medianocheArgentina(sumarDias(venceEn, DIAS_ALQUILER_ANTES_RETIRO)), result.contenedor],
+          [medianocheArgentina(venceHabil(venceEn, DIAS_ALQUILER_ANTES_RETIRO)), result.contenedor],
         );
       }
     }

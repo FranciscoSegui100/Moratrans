@@ -701,7 +701,7 @@ async function cascadearParejaRecambio(
     // antes acá no se cargaba vence_en y el vacío de un recambio quedaba sin
     // fecha — nunca le llegaba el recordatorio ni el retiro automático.
     await query(
-      `UPDATE contenedores SET estado = 'entregado', vence_en = now() + make_interval(days => $3), actualizado_por = $2 WHERE numero = $1`,
+      `UPDATE contenedores SET estado = 'entregado', vence_en = fn_vencimiento_habil(now(), $3), actualizado_por = $2 WHERE numero = $1`,
       [pareja.contenedor_numero, `chofer:${choferId}`, DIAS_ALQUILER_ANTES_RETIRO],
     );
     await query(`UPDATE viajes SET completada_en = now() WHERE id = $1`, [pareja.id]);
@@ -1079,7 +1079,7 @@ async function aplicarEstado(
     // marca más arriba, donde crea/actualiza su propia fila de viajes.
     const [, entregasCompletadas] = await Promise.all([
       query(
-        `UPDATE contenedores SET estado = $1, vence_en = now() + make_interval(days => $2), actualizado_por = $3
+        `UPDATE contenedores SET estado = $1, vence_en = fn_vencimiento_habil(now(), $2), actualizado_por = $3
           WHERE numero = $4`,
         [estado, DIAS_ALQUILER_ANTES_RETIRO, `chofer:${choferId}`, numero],
       ),

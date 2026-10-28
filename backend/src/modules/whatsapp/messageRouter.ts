@@ -3,7 +3,7 @@ import { env } from '../../config/env';
 import { sendList, sendText, sendButtons, motivoErrorWa } from './graphApi';
 import { getSesion, clearSesion, setSesion } from './session.store';
 import { botEstaActivo } from '../../services/botConfig.service';
-import { MENSAJE_BOT_DESACTIVADO } from '../../config/bot.config';
+import { DIAS_ALQUILER_ANTES_RETIRO, MENSAJE_BOT_DESACTIVADO } from '../../config/bot.config';
 import { handleCotizacion, handlePedirNuevoContenedor } from './flows/cotizacion.flow';
 import { handlePago, pedidosAbiertos, opcionesMetodoPago, ofrecerPedidoPendiente, avisarAdjuntoSinContexto } from './flows/pago.flow';
 import { handleChofer } from './flows/chofer.flow';
@@ -460,7 +460,7 @@ async function enviarMenuPrincipal(to: string): Promise<void> {
   // (varios contenedores a lo largo del tiempo), se le ofrece todo lo que
   // puede necesitar sin tener que escribir texto libre para encontrarlo.
   const saludo = cliente?.nombre && cliente.nombre !== 'Sin nombre' ? `👋 ¡Hola, ${cliente.nombre.split(' ')[0]}!` : '👋 ¡Hola!';
-  const beneficios = '📦 Alquiler por 7 días\n🚛 Retiro y entrega incluida\n📍 Servicio confiable y puntual';
+  const beneficios = `📦 Alquiler por ${DIAS_ALQUILER_ANTES_RETIRO} días\n🚛 Retiro y entrega incluida\n📍 Servicio confiable y puntual`;
 
   if (esCuentaCorriente) {
     await sendList(

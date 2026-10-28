@@ -128,6 +128,15 @@ export function diaHabilDesde(fechaISO: string): string {
   return f;
 }
 
+/**
+ * Vencimiento de un alquiler en fecha (YYYY-MM-DD): `dias` días de calendario
+ * y, si cae sábado o domingo, el lunes. Mismo criterio que fn_vencimiento_habil
+ * en la base.
+ */
+export function venceHabil(fechaISO: string, dias: number): string {
+  return diaHabilDesde(sumarDias(fechaISO, dias));
+}
+
 /** Último día hábil ANTERIOR a `fechaISO` (estricto): para un lunes, el viernes. */
 export function diaHabilAnterior(fechaISO: string): string {
   let f = sumarDias(fechaISO.slice(0, 10), -1);

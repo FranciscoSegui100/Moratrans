@@ -9,7 +9,7 @@ import { contenedoresDelCliente, ContenedorCliente } from '../../../services/con
 import { datosBancarios, tieneCuentaCorrienteAprobada } from './pago.flow';
 import { manejarRespuestaInvalida } from '../estados';
 import { escalarAAsesor } from './asesor.flow';
-import { DIAS_ALARGUE, PORCENTAJE_ALARGUE } from '../../../config/bot.config';
+import { DIAS_ALARGUE, DIAS_ALQUILER_ANTES_RETIRO, PORCENTAJE_ALARGUE } from '../../../config/bot.config';
 import { formatearFechaCorta } from '../../../services/diasHabiles.service';
 import { cancelarRetiroAutomatico } from '../../../services/retiroAutomatico.service';
 import type { MensajeEntrante } from '../messageRouter';
@@ -268,10 +268,10 @@ async function registrarAlargueCC(to: string, sesion: Sesion): Promise<void> {
 
   const [cont] = await query<{ vence_en: Date | null }>(
     `UPDATE contenedores
-        SET vence_en = COALESCE(vence_en, now()) + make_interval(days => $2)
+        SET vence_en = fn_vencimiento_alargado(numero, $3, $2)
       WHERE numero = $1
       RETURNING vence_en`,
-    [numero, DIAS_ALARGUE],
+    [numero, DIAS_ALARGUE, DIAS_ALQUILER_ANTES_RETIRO],
   );
   // Si el retiro ya había entrado solo a la bolsa (día antes del vencimiento
   // viejo), se cancela: el cron lo vuelve a crear para la fecha nueva.

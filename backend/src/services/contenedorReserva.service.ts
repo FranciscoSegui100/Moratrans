@@ -1,5 +1,5 @@
 import { PoolClient } from 'pg';
-import { formatearFechaCorta, medianocheArgentina, sumarDias } from './diasHabiles.service';
+import { formatearFechaCorta, medianocheArgentina, venceHabil } from './diasHabiles.service';
 import { DIAS_ALQUILER_ANTES_RETIRO } from '../config/bot.config';
 
 /** Mismo patrón que el resto del código: un error con `.status` que las rutas mapean a la respuesta HTTP. */
@@ -85,7 +85,7 @@ export async function reservarParaEntrega(
     await c.query(
       `UPDATE contenedores SET estado = 'reservado', vence_en = $2, actualizado_por = $3
          WHERE numero = $1 AND estado = 'disponible'`,
-      [numero, medianocheArgentina(sumarDias(fecha, DIAS_ALQUILER_ANTES_RETIRO)), actualizadoPor],
+      [numero, medianocheArgentina(venceHabil(fecha, DIAS_ALQUILER_ANTES_RETIRO)), actualizadoPor],
     );
     return;
   }

@@ -10,7 +10,7 @@ import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { diaHabilDesde, formatearFechaCorta } from '../../services/diasHabiles.service';
 import { reglasDePago, subirComprobanteManual, pedirPagoPorWhatsApp } from '../../services/pagoManual.service';
 import { emitRecursoActualizado } from '../../config/socket';
-import { DIAS_ALARGUE, PORCENTAJE_ALARGUE } from '../../config/bot.config';
+import { DIAS_ALARGUE, DIAS_ALQUILER_ANTES_RETIRO, PORCENTAJE_ALARGUE } from '../../config/bot.config';
 
 export const contenedoresRouter = Router();
 contenedoresRouter.use(requireAuth);
@@ -507,8 +507,8 @@ contenedoresRouter.post('/:numero/alargue', requireRol('admin', 'operador'), asy
       if (activo?.grupo_id) fail('Este contenedor ya tiene un recambio programado — no se puede alargar por separado.');
 
       const { rows: contRows } = await c.query<{ vence_en: Date }>(
-        `UPDATE contenedores SET vence_en = vence_en + make_interval(days => $2) WHERE numero = $1 RETURNING vence_en`,
-        [numero, DIAS_ALARGUE],
+        `UPDATE contenedores SET vence_en = fn_vencimiento_alargado(numero, $3, $2) WHERE numero = $1 RETURNING vence_en`,
+        [numero, DIAS_ALARGUE, DIAS_ALQUILER_ANTES_RETIRO],
       );
       const nuevoVenceEn = contRows[0].vence_en;
       const nuevaFecha = diaHabilDesde(fechaMendoza(nuevoVenceEn));
