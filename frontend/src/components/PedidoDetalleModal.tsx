@@ -136,14 +136,14 @@ export function PedidoDetalleModal({
               <Fila label="Vacío a dejar">
                 {entrega!.contenedor_numero
                   ? <span className="mono">{entrega!.contenedor_numero}</span>
-                  : <span className="text-muted">Se asigna al armar la ruta</span>}
+                  : <span className="text-muted">Lo elige el chofer al entregar</span>}
               </Fila>
             </>
           ) : (
             <Fila label={entrega ? 'Contenedor a entregar' : 'Contenedor a retirar'}>
               {base.contenedor_numero
                 ? <span className="mono">{base.contenedor_numero}</span>
-                : <span className="text-muted">{entrega ? 'Se asigna al armar la ruta' : '—'}</span>}
+                : <span className="text-muted">{entrega ? 'Lo elige el chofer al entregar' : '—'}</span>}
             </Fila>
           )}
 

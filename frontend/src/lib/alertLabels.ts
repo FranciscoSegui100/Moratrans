@@ -19,6 +19,8 @@ export const tipoLabel: Record<string, string> = {
   chofer_no_reconocido:       'Chofer no reconocido',
   chofer_cambio_telefono:     'Cambio de teléfono de chofer',
   envio_fallido:              'No se pudo enviar un WhatsApp',
+  contenedor_entregado:       'Contenedor entregado',
+  chofer_necesita_ayuda:      'Chofer necesita ayuda',
 };
 
 export const tipoDescripcion: Record<string, string> = {
@@ -37,6 +39,8 @@ export const tipoDescripcion: Record<string, string> = {
   chofer_no_reconocido:       'Mensajes entrantes de choferes o líneas no registradas en la flota',
   chofer_cambio_telefono:     'Notificaciones de choferes informando una nueva línea telefónica activa',
   envio_fallido:              'Fallos en la entrega de mensajes o plantillas salientes de WhatsApp',
+  contenedor_entregado:       'El chofer entregó y eligió con qué contenedor: queda alquilado a ese cliente',
+  chofer_necesita_ayuda:      'Un chofer quedó trabado en el bot o eligió un contenedor que no figura disponible',
 };
 
 export type SectorId = 'todos' | 'pagos' | 'logistica' | 'asesor' | 'choferes' | 'sistema';
@@ -81,6 +85,7 @@ export const SECTORES: SectorMeta[] = [
       'retiro_solicitado',
       'recambio_solicitado',
       'entrega_solicitada',
+      'contenedor_entregado',
       'stock_bajo',
     ],
   },
@@ -96,7 +101,7 @@ export const SECTORES: SectorMeta[] = [
     label: 'Choferes',
     badgeClass: 'badge-choferes',
     color: 'var(--info)',
-    tipos: ['chofer_no_reconocido', 'chofer_cambio_telefono'],
+    tipos: ['chofer_no_reconocido', 'chofer_cambio_telefono', 'chofer_necesita_ayuda'],
   },
   {
     id: 'sistema',

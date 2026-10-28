@@ -55,7 +55,7 @@ interface Viaje {
   tiene_foto_entrega?: boolean;
   comprobantes: Comprobante[];
 }
-interface Contenedor { numero: string; estado: string; vence_en: string | null; }
+interface Contenedor { numero: string; estado: string; vence_en: string | null; tamano: number | null; }
 interface Tarifa { departamento: string; activo: boolean; }
 interface Chofer { id: string; nombre: string; activo: boolean; }
 
@@ -134,10 +134,10 @@ export function Viajes() {
     queryFn: () => api.get<Contenedor[]>('/api/contenedores').then((r) => r.data),
   });
 
-  // El contenedor de cualquier viaje (incluido el lleno de un recambio) ya no
-  // se pide al programarlo desde Rutas: se asigna después, con el botón
-  // "Asignar" de la columna Contenedor de esta tabla — retiro ofrece los
-  // contenedores "entregado" (llenos), entrega los "disponible" (vacíos).
+  // El contenedor de una entrega lo elige el chofer al tocar "Ya entregué"
+  // (ver chofer.flow.ts); acá solo se corrige si eligió mal ("Cambiar", con
+  // los disponibles). Un retiro sin contenedor todavía se completa con
+  // "Asignar" (los "entregado", llenos).
   const contenedoresEntregados = contenedores.filter((c) => c.estado === 'entregado');
   const vaciosDisponibles = contenedores.filter((c) => c.estado === 'disponible');
 
@@ -173,11 +173,7 @@ export function Viajes() {
     [viajes, desde, hasta, filtroZona, filtroTipo, filtroChofer, filtroRuteo],
   );
 
-  /**
-   * Completa la fila 'entrega' de un recambio (se crea sin contenedor, ver
-   * recambio.flow.ts). Solo el contenedor: el chofer ya no se elige desde
-   * Viajes, sale de la ruta en la que se arme el viaje (pestaña Rutas).
-   */
+  /** Completa el contenedor de un retiro que se creó sin él (el lleno a buscar). */
   async function asignarContenedor(id: string) {
     if (!asignarContenedorNumero) return;
     try {
@@ -188,6 +184,26 @@ export function Viajes() {
       show('success', 'Contenedor asignado');
     } catch (err: any) {
       show('error', 'No se pudo asignar', err.response?.data?.error);
+    }
+  }
+
+  /**
+   * Corrige el contenedor de una entrega YA hecha (el chofer eligió mal al
+   * tocar "Ya entregué"): el equivocado vuelve a disponible y el correcto
+   * queda entregado con el mismo vencimiento.
+   */
+  async function cambiarContenedorEntregado(id: string) {
+    if (!asignarContenedorNumero) return;
+    try {
+      const { data } = await api.post<{ anterior: string; nuevo: string }>(`/api/viajes/${id}/cambiar-contenedor`, {
+        contenedor_numero: asignarContenedorNumero,
+      });
+      setAsignando(null);
+      setAsignarContenedorNumero('');
+      cargar();
+      show('success', 'Contenedor corregido', `${data.anterior} → ${data.nuevo}`);
+    } catch (err: any) {
+      show('error', 'No se pudo corregir', err.response?.data?.error);
     }
   }
 
@@ -361,8 +377,43 @@ export function Viajes() {
                   <DireccionMaps direccion={v.destino_final_direccion} lat={v.tipo === 'entrega' ? v.destino_lat : null} lng={v.tipo === 'entrega' ? v.destino_lng : null} />
                 </td>
                 <td className="mono">
-                  {v.contenedor_numero ? (
+                  {v.tipo === 'entrega' && v.contenedor_numero && v.completada_en && v.estado !== 'completado' ? (
+                    // Entrega ya hecha: la oficina puede corregir el contenedor si el chofer eligió mal.
+                    asignando === v.id ? (
+                      <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                        <select
+                          className="form-select"
+                          style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                          value={asignarContenedorNumero}
+                          onChange={(e) => setAsignarContenedorNumero(e.target.value)}
+                        >
+                          <option value="">— Correcto —</option>
+                          {vaciosDisponibles.map((c) => (
+                            <option key={c.numero} value={c.numero}>{c.tamano ? `${c.numero} (${c.tamano} m³)` : c.numero}</option>
+                          ))}
+                        </select>
+                        <button className="btn btn-success btn-sm" onClick={() => cambiarContenedorEntregado(v.id)}>OK</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setAsignando(null)}>✕</button>
+                      </div>
+                    ) : (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        {v.contenedor_numero}
+                        <RoleGate roles={['admin', 'operador']}>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            title="El chofer eligió mal: cambiar por el contenedor que dejó de verdad"
+                            onClick={() => { setAsignando(v.id); setAsignarContenedorNumero(''); }}
+                          >
+                            Cambiar
+                          </button>
+                        </RoleGate>
+                      </span>
+                    )
+                  ) : v.contenedor_numero ? (
                     v.contenedor_numero
+                  ) : v.tipo === 'entrega' ? (
+                    // Flujo de entrega: el contenedor lo elige el chofer al tocar "Ya entregué".
+                    <span className="text-muted" style={{ fontFamily: 'inherit' }}>Lo elige el chofer</span>
                   ) : asignando === v.id ? (
                     <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                       <select
@@ -371,8 +422,8 @@ export function Viajes() {
                         value={asignarContenedorNumero}
                         onChange={(e) => setAsignarContenedorNumero(e.target.value)}
                       >
-                        <option value="">{v.tipo === 'retiro' ? '— Lleno —' : '— Vacío —'}</option>
-                        {(v.tipo === 'retiro' ? contenedoresEntregados : vaciosDisponibles).map((c) => (
+                        <option value="">— Lleno —</option>
+                        {contenedoresEntregados.map((c) => (
                           <option key={c.numero} value={c.numero}>{c.numero}</option>
                         ))}
                       </select>

@@ -144,7 +144,7 @@ function agruparPendientes(viajes: ViajePendiente[]): VisitaPendiente[] {
   return [...sueltas, ...porGrupo.values()];
 }
 
-interface StatsRuta { paradas: number; ent: number; ret: number; rec: number; warn: number; sinConfirmar: number; finalizadas: number; }
+interface StatsRuta { paradas: number; ent: number; ret: number; rec: number; sinConfirmar: number; finalizadas: number; }
 /** Resumen por ruta para las tarjetas — cuenta visitas (recambio = 1 sola) agrupando por `orden`. No incluye vaciados (viven en otra tabla), solo da una idea rápida antes de abrir el detalle. */
 function statsPorRuta(viajesDia: ViajePendiente[]): Map<string, StatsRuta> {
   const porRuta = new Map<string, ViajePendiente[]>();
@@ -163,17 +163,18 @@ function statsPorRuta(viajesDia: ViajePendiente[]): Map<string, StatsRuta> {
       lista.push(v);
       porOrden.set(key, lista);
     }
-    let ent = 0, ret = 0, rec = 0, warn = 0, sinConfirmar = 0, finalizadas = 0;
+    let ent = 0, ret = 0, rec = 0, sinConfirmar = 0, finalizadas = 0;
     porOrden.forEach((visita) => {
       const entrega = visita.find((v) => v.tipo === 'entrega');
       const retiro = visita.find((v) => v.tipo === 'retiro');
-      if (entrega && retiro) { rec++; if (!entrega.contenedor_numero) warn++; }
-      else if (entrega) { ent++; if (!entrega.contenedor_numero) warn++; }
+      // Una entrega sin contenedor ya no es un problema: lo elige el chofer al entregar.
+      if (entrega && retiro) { rec++; }
+      else if (entrega) { ent++; }
       else if (retiro) { ret++; }
       if (visita.some((v) => v.completada_en)) finalizadas++;
       else if (visita.some((v) => v.ruta_confirmada_en == null)) sinConfirmar++;
     });
-    resultado.set(rutaId, { paradas: ent + ret + rec, ent, ret, rec, warn, sinConfirmar, finalizadas });
+    resultado.set(rutaId, { paradas: ent + ret + rec, ent, ret, rec, sinConfirmar, finalizadas });
   });
   return resultado;
 }
@@ -381,14 +382,6 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     onCambio();
   };
 
-  // En vez de un "sin stock" genérico cuando el operador esperaba ver algo:
-  // si lo que falta son contenedores que SÍ están en el depósito pero ya
-  // elegidos para una entrega de otra ruta sin confirmar, lo dice — así no
-  // parece que falta stock cuando en realidad está "pisado" en otro lado.
-  const comprometidosOtraRuta = ruta?.contenedores_comprometidos_otra_ruta ?? [];
-  const motivoSinStock = comprometidosOtraRuta.length === 0
-    ? 'sin stock a bordo'
-    : `sin stock — ${comprometidosOtraRuta.map((c) => `${c.numero} está con ${c.chofer_nombre ?? 'otro chofer'} (sin confirmar)`).join(', ')}`;
   const visitas = ruta ? agruparVisitas(ruta.paradas) : [];
   // Para el selector de "Agregar vaciado" a mano: contenedores que este
   // chofer tiene retirados y sin vaciar, salvo los que ya tienen una parada
@@ -603,28 +596,6 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     moverA(idx, j);
   }
 
-  async function asignarContenedor(viajeId: string, contenedorNumero: string) {
-    if (!contenedorNumero) return;
-    // Optimista: el select ya se ve con el contenedor elegido antes de que
-    // vuelva la confirmación del servidor.
-    const previo = queryClient.getQueryData<RutaData>(['rutas', rutaId]);
-    if (previo) {
-      queryClient.setQueryData<RutaData>(['rutas', rutaId], {
-        ...previo,
-        paradas: previo.paradas.map((p) =>
-          p.tipo_parada === 'viaje' && p.id === viajeId ? { ...p, contenedor_numero: contenedorNumero } : p,
-        ),
-      });
-    }
-    try {
-      await api.patch(`/api/rutas/${rutaId}/paradas/${viajeId}/contenedor`, { contenedor_numero: contenedorNumero });
-      cargar();
-    } catch (err: any) {
-      if (previo) queryClient.setQueryData(['rutas', rutaId], previo);
-      show('error', 'No se pudo asignar el contenedor', err.response?.data?.error);
-    }
-  }
-
   const [despachando, setDespachando] = useState(false);
 
   async function despacharAhora() {
@@ -648,8 +619,8 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   async function confirmarRuta() {
     const esFutura = ruta && ruta.fecha > hoyISO();
     const confirmMsg = esFutura
-      ? `¿Confirmar la ruta para el ${formatearFecha(ruta.fecha)}? Se reservan los contenedores. El chofer recibirá su primera parada automáticamente a las 07:30 hs del día del reparto.`
-      : '¿Confirmar la ruta? Se reservan las paradas nuevas y se avisa al chofer por WhatsApp. Podés volver a confirmar más tarde si entra trabajo nuevo.';
+      ? `¿Confirmar la ruta para el ${formatearFecha(ruta.fecha)}? El chofer recibirá su primera parada automáticamente a las 07:30 hs del día del reparto.`
+      : '¿Confirmar la ruta? Se le avisa al chofer por WhatsApp. Podés volver a confirmar más tarde si entra trabajo nuevo.';
     if (!confirm(confirmMsg)) return;
     setConfirmando(true);
     try {
@@ -665,10 +636,10 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
         if (data.despachada) {
           show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'Se avisó al chofer por WhatsApp.');
         } else {
-          show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'Contenedores reservados. El chofer recibirá su primera parada a las 07:30 hs.');
+          show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'El chofer recibirá su primera parada a las 07:30 hs.');
         }
       } else {
-        show('success', 'Ya estaba todo confirmado', 'No había paradas nuevas para reservar.');
+        show('success', 'Ya estaba todo confirmado', 'No había paradas nuevas para confirmar.');
       }
     } catch (err: any) {
       show('error', 'No se pudo confirmar', err.response?.data?.error || 'Error desconocido');
@@ -688,12 +659,6 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
   const pasoAgregar: 'activo' | 'hecho' = visitas.length === 0 ? 'activo' : 'hecho';
   const pasoConfirmar: 'pendiente' | 'activo' | 'hecho' =
     visitas.length === 0 ? 'pendiente' : hayCambiosSinConfirmar ? 'activo' : 'hecho';
-  let invalid = 0;
-  for (const v of visitas) {
-    if (visitaFinalizada(v)) continue; // ya hecha: su contenedor no se toca más
-    if (v.entrega && !v.entrega.contenedor_numero) invalid++;
-    else if (v.entrega?.contenedor_numero && !(v.entrega.disponibles ?? []).includes(v.entrega.contenedor_numero)) invalid++;
-  }
 
   return (
     <div className="detail">
@@ -767,10 +732,6 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
           
           <div ref={listaParadasRef} style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
             {visitas.map((v, idx) => {
-              const disponibles = v.entrega?.disponibles ?? [];
-              const necesitaContenedor = !!v.entrega;
-              const sinAsignar = necesitaContenedor && !v.entrega!.contenedor_numero;
-              const invalido = necesitaContenedor && !!v.entrega!.contenedor_numero && !disponibles.includes(v.entrega!.contenedor_numero!);
               // Parada ya terminada por el chofer o en curso (chofer yendo ahora): intocable (sin grip, sin
               // flechas, sin "mover a", sin quitar, contenedor de solo lectura).
               const finalizada = visitaFinalizada(v);
@@ -918,20 +879,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                         )}
                         <div className="sel-row">
                           <label>Vacío a dejar:</label>
-                          {!bloqueada ? (
-                            <select
-                              className={`form-select${(sinAsignar || invalido) ? ' err' : ''}`}
-                              value={v.entrega.contenedor_numero ?? ''}
-                              onChange={(e) => asignarContenedor(v.entrega!.id, e.target.value)}
-                            >
-                              <option value="">— elegir —</option>
-                              {disponibles.map((c) => <option key={c} value={c}>{c}</option>)}
-                              {invalido && <option value={v.entrega.contenedor_numero!}>{v.entrega.contenedor_numero} (ya no disp.)</option>}
-                            </select>
-                          ) : (
-                            <span className="mono">{v.entrega.contenedor_numero ?? '—'}</span>
-                          )}
-                          {sinAsignar && disponibles.length === 0 && <span className="sel-warn">{motivoSinStock}</span>}
+                          <ContenedorElegidoPorChofer numero={v.entrega.contenedor_numero} />
                         </div>
                       </>
                     )}
@@ -948,20 +896,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                         {v.entrega.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.entrega.horario_preferido}</div>}
                         <div className="sel-row">
                           <label>Contenedor:</label>
-                          {!bloqueada ? (
-                            <select
-                              className={`form-select${(sinAsignar || invalido) ? ' err' : ''}`}
-                              value={v.entrega.contenedor_numero ?? ''}
-                              onChange={(e) => asignarContenedor(v.entrega!.id, e.target.value)}
-                            >
-                              <option value="">— elegir —</option>
-                              {disponibles.map((c) => <option key={c} value={c}>{c}</option>)}
-                              {invalido && <option value={v.entrega.contenedor_numero!}>{v.entrega.contenedor_numero} (ya no disp.)</option>}
-                            </select>
-                          ) : (
-                            <span className="mono">{v.entrega.contenedor_numero ?? '—'}</span>
-                          )}
-                          {sinAsignar && disponibles.length === 0 && <span className="sel-warn">{motivoSinStock}</span>}
+                          <ContenedorElegidoPorChofer numero={v.entrega.contenedor_numero} />
                         </div>
                       </>
                     )}
@@ -1055,8 +990,8 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
         </div>
 
         <div className="detail-foot">
-          <span className="valid-msg" style={{ color: invalid ? 'var(--danger)' : 'var(--success)' }}>
-            {visitas.length === 0 ? '' : invalid ? `${invalid} parada(s) sin contenedor válido` : '✓ todas las paradas resueltas'}
+          <span className="valid-msg" style={{ color: 'var(--text-muted)' }}>
+            {visitas.length === 0 ? '' : 'Los contenedores los elige el chofer al entregar'}
           </span>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             {visitas.length > 0 && (
@@ -2336,13 +2271,13 @@ export function Rutas() {
                     </button>
                   );
                 }
-                const stats = statsRutas.get(ruta.id) ?? { paradas: 0, ent: 0, ret: 0, rec: 0, warn: 0, sinConfirmar: 0, finalizadas: 0 };
+                const stats = statsRutas.get(ruta.id) ?? { paradas: 0, ent: 0, ret: 0, rec: 0, sinConfirmar: 0, finalizadas: 0 };
                 const estado = badgeRuta(stats);
                 const sel = ruta.id === rutaSeleccionada;
                 return (
                   <button
                     key={chofer.id}
-                    className={`route-card${sel ? ' sel' : ''}${stats.warn ? ' warn' : ''}${estado.clase === 'sin_confirmar' ? ' sin-confirmar' : ''}${dropChofer === chofer.id ? ' drop-activo' : ''}${choferesDestello.has(chofer.id) ? ' destello' : ''}`}
+                    className={`route-card${sel ? ' sel' : ''}${estado.clase === 'sin_confirmar' ? ' sin-confirmar' : ''}${dropChofer === chofer.id ? ' drop-activo' : ''}${choferesDestello.has(chofer.id) ? ' destello' : ''}`}
                     onClick={() => setRutaSeleccionada(ruta.id)}
                     {...propsDropChofer(chofer.id)}
                   >
@@ -2357,9 +2292,6 @@ export function Rutas() {
                     <div className="rc-lines">
                       <div className="rc-line"><span>Paradas</span><span className="v">{stats.paradas}</span></div>
                       <div className="rc-line"><span>Ent · ret · rec</span><span className="v">{stats.ent} · {stats.ret} · {stats.rec}</span></div>
-                      {stats.warn > 0 && (
-                        <div className="rc-warn"><AlertTriangle size={13} strokeWidth={2} /> {stats.warn} parada{stats.warn > 1 ? 's' : ''} sin contenedor</div>
-                      )}
                       <div className="rc-cta">{sel ? 'Editando ahora ↓' : 'Abrir y editar →'}</div>
                     </div>
                   </button>
@@ -2427,4 +2359,15 @@ export function Rutas() {
       )}
     </div>
   );
+}
+
+/**
+ * El contenedor de una entrega no se elige al armar la ruta: lo elige el
+ * chofer al tocar "Ya entregué" por WhatsApp (ver chofer.flow.ts). Acá solo
+ * se muestra, una vez entregado.
+ */
+function ContenedorElegidoPorChofer({ numero }: { numero: string | null }) {
+  return numero
+    ? <span className="mono">{numero}</span>
+    : <span style={{ color: 'var(--text-muted)' }}>Lo elige el chofer al entregar</span>;
 }

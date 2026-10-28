@@ -1184,8 +1184,12 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
       for (const v of entregas) {
         if (v.ruta_confirmada_en) continue; // ya reservada/avisada en una corrida anterior
         try {
+          // Flujo de entrega: el contenedor lo elige el chofer al tocar "Ya
+          // entregué" (ver asignacionEntrega.service.ts) — una entrega sin
+          // contenedor se confirma igual y no reserva nada.
           if (!v.contenedor_numero) {
-            pendientes.push(`La parada ${v.orden} (entrega) no tiene contenedor asignado todavía.`);
+            await c.query(`UPDATE viajes SET ruta_confirmada_en = now() WHERE id = $1`, [v.id]);
+            confirmadasAhora.push(v);
             continue;
           }
           const disponibles = porOrden.get(v.orden) ?? [];
@@ -1225,7 +1229,7 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
       const retiros = viajes.filter((v) => v.tipo === 'retiro' && !v.ruta_confirmada_en);
       for (const v of retiros) {
         if (v.grupo_id && entregas.some((e) => e.grupo_id === v.grupo_id) && !entregaConfirmada(v.grupo_id)) {
-          pendientes.push(`El recambio de la parada ${v.orden} se confirma cuando su entrega esté lista (asignale el contenedor vacío).`);
+          pendientes.push(`El recambio de la parada ${v.orden} se confirma cuando su entrega esté lista.`);
           continue;
         }
         const advertenciaCapacidad = advertencias.find((a) => a.tipo === 'lleno_sin_vaciar' && a.orden === v.orden);

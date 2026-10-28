@@ -29,8 +29,11 @@ function rutaAlerta(a: Alerta): { to: string; label: string } | null {
       return { to: '/rutas', label: 'Asignar en Rutas' };
     case 'entrega_solicitada':
       return { to: '/viajes', label: 'Ir a Viajes' };
+    case 'contenedor_entregado':
+      return { to: '/contenedores', label: 'Ir a Contenedores' };
     case 'chofer_no_reconocido':
     case 'chofer_cambio_telefono':
+    case 'chofer_necesita_ayuda':
       return { to: '/choferes', label: 'Ir a Choferes' };
     default:
       return null;

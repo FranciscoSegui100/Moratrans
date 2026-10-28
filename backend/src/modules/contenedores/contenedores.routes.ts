@@ -6,7 +6,6 @@ import { requireAuth, requireRol } from '../../middleware/rbac';
 import { finalizarRetiro } from '../../services/retiro.service';
 import { hoyMendozaISO } from '../../services/fechas.service';
 import { buscarRetiroActivo } from '../../services/retiroActivo.service';
-import { reservarParaEntrega } from '../../services/contenedorReserva.service';
 import { resolverUbicacion } from '../../services/ubicaciones.service';
 import { diaHabilDesde, formatearFechaCorta } from '../../services/diasHabiles.service';
 import { reglasDePago, subirComprobanteManual, pedirPagoPorWhatsApp } from '../../services/pagoManual.service';
@@ -553,9 +552,10 @@ contenedoresRouter.post('/:numero/alargue', requireRol('admin', 'operador'), asy
   }
 });
 
+// Sin contenedor_numero_entrega: el vacío que se deja lo elige el chofer al
+// completar el recambio (ver asignacionEntrega.service.ts).
 const recambioSchema = pagoManualSchema.extend({
   fecha: z.string(),
-  contenedor_numero_entrega: z.string().min(1),
 });
 
 /**
@@ -575,9 +575,6 @@ contenedoresRouter.post('/:numero/recambio', requireRol('admin', 'operador'), as
   if (!cont) return res.status(404).json({ error: 'Este contenedor no está entregado a ningún cliente ahora mismo.' });
   if (rechazarSiNoGestionable(cont, res)) return;
   if (!cont.zona) return res.status(409).json({ error: 'Este contenedor no tiene zona cargada — no se puede calcular el precio del recambio.' });
-  if (v.contenedor_numero_entrega.trim().toUpperCase() === numero.toUpperCase()) {
-    return res.status(400).json({ error: 'El contenedor que se deja no puede ser el mismo que se retira.' });
-  }
   const hoy = hoyMendozaISO();
   if (v.fecha < hoy) return res.status(400).json({ error: 'La fecha no puede ser anterior a hoy.' });
   if (cont.vence_en && v.fecha > fechaMendoza(cont.vence_en)) {
@@ -607,9 +604,6 @@ contenedoresRouter.post('/:numero/recambio', requireRol('admin', 'operador'), as
     const resultado = await withTx(async (c) => {
       const activo = await buscarRetiroActivo(c, numero);
       if (activo?.estado === 'en_curso') fail('Ya hay un chofer en camino a buscar este contenedor — no se puede recambiar ahora.');
-
-      const actualizadoPor = `operador:${req.user!.id}`;
-      await reservarParaEntrega(c, v.contenedor_numero_entrega.trim().toUpperCase(), v.fecha, actualizadoPor);
 
       const { rows: pagoRows } = await c.query<{ id: string }>(
         `INSERT INTO pagos (cliente_telefono, tipo, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante)
@@ -646,9 +640,9 @@ contenedoresRouter.post('/:numero/recambio', requireRol('admin', 'operador'), as
         retiroId = rows[0].id;
       }
       await c.query(
-        `INSERT INTO viajes (tipo, fecha, contenedor_numero, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, importe, es_cuenta_corriente, pago_id, grupo_id, notas, ubicacion_id, ubicacion_direccion, canal)
-         VALUES ('entrega', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'Recambio cargado a mano desde Contenedores', $12, $13, 'panel')`,
-        [v.fecha, v.contenedor_numero_entrega.trim().toUpperCase(), cont.cliente_telefono, cont.zona, cont.destino_direccion,
+        `INSERT INTO viajes (tipo, fecha, cliente_telefono, zona, destino_direccion, destino_lat, destino_lng, importe, es_cuenta_corriente, pago_id, grupo_id, notas, ubicacion_id, ubicacion_direccion, canal)
+         VALUES ('entrega', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Recambio cargado a mano desde Contenedores', $11, $12, 'panel')`,
+        [v.fecha, cont.cliente_telefono, cont.zona, cont.destino_direccion,
          cont.destino_lat, cont.destino_lng, monto, cargoCC, pagoId, grupoId, deposito?.id ?? null, deposito?.direccion ?? null],
       );
       return { retiroId, pagoId };
@@ -663,7 +657,6 @@ contenedoresRouter.post('/:numero/recambio', requireRol('admin', 'operador'), as
     res.json({ ok: true, pago_id: resultado.pagoId });
   } catch (e: any) {
     if (e.status) return res.status(e.status).json({ error: e.message });
-    if (e.code === '23503') return res.status(400).json({ error: 'El contenedor que se deja no existe.' });
     console.error('Error armando recambio manual:', e);
     res.status(500).json({ error: 'Error interno del servidor.' });
   }

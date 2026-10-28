@@ -114,7 +114,6 @@ export function Contenedores() {
   const [accionGestion, setAccionGestion] = useState<'retiro_anticipado' | 'alargue' | 'recambio'>('retiro_anticipado');
   const [gestionForm, setGestionForm] = useState({
     fecha: '',
-    contenedor_numero_entrega: '',
     medio_pago: 'transferencia' as 'efectivo' | 'transferencia',
     pagado: true,
   });
@@ -145,7 +144,7 @@ export function Contenedores() {
    */
   function cambiarAccion(accion: 'retiro_anticipado' | 'alargue' | 'recambio') {
     setAccionGestion(accion);
-    setGestionForm({ fecha: '', contenedor_numero_entrega: '', medio_pago: 'transferencia', pagado: true });
+    setGestionForm({ fecha: '', medio_pago: 'transferencia', pagado: true });
     setComprobanteGestion(null);
   }
 
@@ -207,7 +206,7 @@ export function Contenedores() {
   }
 
   async function confirmarRecambio() {
-    if (!gestionarNumero || !gestionForm.fecha || !gestionForm.contenedor_numero_entrega) return;
+    if (!gestionarNumero || !gestionForm.fecha) return;
     setGuardandoGestion(true);
     try {
       let comprobante_base64: string | undefined;
@@ -218,7 +217,6 @@ export function Contenedores() {
       }
       await api.post(`/api/contenedores/${encodeURIComponent(gestionarNumero)}/recambio`, {
         fecha: gestionForm.fecha,
-        contenedor_numero_entrega: gestionForm.contenedor_numero_entrega,
         medio_pago: gestionForm.medio_pago,
         pagado: gestionForm.pagado,
         comprobante_base64,
@@ -752,7 +750,6 @@ export function Contenedores() {
         const tarifa = cont.zona ? zonasTarifas.find((z) => z.departamento === cont.zona) : undefined;
         const montoAlargue = tarifa ? Math.round(Number(tarifa.precio) * 0.5) : null;
         const montoRecambio = tarifa ? Number(tarifa.precio) : null;
-        const contenedoresDisponibles = contenedores.filter((c) => c.estado === 'disponible');
 
         return (
           <div className="modal-overlay" onClick={cerrarGestion}>
@@ -894,19 +891,8 @@ export function Contenedores() {
                       onChange={(e) => setGestionForm({ ...gestionForm, fecha: e.target.value })}
                     />
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Contenedor vacío a dejar</label>
-                    <select
-                      className="form-select"
-                      value={gestionForm.contenedor_numero_entrega}
-                      onChange={(e) => setGestionForm({ ...gestionForm, contenedor_numero_entrega: e.target.value })}
-                    >
-                      <option value="">— Elegir contenedor —</option>
-                      {contenedoresDisponibles.map((c) => <option key={c.numero} value={c.numero}>{c.numero}</option>)}
-                    </select>
-                    {contenedoresDisponibles.length === 0 && (
-                      <div className="text-muted" style={{ fontSize: '0.78rem' }}>No hay contenedores disponibles en depósito ahora mismo.</div>
-                    )}
+                  <div className="text-muted" style={{ fontSize: '0.78rem' }}>
+                    El contenedor vacío que se deja lo elige el chofer al completar el recambio.
                   </div>
                   <div className="form-group">
                     <label className="form-label">Medio de pago</label>
@@ -942,7 +928,7 @@ export function Contenedores() {
                   )}
                   <button
                     className="btn btn-primary"
-                    disabled={guardandoGestion || !gestionForm.fecha || !gestionForm.contenedor_numero_entrega}
+                    disabled={guardandoGestion || !gestionForm.fecha}
                     onClick={confirmarRecambio}
                   >
                     {guardandoGestion ? 'Guardando...' : 'Confirmar recambio'}

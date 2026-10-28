@@ -14,6 +14,7 @@ import { notificarClienteChoferEnCamino } from '../whatsapp/notificacionesClient
 import { hoyMendozaISO } from '../../services/fechas.service';
 import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
 import { buscarRetiroActivo, RetiroActivo } from '../../services/retiroActivo.service';
+import { cambiarContenedorDeEntrega } from '../../services/asignacionEntrega.service';
 import { reglasDePago, subirComprobanteManual, pedirPagoPorWhatsApp } from '../../services/pagoManual.service';
 import { anularPagosDeViajesCancelados } from '../../services/pagoViajeCancelado.service';
 
@@ -235,6 +236,7 @@ export async function avisarChoferViaje(
   clienteTelefono: string | null = null,
   horaEstimada: string | null = null,
   pagoId: string | null = null,
+  viajeId: string | null = null,
 ): Promise<void> {
   const [chofer] = await query<{ telefono: string | null; nombre: string }>(
     'SELECT telefono, nombre FROM choferes WHERE id = $1',
@@ -243,6 +245,9 @@ export async function avisarChoferViaje(
   if (!chofer?.telefono) return; // chofer sin número vinculado todavía: nada que mandar
 
   const titulo = tipo === 'entrega' ? '📦 Entrega de contenedor' : '📥 Retiro de contenedor';
+  // Flujo de entrega: el contenedor no se asigna antes — lo elige el chofer
+  // al tocar "Ya entregué" (`entregue:<viajeId>`, ver chofer.flow.ts).
+  const eligeAlEntregar = tipo === 'entrega' && !contenedorNumero && !!viajeId;
   const destino = destinoDireccion
     ? `${destinoDireccion}\nhttps://www.google.com/maps?q=${encodeURIComponent(destinoDireccion)}`
     : 'Sin dirección registrada. Coordiná con el cliente antes de salir.';
@@ -259,11 +264,14 @@ export async function avisarChoferViaje(
   // libre ("entregué"/"retiré") como único camino hasta que se le asigne.
   const boton = contenedorNumero
     ? { id: `cont:${tipo === 'entrega' ? 'entregado' : 'retirado'}:${contenedorNumero}`, title: tipo === 'entrega' ? '📦 Ya entregué' : '📥 Ya retiré' }
-    : null;
+    : eligeAlEntregar
+      ? { id: `entregue:${viajeId}`, title: '📦 Ya entregué' }
+      : null;
 
   const cuerpo =
     `🚚 *${titulo}*\n\n` +
     (contenedorNumero ? `Contenedor: *${contenedorNumero}*\n` : '') +
+    (eligeAlEntregar ? 'Llevá un contenedor vacío: al entregar me decís cuál dejaste.\n' : '') +
     (cliente ? `Cliente: *${cliente}*\n` : '') +
     (telefonoCliente ? `📞 Tel: ${telefonoCliente}\n` : '') +
     (hora ? `Horario estimado: *${hora} hs*\n` : '') +
@@ -341,7 +349,7 @@ export async function avisarChoferRecambio(
   const lineaVacio = vacioNumero
     ? `Retirás el contenedor lleno *${llenoNumero}* y dejás el vacío *${vacioNumero}*` +
       (ubicacionNombre ? ` (sale de: *${ubicacionNombre}*)` : '') + '.\n'
-    : `Retirás el contenedor lleno *${llenoNumero}*. El vacío que dejás todavía no está asignado.\n`;
+    : `Retirás el contenedor lleno *${llenoNumero}* y dejás un vacío: al terminar me decís cuál dejaste.\n`;
 
   // Botón de un solo toque para cerrar el recambio entero (retirar el lleno
   // + dejar el vacío), sin pasar por ningún menú genérico:
@@ -487,7 +495,7 @@ export async function avisarSiguienteParadaDesde(rutaId: string, ordenActual: nu
       );
     } else {
       const v = entrega ?? retiro!;
-      await avisarChoferViaje(choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, v.hora_estimada, v.pago_id);
+      await avisarChoferViaje(choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, v.hora_estimada, v.pago_id, v.id);
     }
 
     await query(
@@ -752,6 +760,7 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
             v.cliente_telefono ?? null,
             v.hora_estimada ?? null,
             resultado.principal.pago_id ?? null,
+            resultado.principal.id,
           );
       avisoRecambioOChofer.catch((e) => {
         const motivo = motivoErrorWa(e);
@@ -773,6 +782,24 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
       res.status(500).json({ error: 'Error interno del servidor.' });
     }
   }
+});
+
+/**
+ * POST /api/viajes/:id/cambiar-contenedor — la oficina corrige el
+ * contenedor de una entrega YA hecha (el chofer eligió mal al tocar "Ya
+ * entregué"): el equivocado vuelve a disponible y el correcto queda
+ * entregado con el mismo vencimiento (ver cambiarContenedorDeEntrega).
+ */
+viajesRouter.post('/:id/cambiar-contenedor', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const parsed = z.object({ contenedor_numero: z.string().trim().min(1) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Falta el contenedor' });
+  const r = await cambiarContenedorDeEntrega({
+    viajeId: req.params.id,
+    nuevoNumero: parsed.data.contenedor_numero,
+    actualizadoPor: `operador:${req.user!.id}`,
+  });
+  if (!r.ok) return res.status(409).json({ error: r.error });
+  res.json(r);
 });
 
 const patchSchema = z.object({
@@ -974,7 +1001,7 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
             );
           }
         } else {
-          await avisarChoferViaje(row.chofer_id, row.tipo, row.contenedor_numero, row.destino_direccion, row.cliente_telefono, row.hora_estimada, row.pago_id ?? null);
+          await avisarChoferViaje(row.chofer_id, row.tipo, row.contenedor_numero, row.destino_direccion, row.cliente_telefono, row.hora_estimada, row.pago_id ?? null, row.id);
         }
       })().catch((e) => {
         const motivo = motivoErrorWa(e);

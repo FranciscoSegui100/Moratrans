@@ -52,7 +52,7 @@ export async function despacharPrimeraParada(rutaId: string, choferId: string): 
     referenciaId = retiro.id;
   } else {
     const v = entrega ?? retiro!;
-    aviso = avisarChoferViaje(choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, v.hora_estimada, v.pago_id);
+    aviso = avisarChoferViaje(choferId, v.tipo, v.contenedor_numero, v.destino_direccion, v.cliente_telefono, v.hora_estimada, v.pago_id, v.id);
     referenciaId = v.id;
   }
 
