@@ -2422,3 +2422,90 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
   transform: none;
   box-shadow: var(--shadow-sm);
 }
+
+
+/* ===== INTERRUPTOR ON/OFF DEL BOT (Dashboard) ===== */
+.bot-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px 6px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition), background var(--transition), transform 200ms var(--ease-spring), box-shadow var(--transition);
+}
+.bot-switch:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+}
+.bot-switch.is-on {
+  border-color: rgba(77, 124, 98, 0.35);
+  background: var(--success-bg);
+}
+.bot-switch.is-off {
+  border-color: rgba(179, 69, 61, 0.35);
+  background: var(--danger-bg);
+}
+.bot-switch-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.bot-switch.is-on .bot-switch-status { color: var(--success); }
+.bot-switch.is-off .bot-switch-status { color: var(--danger); }
+
+.bot-switch-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.bot-switch.is-on .bot-switch-dot {
+  animation: pulse-dot 2s infinite;
+}
+
+.bot-switch-track {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 52px;
+  height: 26px;
+  border-radius: var(--radius-pill);
+  padding: 3px;
+  transition: background var(--transition);
+}
+.bot-switch.is-on .bot-switch-track {
+  background: var(--success);
+  justify-content: flex-end;
+}
+.bot-switch.is-off .bot-switch-track {
+  background: var(--danger);
+  justify-content: flex-start;
+}
+.bot-switch-state-text {
+  position: absolute;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+.bot-switch.is-on .bot-switch-state-text { left: 8px; }
+.bot-switch.is-off .bot-switch-state-text { right: 6px; }
+
+.bot-switch-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  transition: transform 220ms var(--ease-spring);
+  z-index: 1;
+}

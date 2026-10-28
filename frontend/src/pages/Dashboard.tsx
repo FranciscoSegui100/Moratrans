@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
-  Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, Power, TriangleAlert,
+  Package, CircleCheck, CircleDollarSign, Truck, CreditCard, Users, TriangleAlert,
   Wallet, Bell, Clock, type LucideIcon,
 } from 'lucide-react';
 import { api } from '../api/client';
@@ -227,16 +227,18 @@ export function Dashboard() {
     const activarlo = estadoBot?.bot_activo === false;
     const aviso = activarlo
       ? '¿Reactivar el bot? Los clientes van a volver a recibir respuestas automáticas.'
-      : '¿Desactivar el bot? Mientras esté apagado, TODOS los clientes van a recibir el mensaje de fuera de horario en vez de la respuesta automática habitual. Los choferes no se ven afectados.';
+      : '¿Apagar el bot? Mientras esté en OFF, TODOS los clientes van a recibir el mensaje con los números de derivación (2616650575 / 2616650574) en vez de la respuesta automática habitual. Los choferes no se ven afectados.';
     if (!confirm(aviso)) return;
     try {
       const { data } = await api.patch<EstadoBot>('/api/config/bot', { bot_activo: activarlo });
       queryClient.setQueryData(['config', 'bot'], data);
-      show('success', activarlo ? 'Bot reactivado' : 'Bot desactivado', activarlo ? undefined : 'Los clientes ahora reciben el mensaje de fuera de horario.');
+      show('success', activarlo ? 'Bot activado (ON)' : 'Bot apagado (OFF)', activarlo ? undefined : 'Los clientes ahora reciben el mensaje de derivación.');
     } catch (err: any) {
       show('error', 'No se pudo cambiar el estado del bot', err.response?.data?.error || 'Error desconocido');
     }
   }
+
+  const botOn = estadoBot?.bot_activo !== false;
 
   return (
     <div>
@@ -247,11 +249,21 @@ export function Dashboard() {
         </div>
         <RoleGate roles={['admin', 'operador']}>
           <button
-            className={`btn btn-sm ${estadoBot?.bot_activo === false ? 'btn-success' : 'btn-danger'}`}
+            type="button"
+            role="switch"
+            aria-checked={botOn}
+            className={`bot-switch ${botOn ? 'is-on' : 'is-off'}`}
             onClick={toggleBot}
+            title={botOn ? 'El bot está activo. Click para apagarlo.' : 'El bot está apagado. Click para encenderlo.'}
           >
-            <Power size={16} strokeWidth={2} />
-            {estadoBot?.bot_activo === false ? 'Activar bot' : 'Desactivar bot'}
+            <span className="bot-switch-status">
+              <span className="bot-switch-dot" />
+              <span className="bot-switch-label">Bot {botOn ? 'Activo' : 'Apagado'}</span>
+            </span>
+            <span className="bot-switch-track">
+              <span className="bot-switch-state-text">{botOn ? 'ON' : 'OFF'}</span>
+              <span className="bot-switch-thumb" />
+            </span>
           </button>
         </RoleGate>
       </div>
@@ -283,7 +295,7 @@ export function Dashboard() {
           }}
         >
           <TriangleAlert size={18} strokeWidth={2} />
-          El bot está <strong>desactivado</strong>: los clientes reciben el mensaje de fuera de horario en vez de respuestas automáticas.
+          El bot está <strong>apagado (OFF)</strong>: los clientes reciben el mensaje derivándolos al <strong>2616650575</strong> o <strong>2616650574</strong> en vez de respuestas automáticas.
         </div>
       )}
 
