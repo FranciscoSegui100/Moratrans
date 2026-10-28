@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { MessageCircle, Pause, Play, UserPlus, Search, Wallet, Clock, X } from 'lucide-react';
+import { MessageCircle, Pause, Play, UserPlus, Search, Wallet, Clock, X, Trash2 } from 'lucide-react';
 import { useConversaciones, Conversacion } from '../hooks/useConversaciones';
 import { RoleGate } from '../components/RoleGate';
 import { ChatAsesor } from '../components/ChatAsesor';
@@ -145,10 +145,12 @@ function ConversacionItem({
   c,
   activo,
   onSelect,
+  onDelete,
 }: {
   c: Conversacion;
   activo: boolean;
   onSelect: () => void;
+  onDelete: () => void;
 }) {
   const espera = useTiempoEspera(c.escalado_en ?? c.asignado_en);
   // El chat abierto ya se está leyendo: no se marca como no leído aunque el
@@ -189,6 +191,18 @@ function ConversacionItem({
           </span>
         )}
         {c.asignado_a_nombre && <span className="asesoria-item-asignado">👤 {c.asignado_a_nombre}</span>}
+        <RoleGate roles={['admin', 'operador']}>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            className="btn btn-ghost btn-sm"
+            style={{ marginLeft: 'auto', padding: '2px 5px', color: 'var(--text-muted)' }}
+            title="Eliminar conversación"
+            aria-label={`Eliminar conversación con ${c.nombre ?? c.telefono}`}
+          >
+            <Trash2 size={13} strokeWidth={1.75} />
+          </button>
+        </RoleGate>
       </div>
     </div>
   );
@@ -196,7 +210,7 @@ function ConversacionItem({
 
 /** Vista general: TODAS las conversaciones del bot (no solo las que piden asesor), con hilo completo y pausa manual. */
 export function Conversaciones() {
-  const { conversaciones, setModoHumano, reclamar, marcarLeido } = useConversaciones();
+  const { conversaciones, setModoHumano, reclamar, marcarLeido, eliminarConversacion } = useConversaciones();
   const { user } = useAuth();
   const { show } = useToast();
   // Deep-link desde la Bandeja de alertas (ver rutaAlerta en Alertas.tsx):
@@ -312,6 +326,18 @@ export function Conversaciones() {
     }
   }
 
+  async function manejarEliminarChat(c: Conversacion) {
+    const etiqueta = c.nombre ? `${c.nombre} (${c.telefono})` : c.telefono;
+    if (!confirm(`¿Eliminar el chat con ${etiqueta}? Se borrará el historial de mensajes de esta conversación.`)) return;
+    try {
+      await eliminarConversacion(c.telefono);
+      if (seleccionado === c.telefono) setSeleccionado(null);
+      show('success', 'Chat eliminado', `Se eliminó la conversación con ${etiqueta}`);
+    } catch (err: any) {
+      show('error', 'No se pudo eliminar el chat', err.response?.data?.error || 'Error desconocido');
+    }
+  }
+
   return (
     <div className="conv-pagina">
       <div className="asesoria-layout">
@@ -397,6 +423,7 @@ export function Conversaciones() {
                 c={c}
                 activo={c.telefono === seleccionado}
                 onSelect={() => setSeleccionado(c.telefono)}
+                onDelete={() => manejarEliminarChat(c)}
               />
             ))}
           </div>
@@ -417,32 +444,42 @@ export function Conversaciones() {
                   </div>
                 </div>
                 <RoleGate roles={['admin', 'operador']}>
-                  {!activa.modo_humano && (
-                    <button onClick={manejarPausar} className="btn btn-danger btn-sm">
-                      <Pause strokeWidth={2} /> Pausar bot y responder yo
-                    </button>
-                  )}
-                  {activa.modo_humano && !activa.asignado_a && (
-                    <button onClick={manejarReclamar} className="btn btn-danger btn-sm">
-                      <UserPlus strokeWidth={2} /> Reclamar
-                    </button>
-                  )}
-                  {activa.modo_humano && activa.asignado_a === user?.id && (
-                    <button onClick={manejarResolver} className="btn btn-success btn-sm">
-                      <Play strokeWidth={2} /> Resuelto, reactivar bot
-                    </button>
-                  )}
-                  {activa.modo_humano && activa.asignado_a && activa.asignado_a !== user?.id && (
-                    <div className="asesoria-atendida-por-bloque">
-                      <span className="asesoria-atendida-por">Atendida por {activa.asignado_a_nombre}</span>
-                      <button onClick={manejarTomarDeTodasFormas} className="btn btn-ghost btn-sm" title="Por si el otro operador no está disponible">
-                        <UserPlus strokeWidth={2} /> Tomar de todas formas
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    {!activa.modo_humano && (
+                      <button onClick={manejarPausar} className="btn btn-danger btn-sm">
+                        <Pause strokeWidth={2} /> Pausar bot y responder yo
                       </button>
-                      <button onClick={manejarReactivarBotDeTodasFormas} className="btn btn-ghost btn-sm" title="Por si el otro operador no está disponible">
-                        <Play strokeWidth={2} /> Reactivar bot de todas formas
+                    )}
+                    {activa.modo_humano && !activa.asignado_a && (
+                      <button onClick={manejarReclamar} className="btn btn-danger btn-sm">
+                        <UserPlus strokeWidth={2} /> Reclamar
                       </button>
-                    </div>
-                  )}
+                    )}
+                    {activa.modo_humano && activa.asignado_a === user?.id && (
+                      <button onClick={manejarResolver} className="btn btn-success btn-sm">
+                        <Play strokeWidth={2} /> Resuelto, reactivar bot
+                      </button>
+                    )}
+                    {activa.modo_humano && activa.asignado_a && activa.asignado_a !== user?.id && (
+                      <div className="asesoria-atendida-por-bloque">
+                        <span className="asesoria-atendida-por">Atendida por {activa.asignado_a_nombre}</span>
+                        <button onClick={manejarTomarDeTodasFormas} className="btn btn-ghost btn-sm" title="Por si el otro operador no está disponible">
+                          <UserPlus strokeWidth={2} /> Tomar de todas formas
+                        </button>
+                        <button onClick={manejarReactivarBotDeTodasFormas} className="btn btn-ghost btn-sm" title="Por si el otro operador no está disponible">
+                          <Play strokeWidth={2} /> Reactivar bot de todas formas
+                        </button>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => manejarEliminarChat(activa)}
+                      className="btn btn-ghost btn-sm"
+                      style={{ color: 'var(--danger)' }}
+                      title="Eliminar conversación"
+                    >
+                      <Trash2 size={14} strokeWidth={2} /> Eliminar chat
+                    </button>
+                  </div>
                 </RoleGate>
               </div>
 

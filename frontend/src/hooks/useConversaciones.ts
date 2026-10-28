@@ -41,6 +41,7 @@ interface ConversacionActualizadaSocket {
   nombre?: string | null;
   asignado_a?: string | null;
   asignado_a_nombre?: string | null;
+  eliminada?: boolean;
 }
 
 const CONVERSACIONES_KEY = ['conversaciones'];
@@ -98,6 +99,12 @@ export function useConversaciones() {
     // lo refleja acá en vivo — antes cada quien solo veía su propia acción
     // hasta hacer F5.
     const onConversacionActualizada = (p: ConversacionActualizadaSocket) => {
+      if (p.eliminada) {
+        queryClient.setQueryData<Conversacion[]>(CONVERSACIONES_KEY, (prev = []) =>
+          prev.filter((c) => c.telefono !== p.telefono),
+        );
+        return;
+      }
       queryClient.setQueryData<Conversacion[]>(CONVERSACIONES_KEY, (prev = []) =>
         prev.map((c) =>
           c.telefono === p.telefono
@@ -178,5 +185,14 @@ export function useConversaciones() {
     await api.put(`/api/chat/${encodeURIComponent(telefono)}/leido`).catch(() => {});
   }
 
-  return { conversaciones, setModoHumano, reclamar, marcarLeido };
+  async function eliminarConversacion(telefono: string) {
+    await api.delete(`/api/chat/${encodeURIComponent(telefono)}`);
+    queryClient.setQueryData<Conversacion[]>(CONVERSACIONES_KEY, (prev = []) =>
+      prev.filter((c) => c.telefono !== telefono),
+    );
+    queryClient.removeQueries({ queryKey: ['chat', telefono] });
+    window.dispatchEvent(new CustomEvent(EVENTO_CHAT_LEIDO, { detail: { telefono } }));
+  }
+
+  return { conversaciones, setModoHumano, reclamar, marcarLeido, eliminarConversacion };
 }

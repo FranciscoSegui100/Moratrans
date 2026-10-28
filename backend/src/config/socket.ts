@@ -97,6 +97,7 @@ export function emitConversacionActualizada(payload: {
   nombre?: string | null;
   asignado_a?: string | null;
   asignado_a_nombre?: string | null;
+  eliminada?: boolean;
 }): void {
   io?.to('alertas').emit('conversacion_actualizada', payload);
 }

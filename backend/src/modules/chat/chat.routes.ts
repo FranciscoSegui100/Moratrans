@@ -8,7 +8,7 @@ import { logMensaje } from '../whatsapp/chatLog.service';
 import { getSesion, setSesion, clearSesion } from '../whatsapp/session.store';
 import { resolverAsesor } from '../whatsapp/flows/asesor.flow';
 import { pedidosAbiertos } from '../whatsapp/flows/pago.flow';
-import { emitConversacionActualizada } from '../../config/socket';
+import { emitAlertaActualizada, emitConversacionActualizada } from '../../config/socket';
 import path from 'path';
 import { decrypt, decryptBuffer, encrypt, encryptBuffer } from '../../services/crypto.service';
 import { descargarArchivo, subirArchivo } from '../../services/storage.service';
@@ -348,6 +348,39 @@ chatRouter.post('/:telefono/cancelar-pedido', requireRol('admin', 'operador'), a
 
   emitConversacionActualizada({ telefono, modo_humano: false, asignado_a: null, asignado_a_nombre: null });
   res.json({ ok: true, canceladas: pendientes.length });
+});
+
+/**
+ * DELETE /api/chat/:telefono — elimina la conversación del apartado de
+ * Conversaciones: borra el historial de mensajes (`mensajes_chat`), limpia la
+ * sesión activa del bot (`sesiones_chat`) y el estado de lectura
+ * (`chats_leidos`), y resuelve cualquier alerta abierta de "solicita_asesor"
+ * para ese teléfono.
+ */
+chatRouter.delete('/:telefono', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const telefono = req.params.telefono;
+  await query('DELETE FROM mensajes_chat WHERE telefono = $1', [telefono]);
+  await query('DELETE FROM chats_leidos WHERE telefono = $1', [telefono]);
+  await clearSesion(telefono);
+
+  const alertasResueltas = await query<{ id: string }>(
+    `UPDATE alertas SET estado = 'resuelta', resuelta_en = now(), resuelta_por = $2
+      WHERE tipo = 'solicita_asesor' AND referencia_id = $1 AND estado <> 'resuelta'
+      RETURNING id`,
+    [telefono, req.user!.id],
+  );
+  if (alertasResueltas.length > 0) {
+    emitAlertaActualizada({ tipo: 'solicita_asesor', referencia_id: telefono, estado: 'resuelta' });
+  }
+
+  emitConversacionActualizada({
+    telefono,
+    modo_humano: false,
+    asignado_a: null,
+    asignado_a_nombre: null,
+    eliminada: true,
+  });
+  res.status(204).send();
 });
 
 /**

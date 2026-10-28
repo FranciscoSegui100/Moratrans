@@ -32,7 +32,7 @@ import { FondoCurvas } from './FondoCurvas';
 import { EVENTO_CHAT_LEIDO } from '../hooks/useConversaciones';
 
 interface AlertaSocket { tipo: string; mensaje: string; cliente_telefono?: string | null }
-interface ConversacionActualizadaSocket { telefono: string; modo_humano?: boolean }
+interface ConversacionActualizadaSocket { telefono: string; modo_humano?: boolean; eliminada?: boolean }
 interface MensajeChatSocket { telefono: string; texto: string; origen: 'cliente' | 'bot' | 'operador' }
 
 type NavItem = { to: string; label: string; icon: typeof LayoutGrid; roles?: Rol[] };
@@ -230,6 +230,12 @@ export function Layout({ children }: { children: ReactNode }) {
 
     const socket = conectarSocket();
     const onConversacionActualizada = (p: ConversacionActualizadaSocket) => {
+      if (p.eliminada) {
+        telefonosEnAsesorRef.current.delete(p.telefono);
+        asesorSinLeerRef.current.delete(p.telefono);
+        actualizarBadge();
+        return;
+      }
       // Pasó a modo asesor: se vuelve a pedir la lista para saber si tiene
       // mensajes sin leer (el "asesor" del cliente llega ANTES de este aviso).
       if (p.modo_humano === true) cargarChats();
