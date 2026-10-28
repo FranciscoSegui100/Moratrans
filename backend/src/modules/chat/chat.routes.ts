@@ -364,10 +364,10 @@ chatRouter.delete('/:telefono', requireRol('admin', 'operador'), async (req: Req
   await clearSesion(telefono);
 
   const alertasResueltas = await query<{ id: string }>(
-    `UPDATE alertas SET estado = 'resuelta', resuelta_en = now(), resuelta_por = $2
+    `UPDATE alertas SET estado = 'resuelta'
       WHERE tipo = 'solicita_asesor' AND referencia_id = $1 AND estado <> 'resuelta'
       RETURNING id`,
-    [telefono, req.user!.id],
+    [telefono],
   );
   if (alertasResueltas.length > 0) {
     emitAlertaActualizada({ tipo: 'solicita_asesor', referencia_id: telefono, estado: 'resuelta' });
@@ -408,9 +408,9 @@ chatRouter.get('/mensaje/:id/audio', requireRol(...ROLES_ADJUNTOS), async (req: 
   const contentType = mimeMap[ext] ?? 'audio/ogg';
 
   try {
-    const buffer = decryptBuffer(await descargarArchivo(`audios/${filename}`));
+    const buffer = decryptBuffer(await descargarArchivo(`audios / ${ filename }`));
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Content-Disposition', `inline; filename = "${filename}"`);
     res.send(buffer);
   } catch (e) {
     console.error('Error descargando audio de Supabase Storage:', e);
@@ -453,7 +453,7 @@ chatRouter.post(
 
     const reclamo = await reclamarConversacion(telefono, req.user!.id);
     if (!reclamo.ok) {
-      return res.status(409).json({ error: `Ya la está atendiendo ${reclamo.ocupadaPor}.` });
+      return res.status(409).json({ error: `Ya la está atendiendo ${ reclamo.ocupadaPor }.` });
     }
 
     // Guardar en Storage cifrado para que quede en el historial y sea reproducible
@@ -462,8 +462,8 @@ chatRouter.post(
       : req.file.mimetype.includes('mpeg') ? 'mp3'
       : req.file.mimetype.includes('webm') ? 'webm'
       : 'ogg';
-    const nombre = `audio_op_${Date.now()}_${telefono}.${ext}`;
-    const ruta = `audios/${nombre}`;
+    const nombre = `audio_op_${ Date.now() }_${ telefono }.${ ext } `;
+    const ruta = `audios / ${ nombre } `;
     try {
       const cifrado = encryptBuffer(req.file.buffer);
       await subirArchivo(cifrado, ruta, 'application/octet-stream');
@@ -481,15 +481,15 @@ chatRouter.post(
       return res.status(502).json({
         error: ventanaVencida
           ? 'No se pudo enviar: pasaron más de 24hs desde el último mensaje del cliente.'
-          : (motivoMeta ? `WhatsApp: ${motivoMeta}` : 'No se pudo enviar el audio por WhatsApp. Probá de nuevo.'),
+          : (motivoMeta ? `WhatsApp: ${ motivoMeta } ` : 'No se pudo enviar el audio por WhatsApp. Probá de nuevo.'),
       });
     }
 
     // Loguear con adjunto_ruta para que se pueda reproducir desde el historial
     const rutaCifrada = encrypt(ruta);
     const [row] = await query<{ id: string }>(
-      `INSERT INTO mensajes_chat (telefono, origen, texto, usuario_id, adjunto_ruta)
-       VALUES ($1, 'operador', '🎤 Nota de voz', $2, $3) RETURNING id`,
+      `INSERT INTO mensajes_chat(telefono, origen, texto, usuario_id, adjunto_ruta)
+  VALUES($1, 'operador', '🎤 Nota de voz', $2, $3) RETURNING id`,
       [telefono, req.user!.id, rutaCifrada],
     );
     if (row) {
