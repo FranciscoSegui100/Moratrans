@@ -10,7 +10,6 @@ import { descargarArchivo } from '../../services/storage.service';
 import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
 import { datosBancarios } from '../whatsapp/flows/pago.flow';
 import { setSesion } from '../whatsapp/session.store';
-import { avisarChoferRecambio } from '../viajes/viajes.routes';
 import { avisoPagoChofer } from '../whatsapp/avisoEfectivo';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
 import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
@@ -19,6 +18,7 @@ import { formatearFechaCorta, formatearFechaLarga, medianocheArgentina, venceHab
 import { hoyMendozaISO } from '../../services/fechas.service';
 import { saldoCuentaCorriente } from '../reportes/reportes.service';
 import { DIAS_ALQUILER_ANTES_RETIRO, DIAS_ALARGUE } from '../../config/bot.config';
+import { avisarOEncolarViaje } from '../../services/despachoRutas.service';
 import { cancelarRetiroAutomatico } from '../../services/retiroAutomatico.service';
 
 export const pagosRouter = Router();
@@ -821,16 +821,16 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
       );
 
       if (choferId && result.contenedor) {
-        avisarChoferRecambio(
-          choferId, info!.contenedor_recambio_numero!, result.contenedor, ubicacion?.id ?? null, info?.destino_direccion ?? null,
-          null, null, pagoId,
-        ).catch((e) => {
-          const motivo = motivoErrorWa(e);
-          console.error('Error avisando al chofer el recambio:', motivo);
-          notificarEnvioFallido(result.contenedor, `chofer del recambio ${info!.contenedor_recambio_numero}`, 'aviso de recambio asignado', motivo).catch(
-            (e2) => console.error('Error registrando alerta de envío fallido:', e2),
+        // Si el chofer está en medio de otra cosa, le llega cuando termine.
+        const [entregaRecambio] = await query<{ id: string }>(
+          `SELECT id FROM viajes WHERE grupo_id = $1 AND tipo = 'entrega' LIMIT 1`,
+          [grupoId],
+        );
+        if (entregaRecambio) {
+          avisarOEncolarViaje(choferId, entregaRecambio.id).catch((e) =>
+            console.error('Error avisando al chofer el recambio:', e.message),
           );
-        });
+        }
       }
     } else {
       // El operador puede pisarla a mano (fechaEntrega/venceEn en el body),

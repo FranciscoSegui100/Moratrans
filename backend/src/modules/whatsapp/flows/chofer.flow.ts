@@ -817,6 +817,9 @@ async function preguntarCobroEfectivo(to: string, viajeId: string): Promise<bool
     [viajeId],
   );
   if (!pagoEfectivo) return false;
+  // Mientras no conteste, el chofer cuenta como ocupado: lo nuevo que le
+  // despachen queda en su cola (ver despachoRutas.service.ts::choferOcupado).
+  await setSesion({ telefono: to, flujo: 'chofer', paso: 'esperando_cobro', contexto: { viajeId } });
   const montoTxt = pagoEfectivo.monto ? ` por *$${Number(pagoEfectivo.monto).toLocaleString('es-AR')}*` : '';
   // El viaje va en el id del botón: la parada siguiente de la ruta (en un
   // recambio, el vaciado) se avisa recién cuando el chofer contesta esto —

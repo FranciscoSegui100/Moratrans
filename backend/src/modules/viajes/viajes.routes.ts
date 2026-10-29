@@ -15,6 +15,7 @@ import { hoyMendozaISO } from '../../services/fechas.service';
 import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
 import { buscarRetiroActivo, RetiroActivo } from '../../services/retiroActivo.service';
 import { asignarContenedorVerificado, cambiarContenedorDeEntrega } from '../../services/asignacionEntrega.service';
+import { avisarOEncolarViaje, liberarColaChofer } from '../../services/despachoRutas.service';
 import { reglasDePago, subirComprobanteManual, pedirPagoPorWhatsApp } from '../../services/pagoManual.service';
 import { anularPagosDeViajesCancelados } from '../../services/pagoViajeCancelado.service';
 
@@ -407,11 +408,12 @@ export async function avisarChoferRecambio(
  * (vaciados/recambio) sueltos y evitar duplicarlos al cerrar una parada.
  */
 export async function avisarSiguienteParadaRuta(viajeCompletadoId: string): Promise<boolean> {
-  const [actual] = await query<{ ruta_id: string | null; orden: number | null }>(
-    `SELECT ruta_id, orden FROM viajes WHERE id = $1`,
+  const [actual] = await query<{ ruta_id: string | null; orden: number | null; chofer_id: string | null }>(
+    `SELECT ruta_id, orden, chofer_id FROM viajes WHERE id = $1`,
     [viajeCompletadoId],
   );
-  if (!actual?.ruta_id || actual.orden == null) return false;
+  // Viaje suelto (sin ruta): terminó, le llega lo que tenga en cola.
+  if (!actual?.ruta_id || actual.orden == null) return actual?.chofer_id ? liberarColaChofer(actual.chofer_id) : false;
 
   const [pendienteEnMismoOrden] = await query<{ id: string }>(
     `SELECT id FROM viajes
@@ -479,7 +481,11 @@ export async function avisarSiguienteParadaDesde(rutaId: string, ordenActual: nu
     return true;
   }
 
-  if (siguientes.length === 0) return false;
+  if (siguientes.length === 0) {
+    // Terminó la ruta: le llega lo que quedó en cola mientras la hacía.
+    const [ruta] = await query<{ chofer_id: string | null }>('SELECT chofer_id FROM rutas WHERE id = $1', [rutaId]);
+    return ruta?.chofer_id ? liberarColaChofer(ruta.chofer_id) : false;
+  }
   const proximoOrden = siguientes[0].orden;
   const visita = siguientes.filter((v) => v.orden === proximoOrden);
   const choferId = visita[0].chofer_id;
@@ -748,34 +754,10 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
     // contenedor lleno desde la tabla de Viajes (ver PATCH /:id más abajo).
     const contenedorListoParaAvisar = v.tipo !== 'recambio' || !!resultado.principal.contenedor_numero;
     if (v.chofer_id && contenedorListoParaAvisar) {
-      const avisoRecambioOChofer = v.tipo === 'recambio'
-        ? avisarChoferRecambio(
-            v.chofer_id,
-            resultado.principal.contenedor_numero!,
-            resultado.secundario?.contenedor_numero ?? null,
-            resultado.secundario?.ubicacion_id ?? null,
-            v.destino_direccion ?? null,
-            v.cliente_telefono ?? null,
-            v.hora_estimada ?? null,
-            resultado.principal.pago_id ?? null,
-          )
-        : avisarChoferViaje(
-            v.chofer_id,
-            resultado.principal.tipo,
-            resultado.principal.contenedor_numero ?? null,
-            v.destino_direccion ?? null,
-            v.cliente_telefono ?? null,
-            v.hora_estimada ?? null,
-            resultado.principal.pago_id ?? null,
-            resultado.principal.id,
-          );
-      avisoRecambioOChofer.catch((e) => {
-        const motivo = motivoErrorWa(e);
-        console.error('Error avisando al chofer el viaje programado:', motivo);
-        notificarEnvioFallido(resultado.principal.id, `chofer del viaje ${resultado.principal.id}`, 'aviso de viaje programado', motivo).catch(
-          (e2) => console.error('Error registrando alerta de envío fallido:', e2),
-        );
-      });
+      // Si el chofer está en medio de otra cosa, le llega cuando termine.
+      avisarOEncolarViaje(v.chofer_id, resultado.principal.id).catch((e) =>
+        console.error('Error avisando al chofer el viaje programado:', e.message),
+      );
     }
 
     res.status(201).json(resultado.principal);
@@ -1016,32 +998,10 @@ viajesRouter.patch('/:id', requireRol('admin', 'operador'), async (req: Request,
     // así que reasignar desde la tabla de Viajes no le avisaba nada al
     // chofer nuevo.
     if (row.chofer_id && (cambioChofer || cambioContenedorAsignado)) {
-      (async () => {
-        if (row.grupo_id) {
-          const [retiro] = await query<{ contenedor_numero: string | null }>(
-            `SELECT contenedor_numero FROM viajes WHERE grupo_id = $1 AND tipo = 'retiro' LIMIT 1`,
-            [row.grupo_id],
-          );
-          const [entrega] = await query<{ contenedor_numero: string | null; ubicacion_id: string | null }>(
-            `SELECT contenedor_numero, ubicacion_id FROM viajes WHERE grupo_id = $1 AND tipo = 'entrega' LIMIT 1`,
-            [row.grupo_id],
-          );
-          if (retiro?.contenedor_numero) {
-            await avisarChoferRecambio(
-              row.chofer_id, retiro.contenedor_numero, entrega?.contenedor_numero ?? null, entrega?.ubicacion_id ?? null,
-              row.destino_direccion, row.cliente_telefono, row.hora_estimada, row.pago_id ?? null,
-            );
-          }
-        } else {
-          await avisarChoferViaje(row.chofer_id, row.tipo, row.contenedor_numero, row.destino_direccion, row.cliente_telefono, row.hora_estimada, row.pago_id ?? null, row.id);
-        }
-      })().catch((e) => {
-        const motivo = motivoErrorWa(e);
-        console.error('Error avisando al chofer la asignación:', motivo);
-        notificarEnvioFallido(row.id, `chofer del viaje ${row.id}`, 'aviso de asignación', motivo).catch(
-          (e2) => console.error('Error registrando alerta de envío fallido:', e2),
-        );
-      });
+      // Si el chofer está en medio de otra cosa, le llega cuando termine.
+      avisarOEncolarViaje(row.chofer_id, row.id).catch((e) =>
+        console.error('Error avisando al chofer la asignación:', e.message),
+      );
     }
   } catch (error: any) {
     if (error.status) {

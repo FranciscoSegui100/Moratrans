@@ -1178,8 +1178,10 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
     // Si la ruta es para MAÑANA (o fecha futura), se confirma y reserva todo el stock,
     // pero el aviso al chofer se posterga para la mañana del día del reparto (a las 07:30 AM vía cron).
     const esRutaHoy = resultado.fecha <= hoyMendozaISO();
+    // Si el chofer está en medio de otra cosa, queda en su cola ('encolada').
+    let despacho: Awaited<ReturnType<typeof despacharPrimeraParada>> | null = null;
     if (esRutaHoy) {
-      await despacharPrimeraParada(rutaId, resultado.choferId);
+      despacho = await despacharPrimeraParada(rutaId, resultado.choferId);
     } else {
       console.log(`[rutas] Ruta ${rutaId} para el ${resultado.fecha} confirmada. El chofer recibirá su primera parada a las 07:30 AM.`);
     }
@@ -1196,7 +1198,8 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
       ok: true,
       confirmadas: resultado.confirmadasAhora.length,
       pendientes: resultado.pendientes,
-      despachada: esRutaHoy,
+      despachada: despacho === 'enviada',
+      encolada: despacho === 'encolada',
       fechaRuta: resultado.fecha,
     });
   } catch (error: any) {
@@ -1208,6 +1211,7 @@ rutasRouter.post('/:id/confirmar', requireRol('admin', 'operador'), async (req: 
 /**
  * POST /api/rutas/:id/despachar — despacho manual inmediato de la primera parada al chofer
  * (por si el operador quiere forzar el despacho antes del cron de las 07:30 AM).
+ * Si el chofer está en medio de otra cosa, queda en su cola y le llega al terminar.
  */
 rutasRouter.post('/:id/despachar', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
   const { id: rutaId } = req.params;
@@ -1216,8 +1220,8 @@ rutasRouter.post('/:id/despachar', requireRol('admin', 'operador'), async (req: 
     [rutaId],
   );
   if (!ruta) fail('Ruta no encontrada.', 404);
-  const ok = await despacharPrimeraParada(ruta.id, ruta.chofer_id);
-  res.json({ ok, despachada: ok });
+  const resultado = await despacharPrimeraParada(ruta.id, ruta.chofer_id);
+  res.json({ ok: resultado !== 'nada', despachada: resultado === 'enviada', encolada: resultado === 'encolada' });
 });
 
 /**

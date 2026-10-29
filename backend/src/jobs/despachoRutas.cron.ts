@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { despacharRutasDelDia } from '../services/despachoRutas.service';
+import { despacharRutasDelDia, liberarColasPendientes } from '../services/despachoRutas.service';
 
 /**
  * Cron de despacho matutino de rutas confirmadas:
@@ -30,7 +30,18 @@ export function iniciarCronDespachoRutas(): void {
     { timezone: 'America/Argentina/Mendoza' },
   );
 
-  // 3) Chequeo al arrancar el proceso si está dentro del horario diurno (07:30 a 20:00 Mendoza)
+  // 3) Cola de avisos de choferes que dejaron un paso a medias (no mandaron
+  // la foto, no contestaron el cobro): al vencerse su sesión quedan libres y
+  // les llega lo que tenían en cola.
+  cron.schedule(
+    '*/2 7-21 * * *',
+    () => {
+      liberarColasPendientes().catch((err) => console.error('[cron-cola-choferes] Error:', err.message));
+    },
+    { timezone: 'America/Argentina/Mendoza' },
+  );
+
+  // 4) Chequeo al arrancar el proceso si está dentro del horario diurno (07:30 a 20:00 Mendoza)
   const ahora = new Date();
   const horaMendoza = (ahora.getUTCHours() - 3 + 24) % 24;
   const minutoMendoza = ahora.getUTCMinutes();

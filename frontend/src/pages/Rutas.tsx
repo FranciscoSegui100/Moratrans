@@ -602,10 +602,12 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     if (!confirm('¿Enviar la primera parada de la ruta al chofer por WhatsApp ahora?')) return;
     setDespachando(true);
     try {
-      const { data } = await api.post<{ ok: boolean; despachada: boolean }>(`/api/rutas/${rutaId}/despachar`);
+      const { data } = await api.post<{ ok: boolean; despachada: boolean; encolada?: boolean }>(`/api/rutas/${rutaId}/despachar`);
       cargar();
       if (data.despachada) {
         show('success', 'Ruta despachada', 'Se envió la primera parada al chofer por WhatsApp.');
+      } else if (data.encolada) {
+        show('info', 'En cola del chofer', 'Está en medio de otra entrega: le llega apenas la termine.');
       } else {
         show('info', 'Nada para despachar', 'El chofer ya tiene su parada asignada o no hay paradas pendientes.');
       }
@@ -624,7 +626,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
     if (!confirm(confirmMsg)) return;
     setConfirmando(true);
     try {
-      const { data } = await api.post<{ confirmadas: number; pendientes: string[]; despachada?: boolean }>(`/api/rutas/${rutaId}/confirmar`);
+      const { data } = await api.post<{ confirmadas: number; pendientes: string[]; despachada?: boolean; encolada?: boolean }>(`/api/rutas/${rutaId}/confirmar`);
       cargar();
       if (data.pendientes.length > 0) {
         show(
@@ -635,8 +637,12 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
       } else if (data.confirmadas > 0) {
         if (data.despachada) {
           show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'Se avisó al chofer por WhatsApp.');
-        } else {
+        } else if (data.encolada) {
+          show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'El chofer está en medio de otra entrega: le llega apenas la termine.');
+        } else if (esFutura) {
           show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'El chofer recibirá su primera parada a las 07:30 hs.');
+        } else {
+          show('success', `${data.confirmadas} parada(s) confirmada(s)`, 'Le llegan en orden, cuando termine las paradas anteriores.');
         }
       } else {
         show('success', 'Ya estaba todo confirmado', 'No había paradas nuevas para confirmar.');
