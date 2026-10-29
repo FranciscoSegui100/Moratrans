@@ -237,7 +237,7 @@ function GrabadorAudio({
 }
 
 /** Hilo de conversación + cuadro de respuesta libre para la alerta "pide asesor". */
-export function ChatAsesor({ telefono, ventanaCerrada, modoHumano }: { telefono: string; ventanaCerrada?: boolean; modoHumano: boolean }) {
+export function ChatAsesor({ telefono, ventanaCerrada, modoHumano, esChofer }: { telefono: string; ventanaCerrada?: boolean; modoHumano: boolean; esChofer?: boolean }) {
   const [mensajes, setMensajes] = useState<MensajeChat[]>([]);
   const [texto, setTexto] = useState('');
   const [enviando, setEnviando] = useState(false);
@@ -361,14 +361,17 @@ export function ChatAsesor({ telefono, ventanaCerrada, modoHumano }: { telefono:
         </div>
       )}
       <div className="chat-asesor-acciones">
-        <button
-          className="btn btn-ghost btn-sm"
-          onClick={pedirTransferencia}
-          disabled={pidiendoTransferencia || ventanaCerrada}
-          title="Después de cotizarle a mano, pedile el comprobante de la transferencia"
-        >
-          <Wallet strokeWidth={1.75} /> Pedir transferencia
-        </button>
+        {/* A un chofer no se le cobra: el botón es solo para charlas con clientes. */}
+        {!esChofer && (
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={pedirTransferencia}
+            disabled={pidiendoTransferencia || ventanaCerrada}
+            title="Después de cotizarle a mano, pedile el comprobante de la transferencia"
+          >
+            <Wallet strokeWidth={1.75} /> Pedir transferencia
+          </button>
+        )}
         <GrabadorAudio
           telefono={telefono}
           disabled={!!ventanaCerrada || !modoHumano}

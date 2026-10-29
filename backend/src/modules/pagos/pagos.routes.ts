@@ -431,6 +431,9 @@ pagosRouter.post('/pedido-catalogo', requireRol('admin', 'operador', 'finanzas')
     return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Datos inválidos' });
   }
   const { telefono, monto, concepto } = parsed.data;
+  // A un chofer no se le pide transferencia (Conversaciones mezcla clientes y choferes).
+  const [chofer] = await query('SELECT 1 FROM choferes WHERE telefono = $1', [telefono]);
+  if (chofer) return res.status(409).json({ error: 'Ese número es de un chofer: no se le puede pedir una transferencia.' });
 
   const [pago] = await query<{ id: string }>(
     `INSERT INTO pagos (cliente_telefono, monto, estado, es_cuenta_corriente, tipo, concepto)
