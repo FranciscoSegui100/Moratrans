@@ -56,6 +56,16 @@ alertasRouter.patch('/:id', requireRol('admin', 'operador', 'finanzas'), async (
   const estado = req.body?.estado as string;
   if (!['nueva', 'vista', 'resuelta'].includes(estado))
     return res.status(400).json({ error: 'Estado inválido' });
+  // Una entrega "a verificar" no se da por cerrada a mano: se cierra sola al
+  // asignarle un contenedor disponible (POST /api/viajes/:id/asignar-contenedor).
+  if (estado === 'resuelta') {
+    const [pendiente] = await query(
+      `SELECT 1 FROM alertas a JOIN viajes v ON v.id::text = a.referencia_id
+        WHERE a.id = $1 AND a.tipo = 'contenedor_a_verificar' AND v.contenedor_numero IS NULL AND v.estado <> 'cancelado'`,
+      [req.params.id],
+    );
+    if (pendiente) return res.status(409).json({ error: 'Primero asigná el contenedor correcto a esta entrega.' });
+  }
   const [row] = await query('UPDATE alertas SET estado = $1 WHERE id = $2 RETURNING *', [estado, req.params.id]);
 
   // Al resolver un pedido de asesor, le devolvemos el control al bot

@@ -870,7 +870,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                         )}
                         <div className="sel-row">
                           <label>Vacío a dejar:</label>
-                          <ContenedorElegidoPorChofer numero={v.entrega.contenedor_numero} />
+                          <ContenedorElegidoPorChofer numero={v.entrega.contenedor_numero} entregada={!!v.entrega.completada_en} />
                         </div>
                       </>
                     )}
@@ -887,7 +887,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                         {v.entrega.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.entrega.horario_preferido}</div>}
                         <div className="sel-row">
                           <label>Contenedor:</label>
-                          <ContenedorElegidoPorChofer numero={v.entrega.contenedor_numero} />
+                          <ContenedorElegidoPorChofer numero={v.entrega.contenedor_numero} entregada={!!v.entrega.completada_en} />
                         </div>
                       </>
                     )}
@@ -2356,12 +2356,13 @@ export function Rutas() {
 }
 
 /**
- * El contenedor de una entrega no se elige al armar la ruta: lo elige el
+ * El contenedor de una entrega no se elige al armar la ruta: lo escribe el
  * chofer al tocar "Ya entregué" por WhatsApp (ver chofer.flow.ts). Acá solo
- * se muestra, una vez entregado.
+ * se muestra, una vez entregado. Entregada sin contenedor = "a verificar"
+ * (escribió uno que no existe o no estaba disponible; se asigna en Viajes).
  */
-function ContenedorElegidoPorChofer({ numero }: { numero: string | null }) {
-  return numero
-    ? <span className="mono">{numero}</span>
-    : <span style={{ color: 'var(--text-muted)' }}>Lo elige el chofer al entregar</span>;
+function ContenedorElegidoPorChofer({ numero, entregada }: { numero: string | null; entregada?: boolean }) {
+  if (numero) return <span className="mono">{numero}</span>;
+  if (entregada) return <span className="tag verificar">A verificar</span>;
+  return <span style={{ color: 'var(--text-muted)' }}>Lo elige el chofer al entregar</span>;
 }

@@ -7,6 +7,7 @@ import { RoleGate } from '../components/RoleGate';
 import { useToast } from '../components/Toast';
 import { DireccionMaps } from '../components/DireccionMaps';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
+import { AsignarContenedorModal } from '../components/AsignarContenedorModal';
 import { useAuth, tieneRol } from '../context/AuthContext';
 import { formatearFecha } from '../lib/fechas';
 import { hoyISO } from '../lib/viajes';
@@ -93,6 +94,7 @@ interface ViajeCliente {
   es_cuenta_corriente?: boolean;
   vence_en: string | null;
   tiene_foto_entrega?: boolean;
+  contenedor_informado?: string | null;
   comprobantes?: Comprobante[];
 }
 
@@ -217,6 +219,8 @@ export function ClienteDetalle() {
   // tocar "Ya entregué") — mismo POST que el "Cambiar" de Viajes.
   const puedeCambiarContenedor = tieneRol(user, 'admin', 'operador');
   const [cambiandoContenedor, setCambiandoContenedor] = useState<string | null>(null);
+  // Entrega "a verificar" abierta en el modal de asignación.
+  const [verificando, setVerificando] = useState<ViajeCliente | null>(null);
   const [contenedorNuevo, setContenedorNuevo] = useState('');
   const [remitoForm, setRemitoForm] = useState('');
   const [editandoZona, setEditandoZona] = useState<ViajeCliente | null>(null);
@@ -1019,6 +1023,17 @@ export function ClienteDetalle() {
                               </button>
                             )}
                           </span>
+                        ) : v.tipo === 'entrega' && v.estado_visible === 'entregado' ? (
+                          // Entregada "a verificar": el chofer escribió un contenedor que no existe
+                          // o no estaba disponible — la oficina asigna el correcto.
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                            <span className="tag verificar" title="El chofer escribió un contenedor que no existe o no estaba disponible">
+                              A verificar{v.contenedor_informado ? ` · ${v.contenedor_informado}` : ''}
+                            </span>
+                            {puedeCambiarContenedor && (
+                              <button className="btn btn-primary btn-sm" onClick={() => setVerificando(v)}>Asignar</button>
+                            )}
+                          </span>
                         ) : v.tipo === 'entrega' && v.estado_visible !== 'cancelado' ? (
                           // El contenedor de una entrega lo elige el chofer al tocar "Ya entregué".
                           <span className="text-muted" style={{ fontFamily: 'inherit' }}>Lo elige el chofer</span>
@@ -1435,6 +1450,14 @@ export function ClienteDetalle() {
             </div>
           </div>
         </div>
+      )}
+      {verificando && (
+        <AsignarContenedorModal
+          viajeId={verificando.id}
+          informado={verificando.contenedor_informado ?? null}
+          detalle={verificando.destino_direccion}
+          onClose={() => setVerificando(null)}
+        />
       )}
     </div>
   );

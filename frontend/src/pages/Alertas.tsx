@@ -4,6 +4,7 @@ import { Check, X, RotateCcw, CircleCheck, ArrowRight } from 'lucide-react';
 import { useAlertas, Alerta } from '../hooks/useAlertas';
 import { RoleGate } from '../components/RoleGate';
 import { ComprobanteViewer } from '../components/ComprobanteViewer';
+import { AsignarContenedorModal } from '../components/AsignarContenedorModal';
 import { useToast } from '../components/Toast';
 import { tipoLabel, getSectorDeTipo } from '../lib/alertLabels';
 import { formatearFechaHora } from '../lib/fechas';
@@ -31,6 +32,8 @@ function rutaAlerta(a: Alerta): { to: string; label: string } | null {
       return { to: '/viajes', label: 'Ir a Viajes' };
     case 'contenedor_entregado':
       return { to: '/contenedores', label: 'Ir a Contenedores' };
+    case 'contenedor_a_verificar':
+      return { to: '/viajes', label: 'Ir a Viajes' };
     case 'chofer_no_reconocido':
     case 'chofer_cambio_telefono':
     case 'chofer_necesita_ayuda':
@@ -44,6 +47,8 @@ export function Alertas() {
   const { alertas, resolver, validarPago, rechazarPago, confirmarRetiro, marcarVistas } = useAlertas();
   const { show } = useToast();
   const [procesando, setProcesando] = useState<string | null>(null);
+  // Alerta 'contenedor_a_verificar' abierta en el modal de asignación.
+  const [verificando, setVerificando] = useState<Alerta | null>(null);
 
   // "¿La vi?" separado de "¿está resuelta?": las que estaban en 'nueva' al
   // abrir la bandeja (o que entran con la bandeja abierta) se recuerdan acá
@@ -190,14 +195,23 @@ export function Alertas() {
                     {rutaAlerta(a)!.label} <ArrowRight size={13} strokeWidth={1.75} />
                   </Link>
                 )}
-                <button
-                  onClick={() => onResolver(a.id)}
-                  className="btn btn-ghost btn-sm"
-                  disabled={procesando === a.id}
-                  title="Marcar alerta como resuelta"
-                >
-                  <Check strokeWidth={2} /> Resolver
-                </button>
+                {a.tipo === 'contenedor_a_verificar' ? (
+                  // No se resuelve a mano: se cierra sola al asignar un contenedor disponible.
+                  <RoleGate roles={['admin', 'operador']}>
+                    <button onClick={() => setVerificando(a)} className="btn btn-primary btn-sm">
+                      Asignar contenedor
+                    </button>
+                  </RoleGate>
+                ) : (
+                  <button
+                    onClick={() => onResolver(a.id)}
+                    className="btn btn-ghost btn-sm"
+                    disabled={procesando === a.id}
+                    title="Marcar alerta como resuelta"
+                  >
+                    <Check strokeWidth={2} /> Resolver
+                  </button>
+                )}
               </div>
             </RoleGate>
           )}
@@ -325,6 +339,14 @@ export function Alertas() {
         <div className="space-y">
           {alertasFiltradas.map(renderAlertaCard)}
         </div>
+      )}
+      {verificando && (
+        <AsignarContenedorModal
+          viajeId={verificando.referencia_id}
+          informado={verificando.mensaje.match(/escribió "([^"]+)"/)?.[1] ?? null}
+          detalle={verificando.mensaje}
+          onClose={() => setVerificando(null)}
+        />
       )}
     </div>
   );

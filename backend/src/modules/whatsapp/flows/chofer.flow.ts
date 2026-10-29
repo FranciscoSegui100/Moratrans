@@ -13,9 +13,10 @@ import { encrypt, encryptBuffer } from '../../../services/crypto.service';
 import { adjuntarAUltimoMensaje } from '../chatLog.service';
 import {
   asignarContenedorAEntrega,
-  contenedoresDisponiblesParaEntregar,
+  buscarContenedorInformado,
   etiquetaContenedor,
-  type ContenedorDisponible,
+  registrarEntregaAVerificar,
+  type ResultadoAsignacion,
 } from '../../../services/asignacionEntrega.service';
 import type { MensajeEntrante } from '../messageRouter';
 import type { Sesion } from '../session.store';
@@ -134,16 +135,26 @@ if (chofer.length === 0) {
     return aplicarVaciado(to, chofer[0].id, chofer[0].nombre, m.seleccionId.replace('vaciado:', ''));
   }
   // Flujo de entrega: "📦 Ya entregué" / "🔄 Recambio hecho" -> el chofer
-  // elige con qué contenedor (ver iniciarEleccionContenedor).
+  // escribe qué contenedor dejó, lo confirma y queda registrado (ver
+  // iniciarEleccionContenedor).
   if (esSeleccion && m.seleccionId?.startsWith('entregue:')) {
     return iniciarEleccionContenedor(to, chofer[0].id, m.seleccionId.replace('entregue:', ''));
   }
   if (esSeleccion && m.seleccionId?.startsWith('recgrupo:')) {
     return iniciarEleccionContenedor(to, chofer[0].id, m.seleccionId.replace('recgrupo:', ''));
   }
+  if (esSeleccion && m.seleccionId?.startsWith('entok:')) {
+    const [, viajeId, ...resto] = m.seleccionId.split(':');
+    return confirmarContenedorEntrega(to, chofer[0].id, chofer[0].nombre, viajeId, resto.join(':'));
+  }
+  if (esSeleccion && m.seleccionId?.startsWith('entcorr:')) {
+    return pedirNumeroContenedor(to, m.seleccionId.replace('entcorr:', ''), true);
+  }
+  // Botones de la lista de disponibles anterior que un chofer todavía pueda
+  // tener sin tocar: el tamaño vuelve a pedir el número; un contenedor de la
+  // lista ya es una elección confirmada.
   if (esSeleccion && m.seleccionId?.startsWith('enttam:')) {
-    const [, viajeId, tam] = m.seleccionId.split(':');
-    return enviarListaContenedores(to, viajeId, tam === 'x' ? null : Number(tam));
+    return pedirNumeroContenedor(to, m.seleccionId.split(':')[1], false);
   }
   if (esSeleccion && m.seleccionId?.startsWith('entcont:')) {
     const [, viajeId, numero] = m.seleccionId.split(':');
@@ -154,11 +165,15 @@ if (chofer.length === 0) {
   if (m.tipo === 'interactive_list' && m.seleccionId?.startsWith('recvacio:') && sesion.contexto?.entregaId) {
     return confirmarContenedorEntrega(to, chofer[0].id, chofer[0].nombre, sesion.contexto.entregaId as string, m.seleccionId.replace('recvacio:', ''));
   }
-  if (sesion.paso === 'elegir_contenedor_entrega' && sesion.contexto?.viajeId && m.tipo === 'text' && m.texto?.trim()) {
+  // Número escrito (o uno nuevo mientras se le pide confirmar el anterior).
+  if (
+    (sesion.paso === 'elegir_contenedor_entrega' || sesion.paso === 'confirmar_contenedor_entrega') &&
+    sesion.contexto?.viajeId && m.tipo === 'text' && m.texto?.trim()
+  ) {
     const escrito = m.texto.trim();
     // "entregué"/"ruta"/etc. mientras elige: dejar que lo manejen los atajos de abajo.
     if (!/^(entreg|retir|ruta|hoy|pendiente|vaci)/i.test(escrito)) {
-      return confirmarContenedorEntrega(to, chofer[0].id, chofer[0].nombre, sesion.contexto.viajeId as string, escrito);
+      return pedirConfirmacionContenedor(to, sesion.contexto.viajeId as string, escrito);
     }
   }
   if (esSeleccion && m.seleccionId?.startsWith('cobro_efectivo:')) {
@@ -450,18 +465,14 @@ async function elegirEntregaPendiente(to: string, choferId: string, choferNombre
   );
 }
 
-/** Tope de filas de una lista de WhatsApp. */
-const FILAS_LISTA = 10;
-
 /**
  * El chofer tocó "📦 Ya entregué" (o "🔄 Recambio hecho") de una entrega sin
- * contenedor: se le muestran los contenedores DISPONIBLES en este momento,
- * con su tamaño, para que diga cuál dejó. Si son más de los que entran en
- * una lista, primero elige el tamaño (o escribe el número directo).
+ * contenedor: escribe el número que tiene pintado el que dejó. La empresa no
+ * sabe qué contenedor lleva cada camión, y con 100 o más una lista no sirve.
  */
 async function iniciarEleccionContenedor(to: string, choferId: string, viajeId: string): Promise<void> {
-  const [viaje] = await query<{ completada_en: string | null; contenedor_numero: string | null; grupo_id: string | null; estado: string }>(
-    `SELECT completada_en, contenedor_numero, grupo_id, estado FROM viajes WHERE id = $1 AND tipo = 'entrega'`,
+  const [viaje] = await query<{ completada_en: string | null; contenedor_numero: string | null; estado: string }>(
+    `SELECT completada_en, contenedor_numero, estado FROM viajes WHERE id = $1 AND tipo = 'entrega'`,
     [viajeId],
   );
   if (!viaje || !['programado', 'en_curso'].includes(viaje.estado)) {
@@ -477,86 +488,59 @@ async function iniciarEleccionContenedor(to: string, choferId: string, viajeId: 
     const [chofer] = await query<{ nombre: string }>('SELECT nombre FROM choferes WHERE id = $1', [choferId]);
     return confirmarContenedorEntrega(to, choferId, chofer?.nombre ?? '', viajeId, viaje.contenedor_numero);
   }
-
-  const disponibles = await contenedoresDisponiblesParaEntregar();
-  if (disponibles.length === 0) {
-    await clearSesion(to);
-    await sendText(
-      to,
-      '🙁 No hay ningún contenedor disponible cargado en el sistema ahora mismo, así que no puedo registrar la entrega. Avisale a la oficina para que lo revisen, y después volvé a tocar *Ya entregué*.',
-    );
-    const [chofer] = await query<{ nombre: string }>('SELECT nombre FROM choferes WHERE id = $1', [choferId]);
-    const [alerta] = await query(
-      `INSERT INTO alertas (tipo, referencia_id, mensaje)
-       VALUES ('chofer_necesita_ayuda', $1, $2)
-       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-      [`${choferId}:sin_disponibles`, `${chofer?.nombre ?? 'Un chofer'} quiere registrar una entrega pero no hay ningún contenedor disponible en el sistema.`],
-    );
-    if (alerta) emitAlerta(alerta);
-    return;
-  }
-
-  await setSesion({ telefono: to, flujo: 'chofer', paso: 'elegir_contenedor_entrega', contexto: { viajeId } });
-  if (disponibles.length <= FILAS_LISTA) return enviarFilasContenedores(to, viajeId, disponibles, viaje.grupo_id !== null, false);
-
-  // Más de los que entran en una lista: primero el tamaño (hay 3 como mucho,
-  // justo lo que entra en botones). Contenedores sin tamaño cargado, aparte.
-  const porTamano = new Map<string, number>();
-  for (const d of disponibles) {
-    const k = d.tamano ? String(d.tamano) : 'x';
-    porTamano.set(k, (porTamano.get(k) ?? 0) + 1);
-  }
-  const opciones = [...porTamano.entries()];
-  if (opciones.length > 1 && opciones.length <= 3) {
-    await sendButtons(
-      to,
-      `${viaje.grupo_id ? '🔄 *Recambio hecho*' : '📦 *Ya entregué*'}\n\n¿De qué tamaño es el contenedor que dejaste?\n\n_Si sabés el número, también podés escribírmelo directo._`,
-      opciones.map(([k, n]) => ({ id: `enttam:${viajeId}:${k}`, title: `${k === 'x' ? 'Sin tamaño' : `${k} m³`} (${n})` })),
-    );
-    return;
-  }
-  return enviarFilasContenedores(to, viajeId, disponibles, viaje.grupo_id !== null, true);
+  return pedirNumeroContenedor(to, viajeId, false);
 }
 
-/** Lista de disponibles de un tamaño (`null` = sin tamaño cargado), después de elegir el tamaño. */
-async function enviarListaContenedores(to: string, viajeId: string, tamano: number | null): Promise<void> {
+/** Le pide al chofer que escriba el número del contenedor que dejó (`corrigiendo`: tocó "Corregir"). */
+async function pedirNumeroContenedor(to: string, viajeId: string, corrigiendo: boolean): Promise<void> {
   const [viaje] = await query<{ grupo_id: string | null }>('SELECT grupo_id FROM viajes WHERE id = $1', [viajeId]);
-  const disponibles = await contenedoresDisponiblesParaEntregar(tamano);
-  if (disponibles.length === 0) {
-    await sendText(to, '🙁 Ya no queda ninguno disponible de ese tamaño. Tocá de nuevo *Ya entregué* para ver los que hay.');
+  await setSesion({ telefono: to, flujo: 'chofer', paso: 'elegir_contenedor_entrega', contexto: { viajeId } });
+  if (corrigiendo) {
+    await sendText(to, '✏️ Dale, escribime de nuevo el *número del contenedor* que dejaste.');
     return;
   }
-  await setSesion({ telefono: to, flujo: 'chofer', paso: 'elegir_contenedor_entrega', contexto: { viajeId } });
-  return enviarFilasContenedores(to, viajeId, disponibles, !!viaje?.grupo_id, disponibles.length > FILAS_LISTA);
-}
-
-async function enviarFilasContenedores(
-  to: string,
-  viajeId: string,
-  disponibles: ContenedorDisponible[],
-  esRecambio: boolean,
-  hayMas: boolean,
-): Promise<void> {
-  await sendList(
+  await sendText(
     to,
-    esRecambio ? '🔄 Recambio hecho' : '📦 Ya entregué',
-    (esRecambio
-      ? '¿Qué contenedor vacío dejaste? Al elegirlo se registra todo junto: el vacío queda entregado y el lleno retirado, camino al vaciadero.'
-      : '¿Qué contenedor dejaste? Son los que figuran disponibles ahora.') +
-      (hayMas ? '\n\n_Hay más de los que entran acá — si no está en la lista, escribime el número._' : ''),
-    'Ver contenedores',
-    disponibles.slice(0, FILAS_LISTA).map((d) => ({
-      id: `entcont:${viajeId}:${d.numero}`,
-      title: etiquetaContenedor(d.numero, d.tamano).slice(0, 24),
-    })),
+    (viaje?.grupo_id ? '🔄 *Recambio hecho*\n\n¿Qué contenedor *vacío* dejaste?' : '📦 *Ya entregué*\n\n¿Qué contenedor dejaste?') +
+      ' Escribime el *número que tiene pintado* (por ejemplo: C-014).',
   );
 }
 
 /**
- * El chofer dijo con qué contenedor completó la entrega `viajeId`: se lo
- * asigna y lo deja entregado (asignarContenedorAEntrega, con la alerta al
- * panel), y sigue igual que cualquier entrega: encuesta al cliente, recambio
+ * Repregunta antes de registrar, para que el chofer vea si se equivocó al
+ * escribir. Si el número es de un contenedor cargado se muestra como figura
+ * (con su tamaño); si no, tal cual lo escribió — no se lo frena: lo que
+ * confirme se registra y, si no cierra, lo resuelve la oficina.
+ */
+async function pedirConfirmacionContenedor(to: string, viajeId: string, escrito: string): Promise<void> {
+  const encontrado = await buscarContenedorInformado(escrito);
+  // ':' separa las partes del id del botón; el largo, por las dudas.
+  const numero = (encontrado?.numero ?? escrito.toUpperCase()).replace(/:/g, '').slice(0, 40);
+  const etiqueta = encontrado ? etiquetaContenedor(encontrado.numero, encontrado.tamano) : numero;
+  const [viaje] = await query<{ cliente: string | null; destino_direccion: string | null }>(
+    `SELECT NULLIF(cl.nombre, 'Sin nombre') AS cliente, v.destino_direccion
+       FROM viajes v LEFT JOIN clientes cl ON cl.telefono = v.cliente_telefono
+      WHERE v.id = $1`,
+    [viajeId],
+  );
+  const donde = [viaje?.cliente, viaje?.destino_direccion].filter(Boolean).join(' – ');
+  await setSesion({ telefono: to, flujo: 'chofer', paso: 'confirmar_contenedor_entrega', contexto: { viajeId, numero } });
+  await sendButtons(
+    to,
+    `Estás por registrar el contenedor *${etiqueta}* como entregado${donde ? ` en *${donde}*` : ''}.\n\n¿Es correcto?`,
+    [
+      { id: `entok:${viajeId}:${numero}`, title: '✅ Sí, es ese' },
+      { id: `entcorr:${viajeId}`, title: '✏️ Corregir' },
+    ],
+  );
+}
+
+/**
+ * El chofer confirmó con qué contenedor completó la entrega `viajeId`. Si
+ * está disponible se lo asigna y lo deja entregado (asignarContenedorAEntrega,
+ * con la alerta al panel); si no existe o no está disponible, la entrega se
+ * registra igual "a verificar" y la oficina asigna el correcto — al chofer no
+ * se lo traba. En los dos casos sigue igual: encuesta al cliente, recambio
  * (retira el lleno pareja), foto, cobro en efectivo y parada siguiente.
  */
 async function confirmarContenedorEntrega(
@@ -566,58 +550,64 @@ async function confirmarContenedorEntrega(
   viajeId: string,
   numeroElegido: string,
 ): Promise<void> {
+  const informado = numeroElegido.trim().toUpperCase();
   try {
-    const r = await asignarContenedorAEntrega({ viajeId, numero: numeroElegido.trim(), choferId, choferNombre });
-    if (!r.ok) {
-      if (r.motivo === 'ya_entregada') {
-        await clearSesion(to);
-        await sendText(to, '👍 Tranqui, esa entrega ya estaba registrada. Todo bien.');
-        return menuChofer(to, choferNombre);
-      }
-      if (r.motivo === 'viaje_invalido') {
-        await clearSesion(to);
-        await sendText(to, '🙁 Esa entrega ya no está a tu nombre o cambió. Escribí *ruta* para ver lo que tenés pendiente.');
-        return;
-      }
-      // No disponible: la regla es elegir solo de los disponibles. Si de verdad
-      // dejó ese, lo tiene que arreglar la oficina — se le avisa al panel.
-      const numero = numeroElegido.trim().toUpperCase();
-      await sendText(
-        to,
-        r.estadoActual
-          ? `🙁 El *${numero}* no figura disponible (figura: ${r.estadoActual.replace('_', ' ')}). Elegí uno de la lista. Si dejaste ese, avisale a la oficina para que lo corrijan.`
-          : `🙁 No encontré ningún contenedor *${numero}*. Elegí uno de la lista o revisá el número.`,
-      );
-      if (r.estadoActual) {
-        const [alerta] = await query(
-          `INSERT INTO alertas (tipo, referencia_id, mensaje)
-           VALUES ('chofer_necesita_ayuda', $1, $2)
-           ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
-           RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-          [`${choferId}:no_disponible:${numero}`, `${choferNombre} dice que entregó el ${numero}, pero figura "${r.estadoActual}" — revisar.`],
-        );
-        if (alerta) emitAlerta(alerta);
-      }
-      return;
+    const encontrado = await buscarContenedorInformado(informado);
+    const r = encontrado
+      ? await asignarContenedorAEntrega({ viajeId, numero: encontrado.numero, choferId, choferNombre })
+      : ({ ok: false, motivo: 'no_disponible' } as ResultadoAsignacion);
+    if (!r.ok && r.motivo !== 'no_disponible') return entregaYaNoValida(to, choferNombre, r.motivo);
+
+    let numeroFoto: string;
+    let extra = '';
+    let clienteTelefono: string | null;
+    let esRecambio: boolean;
+    let contenedorCliente: string | null;
+    if (r.ok) {
+      numeroFoto = etiquetaContenedor(r.numero, r.tamano);
+      contenedorCliente = r.numero;
+      clienteTelefono = r.viaje.cliente_telefono;
+      esRecambio = r.viaje.grupo_id !== null;
+      // Recambio: el lleno pareja pasa a retirado (camino al vaciadero).
+      extra = (await cascadearParejaRecambio(r.numero, choferId, choferNombre)).texto;
+    } else {
+      const motivo = !encontrado
+        ? 'ese contenedor no existe en el sistema'
+        : `el ${encontrado.numero} no está disponible (figura ${r.estadoActual ?? encontrado.estado})`;
+      const v = await registrarEntregaAVerificar({ viajeId, informado, motivo, choferId, choferNombre });
+      if (!v.ok) return entregaYaNoValida(to, choferNombre, v.motivo);
+      numeroFoto = informado;
+      contenedorCliente = null;
+      clienteTelefono = v.viaje.cliente_telefono;
+      esRecambio = v.viaje.grupo_id !== null;
+      if (v.viaje.grupo_id) extra = await retirarLlenoDelRecambio(v.viaje.grupo_id, choferId, choferNombre);
     }
 
     await clearSesion(to);
-    if (r.viaje.cliente_telefono) {
+    if (clienteTelefono) {
       notificarClienteServicioFinalizado({
-        clienteTelefono: r.viaje.cliente_telefono,
-        tipo: r.viaje.grupo_id ? 'recambio' : 'entrega',
-        contenedorNumero: r.numero,
+        clienteTelefono,
+        tipo: esRecambio ? 'recambio' : 'entrega',
+        contenedorNumero: contenedorCliente,
       }).catch((e) => console.error('Error enviando encuesta de entrega al cliente:', e));
     }
-    // Recambio: el lleno pareja pasa a retirado (camino al vaciadero).
-    const { texto: extra } = await cascadearParejaRecambio(r.numero, choferId, choferNombre);
-    await sendText(to, `✅ Registrado. Dejaste el *${etiquetaContenedor(r.numero, r.tamano)}*${extra}. 💪`);
-    return pedirFotoEntrega(to, viajeId, r.numero, !!extra);
+    await sendText(to, `✅ ¡Muchas gracias, ${choferNombre}! Quedó registrado: dejaste el *${numeroFoto}*${extra}. 💪`);
+    return pedirFotoEntrega(to, viajeId, numeroFoto, !!extra);
   } catch (err: any) {
-    await sendText(to, `⚠️ No pudimos registrar la entrega con el ${numeroElegido}. Probá de nuevo.`);
+    await sendText(to, `⚠️ No pudimos registrar la entrega con el ${informado}. Probá de nuevo.`);
     console.error('Error registrando entrega con contenedor elegido:', err.message);
-    await alertarErrorChofer(choferId, choferNombre, numeroElegido, err.message).catch((e) => console.error('Error registrando alerta:', e));
+    await alertarErrorChofer(choferId, choferNombre, informado, err.message).catch((e) => console.error('Error registrando alerta:', e));
   }
+}
+
+/** La entrega ya se había registrado o dejó de ser de este chofer. */
+async function entregaYaNoValida(to: string, choferNombre: string, motivo: 'viaje_invalido' | 'ya_entregada'): Promise<void> {
+  await clearSesion(to);
+  if (motivo === 'ya_entregada') {
+    await sendText(to, '👍 Tranqui, esa entrega ya estaba registrada. Todo bien.');
+    return menuChofer(to, choferNombre);
+  }
+  await sendText(to, '🙁 Esa entrega ya no está a tu nombre o cambió. Escribí *ruta* para ver lo que tenés pendiente.');
 }
 
 /**
@@ -717,14 +707,35 @@ async function cascadearParejaRecambio(
 
   // La pareja es el lleno: se retira (yendo a vaciar) si está 'entregado'.
   if (cont?.estado !== 'entregado') return { texto: '' };
+  return { texto: await retirarLlenoPareja(pareja.id, pareja.contenedor_numero, choferId, choferNombre) };
+}
+
+/**
+ * Recambio cuya entrega quedó "a verificar" (sin contenedor): el lleno igual
+ * se llevó, así que su retiro se completa como en cascadearParejaRecambio.
+ */
+async function retirarLlenoDelRecambio(grupoId: string, choferId: string, choferNombre: string): Promise<string> {
+  const [retiro] = await query<{ id: string; contenedor_numero: string }>(
+    `SELECT v.id, v.contenedor_numero FROM viajes v
+       JOIN contenedores c ON c.numero = v.contenedor_numero AND c.estado = 'entregado'
+      WHERE v.grupo_id = $1 AND v.tipo = 'retiro' AND v.estado IN ('programado', 'en_curso') AND v.completada_en IS NULL
+      ORDER BY v.creado_en DESC LIMIT 1`,
+    [grupoId],
+  );
+  if (!retiro) return '';
+  return retirarLlenoPareja(retiro.id, retiro.contenedor_numero, choferId, choferNombre);
+}
+
+/** El lleno de un recambio pasa a 'retirado' (camino al vaciadero) y se avisa al panel. */
+async function retirarLlenoPareja(retiroId: string, numero: string, choferId: string, choferNombre: string): Promise<string> {
   const vaciadero = await resolverUbicacion('vaciadero');
   await query(
     `UPDATE viajes SET estado = 'en_curso', completada_en = now(),
             ubicacion_id = COALESCE(ubicacion_id, $2), ubicacion_direccion = COALESCE(ubicacion_direccion, $3)
       WHERE id = $1`,
-    [pareja.id, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
+    [retiroId, vaciadero?.id ?? null, vaciadero?.direccion ?? null],
   );
-  await query(`UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`, [pareja.contenedor_numero, `chofer:${choferId}`]);
+  await query(`UPDATE contenedores SET estado = 'retirado', actualizado_por = $2 WHERE numero = $1`, [numero, `chofer:${choferId}`]);
   emitRecursoActualizado('contenedores');
   emitRecursoActualizado('viajes');
   const [alerta] = await query(
@@ -732,10 +743,10 @@ async function cascadearParejaRecambio(
      VALUES ('confirmar_retiro', $1, $2)
      ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
      RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
-    [pareja.contenedor_numero, `${choferNombre} completó el recambio: retiró ${pareja.contenedor_numero}, va camino al vaciadero.`],
+    [numero, `${choferNombre} completó el recambio: retiró ${numero}, va camino al vaciadero.`],
   );
   if (alerta) emitAlerta(alerta);
-  return { texto: ` y retiraste *${pareja.contenedor_numero}* (yendo a vaciar)` };
+  return ` y retiraste *${numero}* (yendo a vaciar)`;
 }
 
 /**

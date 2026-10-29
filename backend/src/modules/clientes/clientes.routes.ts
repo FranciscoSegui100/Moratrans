@@ -489,7 +489,7 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
             v.grupo_id, ch.nombre AS chofer_nombre,
             (v.es_cuenta_corriente AND NOT (v.tipo = 'retiro' AND v.grupo_id IS NOT NULL)) AS es_cuenta_corriente,
             co.vence_en,
-            (v.foto_entrega_url IS NOT NULL) AS tiene_foto_entrega,
+            (v.foto_entrega_url IS NOT NULL) AS tiene_foto_entrega, v.contenedor_informado,
             -- Solo el pago propio del viaje. Las extensiones de retiro ya no se
             -- anidan acá: cada una es su propia fila (rama de abajo del UNION),
             -- así en la ficha cada fila es una sola cosa — entrega, retiro,
@@ -527,7 +527,7 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
             NULL::numeric AS destino_lat, NULL::numeric AS destino_lng,
             NULL::text AS remito, p.monto AS importe, NULL::uuid AS grupo_id, NULL::text AS chofer_nombre,
             p.es_cuenta_corriente, co.vence_en,
-            FALSE AS tiene_foto_entrega,
+            FALSE AS tiene_foto_entrega, NULL::text AS contenedor_informado,
             json_build_array(json_build_object(
               'id', p.id, 'tipo', p.tipo, 'monto', p.monto, 'estado', p.estado,
               'es_cuenta_corriente', p.es_cuenta_corriente,

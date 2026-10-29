@@ -20,6 +20,7 @@ export const tipoLabel: Record<string, string> = {
   chofer_cambio_telefono:     'Cambio de teléfono de chofer',
   envio_fallido:              'No se pudo enviar un WhatsApp',
   contenedor_entregado:       'Contenedor entregado',
+  contenedor_a_verificar:     'Contenedor a verificar',
   chofer_necesita_ayuda:      'Chofer necesita ayuda',
 };
 
@@ -39,8 +40,9 @@ export const tipoDescripcion: Record<string, string> = {
   chofer_no_reconocido:       'Mensajes entrantes de choferes o líneas no registradas en la flota',
   chofer_cambio_telefono:     'Notificaciones de choferes informando una nueva línea telefónica activa',
   envio_fallido:              'Fallos en la entrega de mensajes o plantillas salientes de WhatsApp',
-  contenedor_entregado:       'El chofer entregó y eligió con qué contenedor: queda alquilado a ese cliente',
-  chofer_necesita_ayuda:      'Un chofer quedó trabado en el bot o eligió un contenedor que no figura disponible',
+  contenedor_entregado:       'El chofer entregó y escribió con qué contenedor: queda alquilado a ese cliente',
+  contenedor_a_verificar:     'El chofer escribió un contenedor que no existe o no estaba disponible: asigná el correcto',
+  chofer_necesita_ayuda:      'Un chofer quedó trabado en el bot',
 };
 
 export type SectorId = 'todos' | 'pagos' | 'logistica' | 'asesor' | 'choferes' | 'sistema';
@@ -86,6 +88,7 @@ export const SECTORES: SectorMeta[] = [
       'recambio_solicitado',
       'entrega_solicitada',
       'contenedor_entregado',
+      'contenedor_a_verificar',
       'stock_bajo',
     ],
   },

@@ -1,52 +1,62 @@
+import type { PoolClient } from 'pg';
 import { query, withTx } from '../config/db';
-import { emitAlerta, emitRecursoActualizado } from '../config/socket';
+import { emitAlerta, emitAlertaActualizada, emitRecursoActualizado } from '../config/socket';
 import { DIAS_ALQUILER_ANTES_RETIRO } from '../config/bot.config';
 
 /**
  * Flujo de entrega: el contenedor NO se elige al armar la ruta ni al validar
  * el pago — lo elige el chofer en el momento en que toca "📦 Ya entregué"
- * (ver chofer.flow.ts), de la lista de contenedores disponibles en ese
- * momento. La empresa no lleva un control fino de qué vacío sube a cada
+ * (ver chofer.flow.ts): escribe el número del que dejó y lo confirma. La empresa no lleva un control fino de qué vacío sube a cada
  * camión, así que asignarlo antes era adivinar.
  */
-
-export interface ContenedorDisponible {
-  numero: string;
-  tamano: number | null;
-}
 
 /** "C-014 (7 m³)" — cómo se le muestra un contenedor al chofer y al panel. */
 export function etiquetaContenedor(numero: string, tamano: number | null): string {
   return tamano ? `${numero} (${tamano} m³)` : numero;
 }
 
+type ViajeEntrega = {
+  id: string; tipo: string; estado: string; chofer_id: string | null; contenedor_numero: string | null;
+  completada_en: string | null; cliente_telefono: string | null; grupo_id: string | null; destino_direccion: string | null;
+};
+
 /**
- * Contenedores que se pueden entregar ahora mismo: en depósito ('disponible')
- * y sin otra entrega activa que ya los tenga (un vacío preasignado por el
- * flujo viejo, o uno que otro chofer eligió hace un instante).
+ * Bloquea (FOR UPDATE) la entrega `viajeId` y chequea que el chofer la pueda
+ * registrar: activa, todavía sin entregar y suya — o, en un recambio todavía
+ * sin chofer en la pata de entrega, que el retiro pareja sea suyo.
  */
-export async function contenedoresDisponiblesParaEntregar(tamano?: number | null): Promise<ContenedorDisponible[]> {
-  const params: unknown[] = [];
-  let filtroTamano = '';
-  if (tamano !== undefined) {
-    if (tamano === null) {
-      filtroTamano = 'AND c.tamano IS NULL';
-    } else {
-      params.push(tamano);
-      filtroTamano = `AND c.tamano = $${params.length}`;
-    }
-  }
-  return query<ContenedorDisponible>(
-    `SELECT c.numero, c.tamano
-       FROM contenedores c
-      WHERE c.estado = 'disponible' ${filtroTamano}
-        AND NOT EXISTS (
-          SELECT 1 FROM viajes v
-           WHERE v.contenedor_numero = c.numero AND v.tipo = 'entrega' AND v.estado IN ('programado', 'en_curso')
-        )
-      ORDER BY c.tamano NULLS LAST, c.numero`,
-    params,
+async function bloquearEntregaDelChofer(
+  c: PoolClient,
+  viajeId: string,
+  choferId: string,
+): Promise<{ ok: true; viaje: ViajeEntrega } | { ok: false; motivo: 'viaje_invalido' | 'ya_entregada' }> {
+  const { rows } = await c.query<ViajeEntrega>(
+    `SELECT id, tipo, estado, chofer_id, contenedor_numero, completada_en, cliente_telefono, grupo_id, destino_direccion
+       FROM viajes WHERE id = $1 FOR UPDATE`,
+    [viajeId],
   );
+  const viaje = rows[0];
+  if (!viaje || viaje.tipo !== 'entrega' || !['programado', 'en_curso'].includes(viaje.estado)) {
+    return { ok: false, motivo: 'viaje_invalido' };
+  }
+  if (viaje.completada_en) return { ok: false, motivo: 'ya_entregada' };
+
+  let esSuya = viaje.chofer_id === choferId;
+  if (!esSuya && !viaje.chofer_id && viaje.grupo_id) {
+    const { rows: r } = await c.query(
+      `SELECT 1 FROM viajes WHERE grupo_id = $1 AND tipo = 'retiro' AND chofer_id = $2 LIMIT 1`,
+      [viaje.grupo_id, choferId],
+    );
+    esSuya = r.length > 0;
+  }
+  if (!esSuya) return { ok: false, motivo: 'viaje_invalido' };
+  return { ok: true, viaje };
+}
+
+/** Nombre del cliente para los mensajes de alerta (o su teléfono si no lo tiene cargado). */
+async function nombreCliente(c: PoolClient, telefono: string | null): Promise<string | null> {
+  const { rows } = await c.query<{ nombre: string | null }>('SELECT nombre FROM clientes WHERE telefono = $1', [telefono]);
+  return rows[0]?.nombre && rows[0].nombre !== 'Sin nombre' ? rows[0].nombre : telefono;
 }
 
 export type ResultadoAsignacion =
@@ -65,10 +75,11 @@ export type ResultadoAsignacion =
  * levanta la alerta para el panel. Bloquea el contenedor (FOR UPDATE) para
  * que dos choferes no puedan elegir el mismo a la vez.
  *
- * Solo acepta contenedores disponibles (decisión del negocio: si el que dejó
- * no figura disponible, que avise a la oficina en vez de registrar algo
- * dudoso). Excepción: una entrega del flujo viejo que ya traía su contenedor
- * reservado se completa con ese mismo.
+ * Solo acepta contenedores disponibles. Si el que escribió el chofer no
+ * existe o no está disponible, el bot registra la entrega igual con
+ * registrarEntregaAVerificar y la oficina asigna el correcto. Excepción: una
+ * entrega del flujo viejo que ya traía su contenedor reservado se completa
+ * con ese mismo.
  */
 export async function asignarContenedorAEntrega(params: {
   viajeId: string;
@@ -79,31 +90,9 @@ export async function asignarContenedorAEntrega(params: {
   const { viajeId, numero, choferId, choferNombre } = params;
 
   const resultado = await withTx(async (c) => {
-    const { rows: viajes } = await c.query<{
-      id: string; tipo: string; estado: string; chofer_id: string | null; contenedor_numero: string | null;
-      completada_en: string | null; cliente_telefono: string | null; grupo_id: string | null; destino_direccion: string | null;
-    }>(
-      `SELECT id, tipo, estado, chofer_id, contenedor_numero, completada_en, cliente_telefono, grupo_id, destino_direccion
-         FROM viajes WHERE id = $1 FOR UPDATE`,
-      [viajeId],
-    );
-    const viaje = viajes[0];
-    if (!viaje || viaje.tipo !== 'entrega' || !['programado', 'en_curso'].includes(viaje.estado)) {
-      return { ok: false as const, motivo: 'viaje_invalido' as const };
-    }
-    if (viaje.completada_en) return { ok: false as const, motivo: 'ya_entregada' as const };
-
-    // Tiene que ser una entrega de ESTE chofer — o, en un recambio todavía
-    // sin chofer en la pata de entrega, que el retiro pareja sea suyo.
-    let esSuya = viaje.chofer_id === choferId;
-    if (!esSuya && !viaje.chofer_id && viaje.grupo_id) {
-      const { rows } = await c.query(
-        `SELECT 1 FROM viajes WHERE grupo_id = $1 AND tipo = 'retiro' AND chofer_id = $2 LIMIT 1`,
-        [viaje.grupo_id, choferId],
-      );
-      esSuya = rows.length > 0;
-    }
-    if (!esSuya) return { ok: false as const, motivo: 'viaje_invalido' as const };
+    const v = await bloquearEntregaDelChofer(c, viajeId, choferId);
+    if (!v.ok) return v;
+    const viaje = v.viaje;
 
     // Una entrega del flujo viejo que ya traía otro contenedor: no se cambia acá.
     if (viaje.contenedor_numero && viaje.contenedor_numero.toUpperCase() !== numero.toUpperCase()) {
@@ -148,11 +137,7 @@ export async function asignarContenedorAEntrega(params: {
       [viaje.id, cont.numero, choferId, choferRows[0]?.patente ?? null],
     );
 
-    const { rows: clienteRows } = await c.query<{ nombre: string | null }>(
-      'SELECT nombre FROM clientes WHERE telefono = $1',
-      [viaje.cliente_telefono],
-    );
-    const cliente = clienteRows[0]?.nombre && clienteRows[0].nombre !== 'Sin nombre' ? clienteRows[0].nombre : viaje.cliente_telefono;
+    const cliente = await nombreCliente(c, viaje.cliente_telefono);
     const { rows: alertas } = await c.query(
       `INSERT INTO alertas (tipo, referencia_id, mensaje)
        VALUES ('contenedor_entregado', $1, $2)
@@ -180,6 +165,150 @@ export async function asignarContenedorAEntrega(params: {
   emitRecursoActualizado('viajes');
   const { alerta: _alerta, ...resto } = resultado;
   return resto;
+}
+
+/** "c 14", "C-014", "c014" -> "C014": para comparar sin guiones, espacios ni mayúsculas. */
+function claveContenedor(texto: string): string {
+  return texto.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * El contenedor que el chofer quiso decir con lo que escribió: mismo número
+ * sin importar guiones, espacios o mayúsculas ("c 14" = "C-14"). Si no hay,
+ * por los dígitos sin ceros adelante ("14" = "C-014"), pero solo si hay un
+ * único contenedor con ese número — si no, no se adivina.
+ */
+export async function buscarContenedorInformado(
+  texto: string,
+): Promise<{ numero: string; tamano: number | null; estado: string } | null> {
+  const clave = claveContenedor(texto);
+  if (!clave) return null;
+  const [exacto] = await query<{ numero: string; tamano: number | null; estado: string }>(
+    `SELECT numero, tamano, estado::text AS estado FROM contenedores
+      WHERE regexp_replace(UPPER(numero), '[^A-Z0-9]', '', 'g') = $1 LIMIT 1`,
+    [clave],
+  );
+  if (exacto) return exacto;
+  const digitos = clave.replace(/\D/g, '').replace(/^0+/, '');
+  if (!digitos) return null;
+  const porDigitos = await query<{ numero: string; tamano: number | null; estado: string }>(
+    `SELECT numero, tamano, estado::text AS estado FROM contenedores
+      WHERE ltrim(regexp_replace(numero, '[^0-9]', '', 'g'), '0') = $1 LIMIT 2`,
+    [digitos],
+  );
+  return porDigitos.length === 1 ? porDigitos[0] : null;
+}
+
+export type ResultadoAVerificar =
+  | { ok: true; viaje: { id: string; cliente_telefono: string | null; grupo_id: string | null } }
+  | { ok: false; motivo: 'viaje_invalido' | 'ya_entregada' };
+
+/**
+ * El chofer confirmó un contenedor que no existe o no está disponible: la
+ * entrega se registra igual (no se lo traba en la calle) pero sin
+ * contenedor — queda "a verificar", con lo que escribió en
+ * contenedor_informado, y una alerta para que la oficina asigne el correcto
+ * (asignarContenedorVerificado). Sin contenedor no hay vencimiento ni retiro
+ * automático todavía: salen al asignarlo, contados desde hoy.
+ */
+export async function registrarEntregaAVerificar(params: {
+  viajeId: string;
+  informado: string;
+  motivo: string;
+  choferId: string;
+  choferNombre: string;
+}): Promise<ResultadoAVerificar> {
+  const { viajeId, informado, motivo, choferId, choferNombre } = params;
+  const resultado = await withTx(async (c) => {
+    const v = await bloquearEntregaDelChofer(c, viajeId, choferId);
+    if (!v.ok) return v;
+    const viaje = v.viaje;
+    const { rows: choferRows } = await c.query<{ patente: string | null }>('SELECT patente FROM choferes WHERE id = $1', [choferId]);
+    await c.query(
+      `UPDATE viajes SET completada_en = now(), contenedor_informado = $2,
+              chofer_id = COALESCE(chofer_id, $3), patente = COALESCE(patente, $4)
+        WHERE id = $1`,
+      [viaje.id, informado, choferId, choferRows[0]?.patente ?? null],
+    );
+    const cliente = await nombreCliente(c, viaje.cliente_telefono);
+    const { rows: alertas } = await c.query(
+      `INSERT INTO alertas (tipo, referencia_id, mensaje)
+       VALUES ('contenedor_a_verificar', $1, $2)
+       ON CONFLICT (tipo, referencia_id) WHERE estado <> 'resuelta' DO NOTHING
+       RETURNING id, tipo, referencia_id, mensaje, estado, creado_en`,
+      [
+        viaje.id,
+        `${choferNombre} entregó${viaje.grupo_id ? ' (recambio)' : ''}${cliente ? ` a ${cliente}` : ''} y escribió "${informado}", ` +
+          `pero ${motivo}. Asigná el contenedor correcto.`,
+      ],
+    );
+    return {
+      ok: true as const,
+      viaje: { id: viaje.id, cliente_telefono: viaje.cliente_telefono, grupo_id: viaje.grupo_id },
+      alerta: alertas[0] as unknown,
+    };
+  });
+  if (!resultado.ok) return resultado;
+  if (resultado.alerta) emitAlerta({ ...(resultado.alerta as object), cliente_telefono: resultado.viaje.cliente_telefono });
+  emitRecursoActualizado('viajes');
+  return { ok: true, viaje: resultado.viaje };
+}
+
+/**
+ * La oficina asigna el contenedor de una entrega "a verificar" (el chofer
+ * escribió uno que no existía o no estaba disponible). Solo se acepta uno
+ * DISPONIBLE y sin otra entrega activa, así que la entrega siempre termina
+ * con un contenedor correcto. El vencimiento se cuenta desde el día real de
+ * la entrega (completada_en), no desde que se resolvió. Cierra la alerta.
+ */
+export async function asignarContenedorVerificado(params: {
+  viajeId: string;
+  numero: string;
+  actualizadoPor: string;
+}): Promise<{ ok: true; numero: string } | { ok: false; error: string }> {
+  const { viajeId, numero, actualizadoPor } = params;
+  const r = await withTx(async (c): Promise<{ ok: true; numero: string } | { ok: false; error: string }> => {
+    const { rows: viajes } = await c.query<{ tipo: string; estado: string; contenedor_numero: string | null; completada_en: string | null }>(
+      'SELECT tipo, estado, contenedor_numero, completada_en FROM viajes WHERE id = $1 FOR UPDATE',
+      [viajeId],
+    );
+    const viaje = viajes[0];
+    if (!viaje || viaje.tipo !== 'entrega' || viaje.estado === 'cancelado') return { ok: false, error: 'Esa entrega ya no está activa.' };
+    if (!viaje.completada_en) return { ok: false, error: 'Esta entrega todavía no se hizo: el contenedor lo informa el chofer al entregar.' };
+    if (viaje.contenedor_numero) return { ok: false, error: `Esta entrega ya tiene el ${viaje.contenedor_numero}. Para corregirlo usá "Cambiar".` };
+
+    const { rows: conts } = await c.query<{ numero: string; estado: string }>(
+      'SELECT numero, estado FROM contenedores WHERE UPPER(numero) = UPPER($1) FOR UPDATE',
+      [numero.trim()],
+    );
+    const cont = conts[0];
+    if (!cont) return { ok: false, error: `No existe el contenedor ${numero}. Si existe de verdad, dalo de alta primero.` };
+    if (cont.estado !== 'disponible') return { ok: false, error: `El ${cont.numero} no está disponible (figura ${cont.estado}).` };
+    const { rows: ocupado } = await c.query(
+      `SELECT 1 FROM viajes WHERE contenedor_numero = $1 AND tipo = 'entrega' AND estado IN ('programado', 'en_curso') LIMIT 1`,
+      [cont.numero],
+    );
+    if (ocupado.length > 0) return { ok: false, error: `El ${cont.numero} ya está en otra entrega.` };
+
+    // disponible -> reservado -> entregado (el trigger no permite saltar directo).
+    await c.query(`UPDATE contenedores SET estado = 'reservado', actualizado_por = $2 WHERE numero = $1`, [cont.numero, actualizadoPor]);
+    await c.query(
+      `UPDATE contenedores SET estado = 'entregado', vence_en = fn_vencimiento_habil($2, $3), actualizado_por = $4 WHERE numero = $1`,
+      [cont.numero, viaje.completada_en, DIAS_ALQUILER_ANTES_RETIRO, actualizadoPor],
+    );
+    await c.query('UPDATE viajes SET contenedor_numero = $2 WHERE id = $1', [viajeId, cont.numero]);
+    await c.query(
+      `UPDATE alertas SET estado = 'resuelta' WHERE tipo = 'contenedor_a_verificar' AND referencia_id = $1 AND estado <> 'resuelta'`,
+      [viajeId],
+    );
+    return { ok: true, numero: cont.numero };
+  });
+  if (r.ok) {
+    emitAlertaActualizada({ tipo: 'contenedor_a_verificar', referencia_id: viajeId, estado: 'resuelta' });
+    emitRecursoActualizado('contenedores');
+    emitRecursoActualizado('viajes');
+  }
+  return r;
 }
 
 export type ResultadoCambio = { ok: true; anterior: string; nuevo: string } | { ok: false; error: string };

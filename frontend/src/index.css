@@ -2132,6 +2132,7 @@ a:hover { color: var(--accent-dark); text-decoration: underline; }
 .tag.recambio { background: var(--purple-bg); color: var(--purple); display: inline-flex; align-items: center; gap: 5px; }
 .tag.vaciado { background: var(--success-bg); color: var(--success); }
 .tag.alargue { background: var(--success-bg); color: var(--success); }
+.tag.verificar { background: var(--danger-bg); color: var(--danger); font-family: inherit; }
 .addbtn { border: 1px solid var(--border-light); background: transparent; border-radius: var(--radius); width: 26px; height: 26px; cursor: pointer; color: var(--text-secondary); font-size: 1rem; flex-shrink: 0; line-height: 1; display: flex; align-items: center; justify-content: center; }
 .addbtn:hover { background: var(--accent-tint); color: var(--accent); border-color: var(--accent); }
 .abordo-label { font-size: 0.72rem; color: var(--text-muted); margin-bottom: 6px; }

@@ -14,7 +14,7 @@ import { notificarClienteChoferEnCamino } from '../whatsapp/notificacionesClient
 import { hoyMendozaISO } from '../../services/fechas.service';
 import { contenedoresDelCliente } from '../../services/contenedorCliente.service';
 import { buscarRetiroActivo, RetiroActivo } from '../../services/retiroActivo.service';
-import { cambiarContenedorDeEntrega } from '../../services/asignacionEntrega.service';
+import { asignarContenedorVerificado, cambiarContenedorDeEntrega } from '../../services/asignacionEntrega.service';
 import { reglasDePago, subirComprobanteManual, pedirPagoPorWhatsApp } from '../../services/pagoManual.service';
 import { anularPagosDeViajesCancelados } from '../../services/pagoViajeCancelado.service';
 
@@ -70,7 +70,7 @@ viajesRouter.get('/', async (req: Request, res: Response) => {
             v.remito, v.importe, v.ubicacion_id, v.ubicacion_direccion, v.ruta_id, v.orden,
             v.ruta_confirmada_en, v.completada_en, v.chofer_notificado_en,
             v.es_cuenta_corriente, v.pago_id,
-            (v.foto_entrega_url IS NOT NULL) AS tiene_foto_entrega,
+            (v.foto_entrega_url IS NOT NULL) AS tiene_foto_entrega, v.contenedor_informado,
             -- Origen/destino final del viaje: la entrega sale del depósito
             -- (ubicacion_direccion) y llega a lo del cliente (destino_direccion);
             -- el retiro sale de lo del cliente y llega al vaciadero. No se
@@ -803,6 +803,24 @@ viajesRouter.post('/:id/cambiar-contenedor', requireRol('admin', 'operador'), as
   const r = await cambiarContenedorDeEntrega({
     viajeId: req.params.id,
     nuevoNumero: parsed.data.contenedor_numero,
+    actualizadoPor: `operador:${req.user!.id}`,
+  });
+  if (!r.ok) return res.status(409).json({ error: r.error });
+  res.json(r);
+});
+
+/**
+ * POST /api/viajes/:id/asignar-contenedor — la oficina resuelve una entrega
+ * "a verificar": el chofer escribió un contenedor que no existía o no estaba
+ * disponible y se registró sin contenedor. Solo acepta uno disponible (ver
+ * asignarContenedorVerificado); cierra la alerta 'contenedor_a_verificar'.
+ */
+viajesRouter.post('/:id/asignar-contenedor', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const parsed = z.object({ contenedor_numero: z.string().trim().min(1) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Falta el contenedor' });
+  const r = await asignarContenedorVerificado({
+    viajeId: req.params.id,
+    numero: parsed.data.contenedor_numero,
     actualizadoPor: `operador:${req.user!.id}`,
   });
   if (!r.ok) return res.status(409).json({ error: r.error });
