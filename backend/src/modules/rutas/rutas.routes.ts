@@ -93,6 +93,7 @@ interface ViajeParada {
   hora_estimada: string | null;
   zona: string | null;
   cliente_telefono: string | null;
+  cliente_nombre: string | null;
   grupo_id: string | null;
   estado: string;
   notas: string | null;
@@ -135,6 +136,7 @@ async function calcularDisponibilidadRuta(
     ejecutar(
       `SELECT id, orden, tipo, contenedor_numero, destino_direccion, destino_lat, destino_lng,
               horario_preferido, hora_estimada, zona, cliente_telefono,
+              (SELECT NULLIF(cl.nombre, 'Sin nombre') FROM clientes cl WHERE cl.telefono = viajes.cliente_telefono) AS cliente_nombre,
               grupo_id, estado, notas, ubicacion_id, origen, completada_en, ruta_confirmada_en, chofer_notificado_en, pago_id
          FROM viajes WHERE ruta_id = $1 ORDER BY orden`,
       [rutaId],

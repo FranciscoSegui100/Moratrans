@@ -720,8 +720,8 @@ viajesRouter.post('/', requireRol('admin', 'operador'), async (req: Request, res
       let pagoId: string | null = null;
       if (pagoEntrega) {
         const { rows: pagoRows } = await c.query<{ id: string }>(
-          `INSERT INTO pagos (cliente_telefono, tipo, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante)
-           VALUES ($1, 'flete', $2, $3, $4, $5, $6, $7) RETURNING id`,
+          `INSERT INTO pagos (cargado_en_panel, cliente_telefono, tipo, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante)
+           VALUES (TRUE, $1, 'flete', $2, $3, $4, $5, $6, $7) RETURNING id`,
           [v.cliente_telefono, pagoEntrega.monto, pagoEntrega.medioPago, pagoEntrega.estado,
            pagoEntrega.pagado && pagoEntrega.medioPago === 'efectivo', pagoEntrega.cargoCC, pagoEntrega.urlComprobante],
         );

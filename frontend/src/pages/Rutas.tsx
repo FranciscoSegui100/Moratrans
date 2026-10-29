@@ -248,6 +248,7 @@ interface ParadaViaje {
   hora_estimada: string | null;
   zona: string | null;
   cliente_telefono: string | null;
+  cliente_nombre?: string | null;
   grupo_id: string | null;
   estado: string;
   notas: string | null;
@@ -862,9 +863,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                         </div>
                         {(v.retiro.zona ?? v.entrega.zona) && <div className="stop-sub">📍 {v.retiro.zona ?? v.entrega.zona}</div>}
                         <div className="stop-sub">Lleno a retirar: {v.retiro.contenedor_numero}</div>
-                        {(v.retiro.cliente_telefono ?? v.entrega.cliente_telefono) && (
-                          <div className="stop-sub">📞 {v.retiro.cliente_telefono ?? v.entrega.cliente_telefono}</div>
-                        )}
+                        <ClienteParada nombre={v.retiro.cliente_nombre ?? v.entrega.cliente_nombre} telefono={v.retiro.cliente_telefono ?? v.entrega.cliente_telefono} />
                         {(v.retiro.horario_preferido ?? v.entrega.horario_preferido) && (
                           <div className="stop-sub">🕐 Pidió: {v.retiro.horario_preferido ?? v.entrega.horario_preferido}</div>
                         )}
@@ -883,7 +882,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                           <span className="tag entrega">Entrega</span>
                         </div>
                         {v.entrega.zona && <div className="stop-sub">📍 {v.entrega.zona}</div>}
-                        {v.entrega.cliente_telefono && <div className="stop-sub">📞 {v.entrega.cliente_telefono}</div>}
+                        <ClienteParada nombre={v.entrega.cliente_nombre} telefono={v.entrega.cliente_telefono} />
                         {v.entrega.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.entrega.horario_preferido}</div>}
                         <div className="sel-row">
                           <label>Contenedor:</label>
@@ -901,7 +900,7 @@ function DetalleRuta({ rutaId, rutasDelDia, choferes, onCambio, pedidoArrastrado
                         </div>
                         {v.retiro.zona && <div className="stop-sub">📍 {v.retiro.zona}</div>}
                         <div className="stop-sub">{v.retiro.contenedor_numero}</div>
-                        {v.retiro.cliente_telefono && <div className="stop-sub">📞 {v.retiro.cliente_telefono}</div>}
+                        <ClienteParada nombre={v.retiro.cliente_nombre} telefono={v.retiro.cliente_telefono} />
                         {v.retiro.horario_preferido && <div className="stop-sub">🕐 Pidió: {v.retiro.horario_preferido}</div>}
                       </>
                     )}
@@ -2351,6 +2350,17 @@ export function Rutas() {
           onClose={() => setPedidoDetalle(null)}
         />
       )}
+    </div>
+  );
+}
+
+/** A quién se le entrega o retira: nombre (si está cargado) y teléfono. */
+function ClienteParada({ nombre, telefono }: { nombre?: string | null; telefono: string | null }) {
+  if (!nombre && !telefono) return null;
+  return (
+    <div className="stop-sub">
+      👤 {nombre ? <strong>{nombre}</strong> : <span style={{ color: 'var(--text-muted)' }}>Sin nombre cargado</span>}
+      {telefono && <> · 📞 {telefono}</>}
     </div>
   );
 }

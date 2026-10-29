@@ -350,8 +350,8 @@ clientesRouter.post('/:telefono/viaje-manual', requireRol('admin', 'operador', '
       const estadoPago = cargoCC || v.pagado ? 'validado' : 'pendiente';
       const creadoEn = estadoPago === 'validado' ? v.fecha : null;
       const [pago] = await query<{ id: string }>(
-        `INSERT INTO pagos (cliente_telefono, tipo, contenedor_numero, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante, creado_en)
-         VALUES ($1, 'alargue_retiro', $2, $3, $4, $5, $6, $7, $8, COALESCE($9::date + interval '12 hours', now()))
+        `INSERT INTO pagos (cargado_en_panel, cliente_telefono, tipo, contenedor_numero, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante, creado_en)
+         VALUES (TRUE, $1, 'alargue_retiro', $2, $3, $4, $5, $6, $7, $8, COALESCE($9::date + interval '12 hours', now()))
          RETURNING id`,
         [telefono, v.contenedor_numero ?? null, v.importe, v.medio_pago, estadoPago,
          v.pagado && v.medio_pago === 'efectivo', cargoCC, urlComprobanteCifrada, creadoEn],
@@ -372,8 +372,8 @@ clientesRouter.post('/:telefono/viaje-manual', requireRol('admin', 'operador', '
         // Mismo criterio que en la rama de alargue: 'validado' toma la
         // fecha real del viaje, 'pendiente' arranca a envejecer desde hoy.
         const { rows } = await c.query<{ id: string }>(
-          `INSERT INTO pagos (cliente_telefono, tipo, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante, creado_en)
-           VALUES ($1, 'flete', $2, $3, $4, $5, FALSE, $6, COALESCE($7::date + interval '12 hours', now()))
+          `INSERT INTO pagos (cargado_en_panel, cliente_telefono, tipo, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante, creado_en)
+           VALUES (TRUE, $1, 'flete', $2, $3, $4, $5, FALSE, $6, COALESCE($7::date + interval '12 hours', now()))
            RETURNING id`,
           [telefono, v.importe, v.medio_pago, v.pagado ? 'validado' : 'pendiente',
            v.pagado && v.medio_pago === 'efectivo', urlComprobanteCifrada, v.pagado ? v.fecha : null],

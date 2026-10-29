@@ -87,17 +87,21 @@ export async function handlePago(m: MensajeEntrante, sesion: Sesion): Promise<vo
     return;
   }
 
-  // Si el usuario escribió "Ya pagué" (o "pago"/"pagar"/etc, ver messageRouter)
-  // sin adjuntar nada aún: antes de pedirle el comprobante, preguntamos cómo
-  // va a pagar — pero "Cuenta corriente" solo se ofrece a quien ya la tiene
-  // *aprobada*; para el resto es directo por transferencia (la cuenta
-  // corriente se habilita aparte, no se autopide desde acá). Incluye tocar
-  // "Enviar comprobante" en el menú (llega como interactive, no como text):
+  // "Enviar comprobante" (o "Ya pagué"/"pago"/etc, ver messageRouter) sin
+  // adjuntar nada aún: un comprobante es siempre de una transferencia — el
+  // efectivo lo confirma el chofer al cobrar o el asesor, nunca el cliente
+  // por acá. Se le pasan los datos bancarios y se espera la foto o PDF.
+  // Incluye tocar el botón del menú (llega como interactive, no como text):
   // antes caía al "necesito una imagen" de abajo sin dejar la sesión en el
   // flujo de pago, y la foto siguiente llegaba sin contexto.
   if (m.tipo === 'text' || m.tipo === 'interactive_list' || m.tipo === 'interactive_button') {
-    await setSesion({ ...sesion, flujo: 'pago', paso: 'elegir_metodo_pago', contexto: {} });
-    await sendButtons(to, '💳 ¿Cómo vas a pagar?', await opcionesMetodoPago(to));
+    await setSesion({ ...sesion, flujo: 'pago', paso: 'esperando_comprobante', contexto: {} });
+    await sendText(
+      to,
+      `${datosBancarios()}\n\n` +
+      '💸 Mandame por acá la *foto o PDF* del comprobante de la transferencia.\n\n' +
+      '_Escribí *menú* si querés volver al inicio._',
+    );
     return;
   }
 

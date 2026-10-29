@@ -514,8 +514,8 @@ contenedoresRouter.post('/:numero/alargue', requireRol('admin', 'operador'), asy
       const nuevaFecha = diaHabilDesde(fechaMendoza(nuevoVenceEn));
 
       const { rows: pagoRows } = await c.query<{ id: string }>(
-        `INSERT INTO pagos (cliente_telefono, tipo, contenedor_numero, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante)
-         VALUES ($1, 'alargue_retiro', $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        `INSERT INTO pagos (cargado_en_panel, cliente_telefono, tipo, contenedor_numero, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante)
+         VALUES (TRUE, $1, 'alargue_retiro', $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
         [cont.cliente_telefono, numero, monto, v.medio_pago, estado, v.pagado && v.medio_pago === 'efectivo', cargoCC, urlComprobante],
       );
       const pagoId = pagoRows[0].id;
@@ -606,8 +606,8 @@ contenedoresRouter.post('/:numero/recambio', requireRol('admin', 'operador'), as
       if (activo?.estado === 'en_curso') fail('Ya hay un chofer en camino a buscar este contenedor — no se puede recambiar ahora.');
 
       const { rows: pagoRows } = await c.query<{ id: string }>(
-        `INSERT INTO pagos (cliente_telefono, tipo, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante)
-         VALUES ($1, 'flete', $2, $3, $4, $5, $6, $7) RETURNING id`,
+        `INSERT INTO pagos (cargado_en_panel, cliente_telefono, tipo, monto, medio_pago, estado, efectivo_cobrado, es_cuenta_corriente, url_comprobante)
+         VALUES (TRUE, $1, 'flete', $2, $3, $4, $5, $6, $7) RETURNING id`,
         [cont.cliente_telefono, monto, v.medio_pago, estado, v.pagado && v.medio_pago === 'efectivo', cargoCC, urlComprobante],
       );
       const pagoId = pagoRows[0].id;

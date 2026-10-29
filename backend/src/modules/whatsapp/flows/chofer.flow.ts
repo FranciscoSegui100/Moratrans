@@ -180,7 +180,8 @@ if (chofer.length === 0) {
     const [, accion, pagoId, viajeId] = m.seleccionId.split(':');
     if (accion === 'si' && pagoId) {
       await query(
-        `UPDATE pagos SET efectivo_cobrado = TRUE WHERE id = $1 AND medio_pago = 'efectivo'`,
+        `UPDATE pagos SET efectivo_cobrado = TRUE, estado = CASE WHEN estado = 'pendiente' THEN 'validado' ELSE estado END
+          WHERE id = $1 AND medio_pago = 'efectivo'`,
         [pagoId],
       );
       emitRecursoActualizado('pagos');

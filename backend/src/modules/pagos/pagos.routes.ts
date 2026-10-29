@@ -44,7 +44,11 @@ pagosRouter.get('/', async (req: Request, res: Response) => {
             (SELECT COUNT(*) FROM pagos_adjuntos pa WHERE pa.pago_id = p.id)::int AS adjuntos_count
        FROM pagos p
        LEFT JOIN pedidos pe ON pe.id = p.pedido_id
-      WHERE p.estado = $1 ORDER BY p.creado_en DESC`,
+      WHERE p.estado = $1
+        -- Efectivo cargado a mano y sin cobrar: no es un comprobante para
+        -- validar, lo confirma el chofer o el asesor (ver PATCH /:id/cobrado).
+        AND NOT (p.estado = 'pendiente' AND p.medio_pago = 'efectivo' AND p.cargado_en_panel)
+      ORDER BY p.creado_en DESC`,
     [estado],
   );
   const rol = req.user!.rol;
@@ -628,8 +632,16 @@ pagosRouter.post('/:id/reenviar-aviso', requireRol('admin', 'operador', 'finanza
 pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const pagoId = req.params.id;
 
-  const [pagoTipo] = await query<{ tipo: string }>('SELECT tipo FROM pagos WHERE id = $1', [pagoId]);
+  const [pagoTipo] = await query<{ tipo: string; medio_pago: string; cargado_en_panel: boolean }>(
+    'SELECT tipo, medio_pago, cargado_en_panel FROM pagos WHERE id = $1',
+    [pagoId],
+  );
   if (!pagoTipo) return res.status(404).json({ error: 'Pago inexistente' });
+  if (pagoTipo.medio_pago === 'efectivo' && pagoTipo.cargado_en_panel) {
+    return res.status(409).json({
+      error: 'Este cobro en efectivo se cargó a mano: lo confirma el chofer al entregar, o marcalo como pagado desde la ficha del cliente.',
+    });
+  }
   if (pagoTipo.tipo === 'alargue_retiro') return validarAlargue(req, res, pagoId);
   if (pagoTipo.tipo === 'abono_cc') return validarAbonoCC(req, res, pagoId);
   if (pagoTipo.tipo === 'pedido_catalogo') return validarPedidoCatalogo(req, res, pagoId);
@@ -958,7 +970,11 @@ pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), a
 pagosRouter.patch('/:id/cobrado', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const cobrado = req.body?.cobrado !== false;
   const [pago] = await query<{ id: string }>(
-    `UPDATE pagos SET efectivo_cobrado = $2 WHERE id = $1 AND medio_pago = 'efectivo' RETURNING id`,
+    // Cobrado = la plata ya está: un efectivo cargado a mano que seguía
+    // 'pendiente' queda 'validado' (no vuelve atrás si se desmarca).
+    `UPDATE pagos SET efectivo_cobrado = $2,
+            estado = CASE WHEN $2 AND estado = 'pendiente' THEN 'validado' ELSE estado END
+      WHERE id = $1 AND medio_pago = 'efectivo' RETURNING id`,
     [req.params.id, cobrado],
   );
   if (!pago) return res.status(409).json({ error: 'Ese pago no es en efectivo' });
