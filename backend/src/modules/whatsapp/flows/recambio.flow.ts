@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { query } from '../../../config/db';
-import { sendText, sendButtons, sendList, sendLocationRequest } from '../graphApi';
+import { sendText, sendButtons, sendList } from '../graphApi';
 import { clearSesion, setSesion } from '../session.store';
 import { emitAlerta, emitRecursoActualizado } from '../../../config/socket';
 import { contenedoresDelCliente, ContenedorCliente } from '../../../services/contenedorCliente.service';
@@ -21,7 +21,7 @@ import {
   verificarUbicacionConDepartamentoElegido,
   preguntarMismatchDepartamento,
   resolverUbicacionMensaje,
-  mensajePedirUbicacionPasoAPaso,
+  pedirPin,
   combinarDireccionConIndicacion,
   normalizarIndicacion,
 } from './ubicacionZona.helper';
@@ -282,7 +282,7 @@ async function manejarMetodoUbicacion(m: MensajeEntrante, sesion: Sesion): Promi
 
   if (m.seleccionId === 'metodo_pin') {
     await setSesion({ ...sesion, paso: 'ubicacion_pin_recambio' });
-    await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso(`📍 Mandanos el pin de la dirección nueva en *${departamento}*.`));
+    await pedirPin(to, `📍 Mandanos el pin de la dirección nueva en *${departamento}*.`);
     return;
   }
   if (m.seleccionId === 'metodo_texto') {
@@ -305,6 +305,8 @@ async function manejarHorario(m: MensajeEntrante, sesion: Sesion): Promise<void>
 
 /** Dirección nueva del recambio, pin: se verifica contra el departamento ya elegido por geometría real (ver verificarUbicacionConDepartamentoElegido). */
 async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  // "✍️ Escribir calle" que acompaña al pedido de pin (ver pedirPin).
+  if (m.seleccionId === 'metodo_texto') return manejarMetodoUbicacion(m, sesion);
   const to = m.from;
   const departamento = sesion.contexto.departamento as string;
   const ubicacion = await resolverUbicacionMensaje(m);
@@ -340,10 +342,12 @@ async function manejarNuevaUbicacion(m: MensajeEntrante, sesion: Sesion): Promis
     return;
   }
 
-  await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso(`📍 Mandanos el pin de la dirección nueva en *${departamento}*.`));
+  await pedirPin(to, `📍 Mandanos el pin de la dirección nueva en *${departamento}*.`);
 }
 
 async function manejarMismatchDepartamento(m: MensajeEntrante, sesion: Sesion): Promise<void> {
+  // "✍️ Escribir calle" que acompaña al pedido de pin (ver pedirPin).
+  if (m.seleccionId === 'metodo_texto') return manejarMetodoUbicacion(m, sesion);
   const to = m.from;
   const { departamento, departamentoDetectado, destinoLat, destinoLng, destinoDireccion } = sesion.contexto as {
     departamento: string;
@@ -355,7 +359,7 @@ async function manejarMismatchDepartamento(m: MensajeEntrante, sesion: Sesion): 
 
   if (m.seleccionId === 'depto_reenviar') {
     await setSesion({ ...sesion, paso: 'ubicacion_pin_recambio', contexto: { ...sesion.contexto, departamento } });
-    await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso(`📍 Dale, mandanos de nuevo el pin de la dirección en *${departamento}*.`));
+    await pedirPin(to, `📍 Dale, mandanos de nuevo el pin de la dirección en *${departamento}*.`);
     return;
   }
   if (m.seleccionId !== 'depto_cambiar') {

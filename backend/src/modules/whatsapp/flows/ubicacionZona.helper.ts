@@ -160,6 +160,21 @@ export async function pedirMetodoUbicacion(to: string, departamento: string): Pr
   );
 }
 
+/**
+ * Pide el pin con el botón nativo "Enviar ubicación" y, aparte, ofrece volver
+ * a escribir la calle: un mensaje de pedido de ubicación de WhatsApp no
+ * admite otros botones, y un cliente que en ese momento no puede mandar el
+ * pin (no está en el lugar, no le anda el GPS) quedaba trabado. El botón usa
+ * el mismo id 'metodo_texto' que la elección inicial (ver pedirMetodoUbicacion);
+ * los pasos del pin lo aceptan y pasan a pedir la calle.
+ */
+export async function pedirPin(to: string, pregunta: string): Promise<void> {
+  await sendLocationRequest(to, mensajePedirUbicacionPasoAPaso(pregunta));
+  await sendButtons(to, '¿No podés mandar el pin ahora? También podés escribir la dirección.', [
+    { id: 'metodo_texto', title: '✍️ Escribir calle' },
+  ]);
+}
+
 /** Al elegir "escribir dirección": se guarda tal cual la escribe el cliente, sin buscarla en el mapa. */
 export function mensajePedirCalleNumero(departamento: string): string {
   return `✍️ Escribí la calle y el número de la dirección en *${departamento}*.`;
