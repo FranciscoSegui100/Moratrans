@@ -930,12 +930,27 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
 /** POST /api/pagos/:id/rechazar — marca rechazado y avisa al cliente. */
 pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const motivo = (req.body?.motivo as string) || 'Comprobante no válido';
-  const [pago] = await query<{ cliente_telefono: string; es_cuenta_corriente: boolean; tipo: string }>(
+  const [pago] = await query<{ cliente_telefono: string; es_cuenta_corriente: boolean; tipo: string; pedido_id: string | null }>(
     `UPDATE pagos SET estado = 'rechazado', motivo_rechazo = $2, validado_por = $3
-      WHERE id = $1 AND estado = 'pendiente' RETURNING cliente_telefono, es_cuenta_corriente, tipo`,
+      WHERE id = $1 AND estado = 'pendiente' RETURNING cliente_telefono, es_cuenta_corriente, tipo, pedido_id`,
     [req.params.id, motivo, req.user!.id],
   );
   if (!pago) return res.status(409).json({ error: 'Pago inexistente o ya procesado' });
+
+  // Rechazado = ese pedido del bot no va: se cancela, así no queda como deuda
+  // del cliente ni como "pedido pendiente" en el bot. Salvo que ya tenga un
+  // viaje, u otro pago pendiente o validado (ej. reenvió el comprobante).
+  if (pago.pedido_id) {
+    const cancelados = await query(
+      `UPDATE pedidos pe SET estado = 'cancelado'
+        WHERE pe.id = $1 AND pe.estado NOT IN ('cancelado', 'completado')
+          AND NOT EXISTS (SELECT 1 FROM pagos p JOIN viajes v ON v.pago_id = p.id WHERE p.pedido_id = pe.id)
+          AND NOT EXISTS (SELECT 1 FROM pagos p WHERE p.pedido_id = pe.id AND p.estado IN ('pendiente', 'validado'))
+        RETURNING pe.id`,
+      [pago.pedido_id],
+    );
+    if (cancelados.length > 0) emitRecursoActualizado('pedidos');
+  }
 
   // Comparte referencia_id (= pago.id) con la alerta de transferencia, pero
   // es un tipo distinto (ver migración 0013) — hay que resolver la que

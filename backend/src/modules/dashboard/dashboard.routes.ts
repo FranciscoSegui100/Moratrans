@@ -75,7 +75,7 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
              UNION ALL
              SELECT pg4.monto
                FROM pagos pg4
-              WHERE pg4.cliente_telefono = cl.telefono AND pg4.tipo = 'alargue_retiro' AND pg4.es_cuenta_corriente = FALSE
+              WHERE pg4.cliente_telefono = cl.telefono AND pg4.tipo = 'alargue_retiro' AND pg4.es_cuenta_corriente = FALSE AND pg4.estado <> 'rechazado'
                 AND ((pg4.medio_pago = 'efectivo' AND pg4.efectivo_cobrado = FALSE)
                      OR (pg4.medio_pago = 'transferencia' AND pg4.estado <> 'validado'))
              UNION ALL
@@ -83,7 +83,7 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
                FROM pedidos pe
                JOIN pagos pg ON pg.pedido_id = pe.id
               WHERE pe.cliente_telefono = cl.telefono
-                AND pe.estado <> 'cancelado'
+                AND pe.estado <> 'cancelado' AND pg.estado <> 'rechazado'
                 AND NOT EXISTS (SELECT 1 FROM viajes v WHERE v.pago_id = pg.id)
                 AND ((pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado = FALSE)
                      OR (pg.medio_pago = 'transferencia' AND pg.estado <> 'validado'))
