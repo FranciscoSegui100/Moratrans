@@ -7,7 +7,7 @@ import { excelClientes, enviarExcelClientePorWhatsApp, enviarResumenCuentaCorrie
 import { sendText, sendButtons, motivoErrorWa } from '../whatsapp/graphApi';
 import { datosBancarios, pedidosAbiertos } from '../whatsapp/flows/pago.flow';
 import { notificarEnvioFallido } from '../whatsapp/alertaEnvio';
-import { emitRecursoActualizado } from '../../config/socket';
+import { emitAlertaActualizada, emitRecursoActualizado } from '../../config/socket';
 import path from 'path';
 import { decrypt, decryptBuffer, encrypt, encryptBuffer } from '../../services/crypto.service';
 import { descargarArchivo, subirArchivo } from '../../services/storage.service';
@@ -97,7 +97,7 @@ clientesRouter.get('/', async (_req: Request, res: Response) => {
              FROM pedidos pe
              JOIN pagos pg ON pg.pedido_id = pe.id
             WHERE pe.cliente_telefono = cl.telefono
-              AND pe.estado <> 'cancelado' AND pg.estado <> 'rechazado'
+              AND pe.estado <> 'cancelado'
               AND NOT EXISTS (SELECT 1 FROM viajes v WHERE v.pago_id = pg.id)
               AND ((pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado = FALSE)
                    OR (pg.medio_pago = 'transferencia' AND pg.estado <> 'validado'))
@@ -455,6 +455,55 @@ clientesRouter.get('/:telefono/cuenta-corriente', async (req: Request, res: Resp
 });
 
 /**
+ * POST /api/clientes/pedidos/:pedidoId/cancelar — da de baja un pedido del
+ * bot que todavía no se validó (ver la rama de pedidos en GET
+ * /:telefono/viajes): queda 'cancelado', sus pagos pendientes pasan a
+ * 'rechazado' y se cierran sus alertas, así desaparece de "Validar pagos" y
+ * de la deuda. Rechazar un comprobante NO lo cancela (el cliente puede
+ * mandar otro); esto es lo que lo cancela. No le avisa nada al cliente.
+ */
+clientesRouter.post('/pedidos/:pedidoId/cancelar', requireRol('admin', 'operador'), async (req: Request, res: Response) => {
+  const resultado = await withTx(async (c) => {
+    const { rows: pedidos } = await c.query<{ estado: string }>(
+      'SELECT estado FROM pedidos WHERE id = $1 FOR UPDATE',
+      [req.params.pedidoId],
+    );
+    if (!pedidos[0]) return { error: 'Pedido inexistente', status: 404 };
+    if (!['nuevo', 'cotizado', 'confirmado'].includes(pedidos[0].estado)) {
+      return { error: 'Ese pedido ya no está pendiente.', status: 409 };
+    }
+    const { rows: conViaje } = await c.query(
+      'SELECT 1 FROM pagos p JOIN viajes v ON v.pago_id = p.id WHERE p.pedido_id = $1 LIMIT 1',
+      [req.params.pedidoId],
+    );
+    if (conViaje.length > 0) return { error: 'Ese pedido ya tiene un viaje: cancelá el viaje desde Viajes.', status: 409 };
+
+    await c.query(`UPDATE pedidos SET estado = 'cancelado' WHERE id = $1`, [req.params.pedidoId]);
+    const { rows: pagos } = await c.query<{ id: string }>(
+      `UPDATE pagos SET estado = 'rechazado', motivo_rechazo = 'Pedido cancelado', validado_por = $2
+        WHERE pedido_id = $1 AND estado = 'pendiente' RETURNING id`,
+      [req.params.pedidoId, req.user!.id],
+    );
+    const ids = pagos.map((p) => p.id);
+    if (ids.length > 0) {
+      await c.query(
+        `UPDATE alertas SET estado = 'resuelta'
+          WHERE tipo IN ('pago_pendiente_validacion', 'cuenta_corriente_solicitada') AND referencia_id = ANY($1::text[])`,
+        [ids],
+      );
+    }
+    return { ids };
+  });
+  if ('error' in resultado) return res.status(resultado.status!).json({ error: resultado.error });
+  for (const id of resultado.ids) {
+    emitAlertaActualizada({ tipo: 'pago_pendiente_validacion', referencia_id: id, estado: 'resuelta' });
+    emitAlertaActualizada({ tipo: 'cuenta_corriente_solicitada', referencia_id: id, estado: 'resuelta' });
+  }
+  emitRecursoActualizado('pagos');
+  res.json({ ok: true });
+});
+
+/**
  * GET /api/clientes/:telefono/viajes?mes=YYYY-MM — detalle de viajes de un
  * cliente. Además de la tabla `viajes`, suma cada extensión de retiro
  * (pagos.tipo='alargue_retiro') como su propia fila — antes se anidaban
@@ -489,7 +538,7 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
             v.grupo_id, ch.nombre AS chofer_nombre,
             (v.es_cuenta_corriente AND NOT (v.tipo = 'retiro' AND v.grupo_id IS NOT NULL)) AS es_cuenta_corriente,
             co.vence_en,
-            (v.foto_entrega_url IS NOT NULL) AS tiene_foto_entrega, v.contenedor_informado,
+            (v.foto_entrega_url IS NOT NULL) AS tiene_foto_entrega, v.contenedor_informado, FALSE AS es_pedido,
             -- Solo el pago propio del viaje. Las extensiones de retiro ya no se
             -- anidan acá: cada una es su propia fila (rama de abajo del UNION),
             -- así en la ficha cada fila es una sola cosa — entrega, retiro,
@@ -527,7 +576,7 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
             NULL::numeric AS destino_lat, NULL::numeric AS destino_lng,
             NULL::text AS remito, p.monto AS importe, NULL::uuid AS grupo_id, NULL::text AS chofer_nombre,
             p.es_cuenta_corriente, co.vence_en,
-            FALSE AS tiene_foto_entrega, NULL::text AS contenedor_informado,
+            FALSE AS tiene_foto_entrega, NULL::text AS contenedor_informado, FALSE AS es_pedido,
             json_build_array(json_build_object(
               'id', p.id, 'tipo', p.tipo, 'monto', p.monto, 'estado', p.estado,
               'es_cuenta_corriente', p.es_cuenta_corriente,
@@ -539,6 +588,37 @@ clientesRouter.get('/:telefono/viajes', async (req: Request, res: Response) => {
        LEFT JOIN contenedores co ON co.numero = p.contenedor_numero
       WHERE p.cliente_telefono = $1 AND p.tipo = 'alargue_retiro'
         AND ($2::text IS NULL OR to_char(p.creado_en, 'YYYY-MM') = $2)
+
+     UNION ALL
+
+     -- Pedidos del bot con un pago que todavía no se validó (pendiente, o con
+     -- el comprobante rechazado esperando otro): no tienen viaje todavía, así
+     -- que no figuraban en ningún lado aunque sí sumaban en la deuda. Acá se
+     -- ven y se pueden cancelar (POST /pedidos/:id/cancelar).
+     SELECT pe.id, 'entrega' AS tipo, COALESCE(pe.fecha_entrega, pe.creado_en::date) AS fecha, pe.estado::text AS estado,
+            'pendiente_pago' AS estado_visible,
+            pe.zona, pe.contenedor_recambio_numero AS contenedor_numero, pe.destino_direccion,
+            pe.destino_lat, pe.destino_lng,
+            NULL::text AS remito, pe.precio AS importe, NULL::uuid AS grupo_id, NULL::text AS chofer_nombre,
+            EXISTS (SELECT 1 FROM pagos p WHERE p.pedido_id = pe.id AND p.es_cuenta_corriente) AS es_cuenta_corriente,
+            NULL::timestamptz AS vence_en,
+            FALSE AS tiene_foto_entrega, NULL::text AS contenedor_informado, TRUE AS es_pedido,
+            COALESCE((
+              SELECT json_agg(json_build_object(
+                'id', p.id, 'tipo', p.tipo, 'monto', COALESCE(p.monto, pe.precio), 'estado', p.estado,
+                'es_cuenta_corriente', p.es_cuenta_corriente,
+                'tiene_comprobante', (p.url_comprobante IS NOT NULL),
+                'titular', p.titular_transferencia, 'medio_pago', p.medio_pago,
+                'efectivo_cobrado', p.efectivo_cobrado, 'creado_en', p.creado_en
+              ) ORDER BY p.creado_en ASC)
+              FROM pagos p WHERE p.pedido_id = pe.id
+            ), '[]'::json) AS comprobantes
+       FROM pedidos pe
+      WHERE pe.cliente_telefono = $1 AND pe.estado IN ('cotizado', 'confirmado')
+        AND EXISTS (SELECT 1 FROM pagos p WHERE p.pedido_id = pe.id AND p.estado IN ('pendiente', 'rechazado'))
+        AND NOT EXISTS (SELECT 1 FROM pagos p WHERE p.pedido_id = pe.id AND p.estado = 'validado')
+        AND NOT EXISTS (SELECT 1 FROM pagos p JOIN viajes v ON v.pago_id = p.id WHERE p.pedido_id = pe.id)
+        AND ($2::text IS NULL OR to_char(COALESCE(pe.fecha_entrega, pe.creado_en::date), 'YYYY-MM') = $2)
       ORDER BY fecha DESC`,
     [req.params.telefono, mes],
   );
@@ -696,7 +776,7 @@ clientesRouter.delete('/ocasionales-sin-deuda', requireRol('admin', 'operador', 
                FROM pedidos pe
                JOIN pagos pg ON pg.pedido_id = pe.id
               WHERE pe.cliente_telefono = cl.telefono
-                AND pe.estado <> 'cancelado' AND pg.estado <> 'rechazado'
+                AND pe.estado <> 'cancelado'
                 AND NOT EXISTS (SELECT 1 FROM viajes v WHERE v.pago_id = pg.id)
                 AND ((pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado = FALSE)
                      OR (pg.medio_pago = 'transferencia' AND pg.estado <> 'validado'))

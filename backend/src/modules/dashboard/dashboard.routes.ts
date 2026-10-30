@@ -83,7 +83,7 @@ dashboardRouter.get('/kpis', async (_req: Request, res: Response) => {
                FROM pedidos pe
                JOIN pagos pg ON pg.pedido_id = pe.id
               WHERE pe.cliente_telefono = cl.telefono
-                AND pe.estado <> 'cancelado' AND pg.estado <> 'rechazado'
+                AND pe.estado <> 'cancelado'
                 AND NOT EXISTS (SELECT 1 FROM viajes v WHERE v.pago_id = pg.id)
                 AND ((pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado = FALSE)
                      OR (pg.medio_pago = 'transferencia' AND pg.estado <> 'validado'))

@@ -95,6 +95,8 @@ interface ViajeCliente {
   vence_en: string | null;
   tiene_foto_entrega?: boolean;
   contenedor_informado?: string | null;
+  /** Pedido del bot sin validar todavía (sin viaje): se puede cancelar desde acá. */
+  es_pedido?: boolean;
   comprobantes?: Comprobante[];
 }
 
@@ -276,6 +278,23 @@ export function ClienteDetalle() {
       show('success', 'Contenedor corregido', `${data.anterior} → ${data.nuevo}`);
     } catch (err: any) {
       show('error', 'No se pudo corregir', err.response?.data?.error);
+    }
+  }
+
+  /**
+   * Da de baja un pedido del bot que todavía no se validó: rechazar el
+   * comprobante no lo cancela (el cliente puede mandar otro), esto sí — sale
+   * de "Validar pagos" y de la deuda. No le avisa nada al cliente.
+   */
+  async function cancelarPedido(pedidoId: string) {
+    if (!confirm('¿Cancelar este pedido? Sale de "Validar pagos" y deja de sumar en la deuda. Al cliente no se le avisa nada.')) return;
+    try {
+      await api.post(`/api/clientes/pedidos/${pedidoId}/cancelar`);
+      queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      queryClient.invalidateQueries({ queryKey: ['pagos'] });
+      show('success', 'Pedido cancelado');
+    } catch (err: any) {
+      show('error', 'No se pudo cancelar', err.response?.data?.error);
     }
   }
 
@@ -1034,6 +1053,8 @@ export function ClienteDetalle() {
                               <button className="btn btn-primary btn-sm" onClick={() => setVerificando(v)}>Asignar</button>
                             )}
                           </span>
+                        ) : v.es_pedido ? (
+                          <span className="text-muted" style={{ fontFamily: 'inherit' }}>Sin confirmar</span>
                         ) : v.tipo === 'entrega' && v.estado_visible !== 'cancelado' ? (
                           // El contenedor de una entrega lo elige el chofer al tocar "Ya entregué".
                           <span className="text-muted" style={{ fontFamily: 'inherit' }}>Lo elige el chofer</span>
@@ -1123,6 +1144,16 @@ export function ClienteDetalle() {
                             const e = ESTADO_VISIBLE[v.estado_visible] ?? { texto: v.estado, badge: v.estado };
                             return <span className={`badge ${e.badge}`}>{e.texto}</span>;
                           })()}
+                          {v.es_pedido && puedeCambiarContenedor && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ color: 'var(--danger)' }}
+                              onClick={() => cancelarPedido(v.id)}
+                              title="El cliente no sigue con este pedido: darlo de baja"
+                            >
+                              Cancelar pedido
+                            </button>
+                          )}
                           {v.tiene_foto_entrega && (
                             <RoleGate roles={['admin', 'operador', 'finanzas']}>
                               <button

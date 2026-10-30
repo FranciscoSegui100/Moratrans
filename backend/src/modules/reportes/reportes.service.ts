@@ -703,7 +703,7 @@ async function itemsDeuda(telefono: string): Promise<ItemDeuda[]> {
        FROM pedidos pe
        JOIN pagos pg ON pg.pedido_id = pe.id
       WHERE pe.cliente_telefono = $1
-        AND pe.estado <> 'cancelado' AND pg.estado <> 'rechazado'
+        AND pe.estado <> 'cancelado'
         AND NOT EXISTS (SELECT 1 FROM viajes v WHERE v.pago_id = pg.id)
         AND (
           (pg.medio_pago = 'efectivo' AND pg.efectivo_cobrado = FALSE)

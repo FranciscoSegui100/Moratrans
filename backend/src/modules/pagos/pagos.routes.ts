@@ -930,27 +930,12 @@ pagosRouter.post('/:id/validar', requireRol('admin', 'operador', 'finanzas'), as
 /** POST /api/pagos/:id/rechazar — marca rechazado y avisa al cliente. */
 pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), async (req: Request, res: Response) => {
   const motivo = (req.body?.motivo as string) || 'Comprobante no válido';
-  const [pago] = await query<{ cliente_telefono: string; es_cuenta_corriente: boolean; tipo: string; pedido_id: string | null }>(
+  const [pago] = await query<{ cliente_telefono: string; es_cuenta_corriente: boolean; tipo: string; pedido_id: string | null; medio_pago: string }>(
     `UPDATE pagos SET estado = 'rechazado', motivo_rechazo = $2, validado_por = $3
-      WHERE id = $1 AND estado = 'pendiente' RETURNING cliente_telefono, es_cuenta_corriente, tipo, pedido_id`,
+      WHERE id = $1 AND estado = 'pendiente' RETURNING cliente_telefono, es_cuenta_corriente, tipo, pedido_id, medio_pago`,
     [req.params.id, motivo, req.user!.id],
   );
   if (!pago) return res.status(409).json({ error: 'Pago inexistente o ya procesado' });
-
-  // Rechazado = ese pedido del bot no va: se cancela, así no queda como deuda
-  // del cliente ni como "pedido pendiente" en el bot. Salvo que ya tenga un
-  // viaje, u otro pago pendiente o validado (ej. reenvió el comprobante).
-  if (pago.pedido_id) {
-    const cancelados = await query(
-      `UPDATE pedidos pe SET estado = 'cancelado'
-        WHERE pe.id = $1 AND pe.estado NOT IN ('cancelado', 'completado')
-          AND NOT EXISTS (SELECT 1 FROM pagos p JOIN viajes v ON v.pago_id = p.id WHERE p.pedido_id = pe.id)
-          AND NOT EXISTS (SELECT 1 FROM pagos p WHERE p.pedido_id = pe.id AND p.estado IN ('pendiente', 'validado'))
-        RETURNING pe.id`,
-      [pago.pedido_id],
-    );
-    if (cancelados.length > 0) emitRecursoActualizado('pedidos');
-  }
 
   // Comparte referencia_id (= pago.id) con la alerta de transferencia, pero
   // es un tipo distinto (ver migración 0013) — hay que resolver la que
@@ -968,11 +953,34 @@ pagosRouter.post('/:id/rechazar', requireRol('admin', 'operador', 'finanzas'), a
                WHERE tipo = $2 AND referencia_id = $1`, [req.params.id, tipoAlerta]);
   emitAlertaActualizada({ tipo: tipoAlerta, referencia_id: req.params.id, estado: 'resuelta' });
 
+  // Transferencia: se rechaza el comprobante, no el pedido — sigue abierto y
+  // el cliente manda otro (registrarComprobante reusa este mismo pago, que
+  // vuelve a 'pendiente'). Para darlo de baja está "Cancelar pedido" en la
+  // ficha del cliente. Efectivo: no hay comprobante que reenviar — el botón
+  // es "Rechazar pedido" y el pedido se cancela.
+  const pideOtroComprobante = !!pago.pedido_id && pago.medio_pago === 'transferencia' && !pago.es_cuenta_corriente;
+  if (pago.pedido_id && pago.medio_pago === 'efectivo') {
+    await query(
+      `UPDATE pedidos SET estado = 'cancelado'
+        WHERE id = $1 AND estado NOT IN ('cancelado', 'completado')
+          AND NOT EXISTS (SELECT 1 FROM pagos p JOIN viajes v ON v.pago_id = p.id WHERE p.pedido_id = $1)`,
+      [pago.pedido_id],
+    );
+  }
+  const cuerpoRechazo = pideOtroComprobante
+    ? `⚠️ No pudimos validar tu comprobante. Motivo: ${motivo}\n\n` +
+      'Tu pedido sigue en pie: mandanos de nuevo el comprobante de la transferencia para confirmarlo.'
+    : pago.pedido_id && pago.medio_pago === 'efectivo'
+      ? `⚠️ No pudimos confirmar tu pedido. Motivo: ${motivo}\n` +
+        'Si tenés alguna duda, comunicate con un asesor.'
+      : `⚠️ Tu comprobante no pudo validarse. Motivo: ${motivo}\n` +
+        'Si tenés alguna duda, comunicate con un asesor.';
   sendButtons(
     pago.cliente_telefono,
-    `⚠️ Tu comprobante no pudo validarse. Motivo: ${motivo}\n` +
-      'Si tenés alguna duda, comunicate con un asesor.',
-    [{ id: 'opt_asesor', title: '🙋 Hablar con asesor' }],
+    cuerpoRechazo,
+    pideOtroComprobante
+      ? [{ id: 'opt_pagar', title: '💸 Enviar comprobante' }, { id: 'opt_asesor', title: '🙋 Hablar con asesor' }]
+      : [{ id: 'opt_asesor', title: '🙋 Hablar con asesor' }],
   ).catch((e) => console.error('Error avisando rechazo de pago:', motivoErrorWa(e)));
 
   res.json({ ok: true });
